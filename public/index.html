@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="vi" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Java 24/7 Cloud Runner - Hugging Face Spaces</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        darkbg: '#0f172a',
+                        cardbg: '#1e293b',
+                        borderbg: '#334155',
+                        terminalbg: '#0a0f1d'
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="bg-darkbg text-slate-100 min-h-screen flex flex-col font-sans antialiased select-none">
+
+    <!-- Top Navigation Bar -->
+    <header class="bg-cardbg border-b border-borderbg px-4 py-3 sticky top-0 z-40 shadow-md">
+        <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+            <!-- Brand & Status -->
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-600 flex items-center justify-center shadow-lg shadow-orange-500/20">
+                    <i class="fa-brands fa-java text-white text-2xl"></i>
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <h1 class="font-bold text-lg text-white tracking-wide">Java 24/7 Cloud Runner</h1>
+                        <span id="status-badge" class="px-2.5 py-0.5 rounded-full text-xs font-semibold flex items-center gap-1.5 bg-slate-700 text-slate-300">
+                            <span class="w-2 h-2 rounded-full bg-slate-400"></span>
+                            <span id="status-text">Đang kết nối...</span>
+                        </span>
+                    </div>
+                    <p class="text-xs text-slate-400">Hugging Face Spaces + UptimeRobot Architecture</p>
+                </div>
+            </div>
+
+            <!-- Real-time Metrics Quick Bar -->
+            <div class="hidden md:flex items-center gap-4 bg-darkbg/70 px-4 py-1.5 rounded-lg border border-borderbg/60 text-xs">
+                <div class="flex items-center gap-1.5" title="Mã tiến trình Java">
+                    <i class="fa-solid fa-microchip text-indigo-400"></i>
+                    <span class="text-slate-400">PID:</span>
+                    <span id="metric-pid" class="font-mono font-medium text-slate-200">--</span>
+                </div>
+                <div class="h-4 w-px bg-borderbg"></div>
+                <div class="flex items-center gap-1.5" title="Thời gian chạy liên tục">
+                    <i class="fa-solid fa-stopwatch text-emerald-400"></i>
+                    <span class="text-slate-400">Uptime:</span>
+                    <span id="metric-uptime" class="font-mono font-medium text-slate-200">00:00:00</span>
+                </div>
+                <div class="h-4 w-px bg-borderbg"></div>
+                <div class="flex items-center gap-1.5" title="RAM tiêu thụ bởi JVM">
+                    <i class="fa-solid fa-memory text-sky-400"></i>
+                    <span class="text-slate-400">RAM:</span>
+                    <span id="metric-ram" class="font-mono font-medium text-slate-200">0 MB</span>
+                </div>
+                <div class="h-4 w-px bg-borderbg"></div>
+                <div class="flex items-center gap-1.5" title="RAM trống của máy ảo HF">
+                    <i class="fa-solid fa-server text-purple-400"></i>
+                    <span class="text-slate-400">Hệ thống:</span>
+                    <span id="metric-sysram" class="font-mono font-medium text-slate-200">--</span>
+                </div>
+            </div>
+
+            <!-- Top Actions -->
+            <div class="flex items-center gap-2">
+                <button id="btn-health-check" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-300 flex items-center gap-1.5 transition" title="Xem endpoint kiểm tra sức khỏe UptimeRobot">
+                    <i class="fa-solid fa-heart-pulse text-rose-400"></i>
+                    <span class="hidden sm:inline">Health URL</span>
+                </button>
+                <button id="btn-settings" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-300 flex items-center gap-1.5 transition" title="Cấu hình JVM & Watchdog">
+                    <i class="fa-solid fa-sliders text-amber-400"></i>
+                    <span class="hidden sm:inline">Cài đặt</span>
+                </button>
+                <button id="btn-auth-lock" class="px-3 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-xs text-indigo-300 flex items-center gap-1.5 transition">
+                    <i class="fa-solid fa-lock" id="auth-icon"></i>
+                    <span id="auth-status-text">Đăng nhập</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Workspace Content (Two-Column Layout) -->
+    <main class="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-12 gap-4">
+
+        <!-- Left Column: Code Editor & Controls (7 Cols on large screens) -->
+        <section class="lg:col-span-6 xl:col-span-7 flex flex-col bg-cardbg rounded-xl border border-borderbg overflow-hidden shadow-lg min-h-[500px]">
+            <!-- Editor Header & File Tabs -->
+            <div class="px-3 py-2 bg-slate-800/80 border-b border-borderbg flex flex-wrap items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-folder-tree text-amber-400 text-sm"></i>
+                    <select id="file-selector" class="bg-slate-900 border border-slate-700 text-xs rounded-lg px-2.5 py-1 text-slate-200 focus:outline-none focus:border-indigo-500">
+                        <option value="Main.java">Main.java</option>
+                    </select>
+                    <button id="btn-refresh-files" class="text-slate-400 hover:text-white text-xs p-1" title="Làm mới danh sách file">
+                        <i class="fa-solid fa-arrows-rotate"></i>
+                    </button>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button id="btn-upload-file" class="px-2.5 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs flex items-center gap-1 transition" title="Tải lên file .java hoặc .jar">
+                        <i class="fa-solid fa-cloud-arrow-up"></i>
+                        <span>Tải file lên</span>
+                    </button>
+                    <input type="file" id="file-input" class="hidden" accept=".java,.jar,.txt,.json,.properties,.xml">
+                    <button id="btn-save-code" class="px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs flex items-center gap-1 transition" title="Lưu mã nguồn (Ctrl+S)">
+                        <i class="fa-solid fa-floppy-disk"></i>
+                        <span>Lưu code</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Action Toolbar (FR-01) -->
+            <div class="p-2.5 bg-slate-900/60 border-b border-borderbg flex flex-wrap items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                    <button id="btn-run" class="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center gap-2 shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed">
+                        <i class="fa-solid fa-play"></i>
+                        <span>Biên dịch & Chạy</span>
+                    </button>
+                    <button id="btn-stop" class="px-4 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs flex items-center gap-2 shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                        <i class="fa-solid fa-stop"></i>
+                        <span>Dừng</span>
+                    </button>
+                    <button id="btn-restart" class="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs flex items-center gap-2 shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed">
+                        <i class="fa-solid fa-rotate-right"></i>
+                        <span>Khởi động lại</span>
+                    </button>
+                </div>
+                <div class="flex items-center gap-2 text-xs text-slate-400">
+                    <span id="active-filename" class="font-mono text-slate-300">Main.java</span>
+                    <span id="save-status" class="text-emerald-400 text-[11px] hidden"><i class="fa-solid fa-check"></i> Đã lưu</span>
+                </div>
+            </div>
+
+            <!-- Monaco Editor Container -->
+            <div class="relative flex-1 min-h-[380px] bg-[#1e1e1e]" id="editor-container">
+                <div id="monaco-editor" class="w-full h-full"></div>
+                <div id="binary-placeholder" class="hidden absolute inset-0 flex flex-col items-center justify-center bg-cardbg text-slate-400 p-6 text-center">
+                    <i class="fa-solid fa-box-archive text-5xl text-amber-500 mb-3"></i>
+                    <p class="font-semibold text-slate-200">File gói nhị phân Java (.JAR)</p>
+                    <p class="text-xs text-slate-400 mt-1 max-w-sm">File này ở dạng đóng gói sẵn. Bạn có thể nhấn trực tiếp nút <strong class="text-emerald-400">"Biên dịch & Chạy"</strong> để khởi chạy file .jar này bằng lệnh <code class="bg-slate-900 px-1 py-0.5 rounded text-amber-300">java -jar</code>.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Right Column: Real-time Live Console (5 Cols on large screens) -->
+        <section class="lg:col-span-6 xl:col-span-5 flex flex-col bg-terminalbg rounded-xl border border-borderbg overflow-hidden shadow-lg min-h-[500px]">
+            <!-- Console Header -->
+            <div class="px-3 py-2 bg-slate-900 border-b border-borderbg flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-terminal text-emerald-400 text-sm"></i>
+                    <span class="font-semibold text-xs tracking-wide text-slate-200">Real-time Console</span>
+                    <span id="log-count" class="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full font-mono">0 dòng</span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                    <button id="btn-toggle-autoscroll" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs transition" title="Tự động cuộn theo log mới">
+                        <i class="fa-solid fa-angles-down"></i>
+                    </button>
+                    <button id="btn-download-logs" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition" title="Tải toàn bộ file log về máy">
+                        <i class="fa-solid fa-download"></i>
+                    </button>
+                    <button id="btn-clear-logs" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-rose-400 text-xs transition" title="Xóa màn hình console">
+                        <i class="fa-solid fa-trash-can"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Log Stream Body (FR-02: Ring Buffer 1,000 lines) -->
+            <div id="console-output" class="flex-1 p-3 font-mono text-xs overflow-y-auto space-y-0.5 select-text leading-relaxed">
+                <div class="text-slate-500 italic">[Đang kết nối WebSocket tới server...]</div>
+            </div>
+
+            <!-- Standard Input Box (FR-02: System.in input) -->
+            <form id="stdin-form" class="p-2.5 bg-slate-900 border-t border-borderbg flex items-center gap-2">
+                <div class="relative flex-1">
+                    <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 font-mono text-xs select-none">&gt;&gt;</span>
+                    <input type="text" id="stdin-input" placeholder="Nhập lệnh System.in (ví dụ: ping, status, help)..." class="w-full bg-slate-950 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 font-mono focus:outline-none focus:border-indigo-500">
+                </div>
+                <button type="submit" class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 transition">
+                    <span>Gửi</span>
+                    <i class="fa-solid fa-paper-plane text-[10px]"></i>
+                </button>
+            </form>
+        </section>
+
+    </main>
+
+    <!-- Footer Guide & Info -->
+    <footer class="bg-cardbg border-t border-borderbg py-2.5 px-4 text-center text-xs text-slate-400">
+        <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
+            <div>
+                <span>Kiến trúc: </span>
+                <span class="text-amber-400 font-semibold">Hugging Face Docker</span>
+                <span> + </span>
+                <span class="text-emerald-400 font-semibold">UptimeRobot 5m Ping</span>
+                <span> (Chi phí 0 VNĐ)</span>
+            </div>
+            <div class="flex items-center gap-4 text-[11px]">
+                <a href="/health" target="_blank" class="hover:text-slate-200 flex items-center gap-1 text-rose-400">
+                    <i class="fa-solid fa-heart-pulse"></i> /health Endpoint
+                </a>
+                <span>JVM OpenJDK 21</span>
+            </div>
+        </div>
+    </footer>
+
+    <!-- MODAL: Settings & Configuration -->
+    <div id="modal-settings" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-cardbg border border-borderbg rounded-xl max-w-md w-full p-5 shadow-2xl space-y-4">
+            <div class="flex items-center justify-between pb-3 border-b border-borderbg">
+                <h3 class="font-bold text-base text-white flex items-center gap-2">
+                    <i class="fa-solid fa-sliders text-amber-400"></i>
+                    <span>Cấu hình Hệ thống</span>
+                </h3>
+                <button id="btn-close-settings" class="text-slate-400 hover:text-white">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="space-y-3 text-xs">
+                <div>
+                    <label class="block text-slate-300 font-medium mb-1">File khởi chạy mặc định:</label>
+                    <input type="text" id="cfg-active-file" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 font-mono">
+                </div>
+                <div>
+                    <label class="block text-slate-300 font-medium mb-1">JVM Tham số bộ nhớ (Memory Flags):</label>
+                    <input type="text" id="cfg-jvm-args" placeholder="-Xms256m -Xmx4G" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 font-mono">
+                    <p class="text-[11px] text-slate-400 mt-1">Gợi ý: Hugging Face Spaces có 16GB RAM. Nên đặt <code class="text-amber-300">-Xms256m -Xmx4G</code> hoặc <code class="text-amber-300">-Xmx8G</code>.</p>
+                </div>
+                <div class="pt-2 space-y-2">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" id="cfg-auto-restart" class="w-4 h-4 rounded text-indigo-600 bg-slate-900 border-slate-700">
+                        <span class="text-slate-200 font-medium">Cơ chế Watchdog: Tự động khởi chạy lại khi Java bị Crash</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" id="cfg-auto-start" class="w-4 h-4 rounded text-indigo-600 bg-slate-900 border-slate-700">
+                        <span class="text-slate-200 font-medium">Tự động chạy Java ngay khi Container Hugging Face khởi động</span>
+                    </label>
+                </div>
+            </div>
+            <div class="flex justify-end gap-2 pt-3 border-t border-borderbg">
+                <button id="btn-cancel-settings" class="px-3 py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs">Hủy</button>
+                <button id="btn-save-settings" class="px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold">Lưu cài đặt</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Health URL & UptimeRobot Guide -->
+    <div id="modal-health" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-cardbg border border-borderbg rounded-xl max-w-lg w-full p-5 shadow-2xl space-y-4">
+            <div class="flex items-center justify-between pb-3 border-b border-borderbg">
+                <h3 class="font-bold text-base text-white flex items-center gap-2">
+                    <i class="fa-solid fa-heart-pulse text-rose-400"></i>
+                    <span>Cấu hình Giữ chạy 24/24 (UptimeRobot)</span>
+                </h3>
+                <button id="btn-close-health" class="text-slate-400 hover:text-white">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="space-y-3 text-xs text-slate-300">
+                <p>Để container Hugging Face không rơi vào trạng thái ngủ đông (Sleep) sau 48 giờ, hãy thêm URL này vào <strong>UptimeRobot</strong> với chu kỳ <strong>5 phút/lần</strong>:</p>
+                <div class="bg-slate-950 p-3 rounded-lg border border-slate-800 space-y-2">
+                    <div class="text-[11px] text-slate-400">Đường dẫn Health-check công khai (Public Endpoint):</div>
+                    <div class="flex items-center gap-2">
+                        <input type="text" id="health-full-url" readonly class="flex-1 bg-slate-900 border border-slate-700 text-emerald-400 px-2 py-1 rounded font-mono text-xs">
+                        <button id="btn-copy-health" class="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600 text-white text-xs transition">
+                            <i class="fa-solid fa-copy"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="bg-amber-950/40 border border-amber-600/30 p-2.5 rounded-lg text-amber-300 text-[11px]">
+                    <i class="fa-solid fa-triangle-exclamation mr-1"></i>
+                    <strong>Lưu ý quan trọng:</strong> Nếu bạn đang xem trong khung Hugging Face, URL phải là <em>Direct URL</em> (dạng <code>https://&lt;tên-bạn&gt;-&lt;tên-space&gt;.hf.space/health</code>), không dùng link có chữ <code>/spaces/</code>.
+                </div>
+            </div>
+            <div class="flex justify-end pt-2">
+                <button id="btn-dismiss-health" class="px-4 py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs">Đóng</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Authentication / Login -->
+    <div id="modal-auth" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-cardbg border border-borderbg rounded-xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+            <div class="text-center space-y-1">
+                <div class="w-12 h-12 mx-auto rounded-full bg-indigo-600/20 text-indigo-400 flex items-center justify-center text-xl">
+                    <i class="fa-solid fa-shield-halved"></i>
+                </div>
+                <h3 class="font-bold text-base text-white">Xác thực Quản trị viên</h3>
+                <p class="text-xs text-slate-400">Nhập mật khẩu quản trị (ADMIN_PASSWORD) để điều khiển tiến trình và chỉnh sửa mã nguồn.</p>
+            </div>
+            <form id="auth-form" class="space-y-3">
+                <div>
+                    <input type="password" id="auth-password-input" placeholder="Nhập mật khẩu..." class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500">
+                    <p id="auth-error-msg" class="text-rose-400 text-[11px] mt-1.5 hidden"></p>
+                </div>
+                <button type="submit" class="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs transition">
+                    Đăng nhập
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Scripts: Socket.io & Monaco Editor via CDN -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+    <script src="/js/app.js"></script>
+</body>
+</html>
+

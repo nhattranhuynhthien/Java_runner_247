@@ -1,0 +1,7 @@
+node_modules/
+workspace/app.log
+workspace/app.log.1
+workspace/*.class
+.DS_Store
+.env
+
