@@ -9,48 +9,48 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
-        * { font-family: 'Plus Jakarta Sans', sans-serif; }
+        * { font-family: 'Plus Jakarta Sans', sans-serif; box-sizing: border-box; }
         body {
             margin: 0;
             padding: 0;
             background: #070a12;
             overflow: hidden;
-            touch-action: none;
+            touch-action: manipulation;
         }
-        #screen {
+        #screen-wrapper {
+            position: relative;
             display: flex;
             align-items: center;
             justify-content: center;
             width: 100%;
             height: 100%;
+            overflow: hidden;
         }
-        #screen canvas {
-            max-width: 100%;
-            max-height: 100%;
-            object-fit: contain;
-            image-rendering: -webkit-optimize-contrast;
-            image-rendering: crisp-edges;
-            image-rendering: pixelated;
-            border-radius: 12px;
-            box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05);
+        #screen {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
         .btn-ctrl {
-            background: rgba(30, 41, 59, 0.85);
+            background: #1e293b;
             color: #f1f5f9;
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 10px;
-            font-weight: 600;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 8px;
+            font-weight: 700;
             display: flex;
             align-items: center;
             justify-content: center;
             user-select: none;
             touch-action: manipulation;
-            transition: all 0.12s ease;
+            transition: all 0.08s ease;
+            cursor: pointer;
         }
         .btn-ctrl:active {
             background: #3b82f6;
             color: #ffffff;
-            transform: scale(0.94);
+            transform: scale(0.92);
             border-color: #60a5fa;
         }
         /* Hide all default noVNC toolbars & icons */
@@ -62,7 +62,7 @@
 <body class="flex flex-col h-screen select-none text-slate-100">
 
     <!-- Sleek Minimalist Top Navbar -->
-    <header class="h-12 bg-slate-950/80 backdrop-blur-md border-b border-white/5 px-4 flex items-center justify-between z-30 shrink-0">
+    <header class="h-12 bg-slate-950/90 backdrop-blur-md border-b border-white/5 px-4 flex items-center justify-between z-30 shrink-0">
         <!-- Brand & Status -->
         <div class="flex items-center gap-3">
             <div class="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center shadow-lg shadow-amber-500/20 text-white text-xs font-bold">
@@ -79,9 +79,9 @@
 
         <!-- Modern Action Buttons -->
         <div class="flex items-center gap-2">
-            <button id="btn-toggle-pad" class="h-8 px-3 rounded-lg bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 text-xs font-medium text-slate-200 flex items-center gap-1.5 transition">
-                <i class="fa-solid fa-gamepad text-amber-400"></i>
-                <span class="hidden sm:inline">Phím ảo</span>
+            <button id="btn-toggle-pad" class="h-8 px-3 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 active:scale-95 border border-amber-500/30 text-xs font-semibold text-amber-300 flex items-center gap-1.5 transition">
+                <i class="fa-solid fa-gamepad"></i>
+                <span>Phím ảo</span>
             </button>
             <button id="btn-fullscreen" class="h-8 w-8 rounded-lg bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 text-xs text-slate-300 flex items-center justify-center transition" title="Toàn màn hình">
                 <i class="fa-solid fa-expand"></i>
@@ -94,11 +94,13 @@
     </header>
 
     <!-- Main Game Canvas Area -->
-    <main class="relative flex-1 bg-[#070a12] flex items-center justify-center p-2 sm:p-4 overflow-hidden">
-        <div id="screen" class="w-full h-full"></div>
+    <main class="relative flex-1 bg-[#070a12] flex items-center justify-center overflow-hidden" id="main-area">
+        <div id="screen-wrapper">
+            <div id="screen"></div>
+        </div>
 
         <!-- Loading / Connecting Overlay -->
-        <div id="loading-overlay" class="absolute inset-0 bg-[#070a12]/95 backdrop-blur-sm flex flex-col items-center justify-center gap-3 transition-opacity duration-300 z-20">
+        <div id="loading-overlay" class="absolute inset-0 bg-[#070a12] flex flex-col items-center justify-center gap-3 z-50">
             <div class="relative w-12 h-12">
                 <div class="w-12 h-12 rounded-full border-2 border-amber-500/20 border-t-amber-400 animate-spin"></div>
                 <span class="absolute inset-0 flex items-center justify-center text-sm">🐉</span>
@@ -106,9 +108,9 @@
             <p class="text-xs font-medium text-slate-300" id="loading-text">Đang kết nối vào màn hình Ngọc Rồng 24/24...</p>
         </div>
 
-        <!-- Minimalist Floating Mobile Keypad -->
-        <div id="gamepad-drawer" class="hidden absolute bottom-4 right-4 bg-slate-950/85 backdrop-blur-xl p-3 rounded-2xl border border-white/10 shadow-2xl z-40 max-w-[260px] animate-in fade-in zoom-in-95 duration-150">
-            <div class="flex items-center justify-between pb-2 mb-2 border-b border-white/10 text-[11px] font-semibold text-slate-400">
+        <!-- Modern Floating Mobile Keypad (Visible by default) -->
+        <div id="gamepad-drawer" class="absolute bottom-3 right-3 bg-slate-950/90 backdrop-blur-xl p-2.5 rounded-2xl border border-white/10 shadow-2xl z-40 max-w-[260px] select-none">
+            <div class="flex items-center justify-between pb-1.5 mb-2 border-b border-white/10 text-[11px] font-semibold text-slate-400">
                 <span class="flex items-center gap-1.5 text-amber-400">
                     <i class="fa-solid fa-keyboard"></i>
                     <span>Bàn phím J2ME</span>
@@ -119,13 +121,13 @@
             </div>
 
             <!-- Direction & Softkeys -->
-            <div class="grid grid-cols-3 gap-1.5 mb-2 text-xs">
+            <div class="grid grid-cols-3 gap-1 mb-1.5 text-xs">
                 <button class="btn-ctrl h-9 text-[11px]" data-key="SoftLeft">Chọn Trái</button>
                 <button class="btn-ctrl h-9" data-key="ArrowUp"><i class="fa-solid fa-arrow-up"></i></button>
                 <button class="btn-ctrl h-9 text-[11px]" data-key="SoftRight">Chọn Phải</button>
 
                 <button class="btn-ctrl h-9" data-key="ArrowLeft"><i class="fa-solid fa-arrow-left"></i></button>
-                <button class="btn-ctrl h-9 bg-indigo-600/80 border-indigo-500 font-bold text-white" data-key="Enter">OK</button>
+                <button class="btn-ctrl h-9 bg-indigo-600 border-indigo-500 font-bold text-white text-sm" data-key="Enter">OK</button>
                 <button class="btn-ctrl h-9" data-key="ArrowRight"><i class="fa-solid fa-arrow-right"></i></button>
 
                 <div></div>
@@ -134,7 +136,7 @@
             </div>
 
             <!-- Number Keypad (1 - 9, *, 0, #) -->
-            <div class="grid grid-cols-3 gap-1.5 text-xs">
+            <div class="grid grid-cols-3 gap-1 text-xs">
                 <button class="btn-ctrl h-8" data-key="1">1</button>
                 <button class="btn-ctrl h-8" data-key="2">2</button>
                 <button class="btn-ctrl h-8" data-key="3">3</button>
@@ -163,8 +165,7 @@
         const loadingText = document.getElementById('loading-text');
 
         function connect() {
-            loadingOverlay.style.opacity = '1';
-            loadingOverlay.classList.remove('pointer-events-none');
+            loadingOverlay.style.display = 'flex';
             loadingText.textContent = 'Đang kết nối vào máy chủ game...';
 
             const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -179,20 +180,21 @@
 
                 rfb.scaleViewport = true;
                 rfb.resizeSession = false;
-                rfb.clipViewport = true;
                 rfb.qualityLevel = 8;
                 rfb.compressionLevel = 2;
 
                 rfb.addEventListener('connect', () => {
-                    loadingOverlay.style.opacity = '0';
-                    setTimeout(() => loadingOverlay.classList.add('pointer-events-none'), 300);
+                    // Completely hide overlay so it does NOT block mouse/touch events
+                    loadingOverlay.style.display = 'none';
                     statusPill.className = 'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
                     statusLabel.textContent = 'Đang chạy 24/24';
+
+                    // Auto-focus canvas for keyboard input
+                    if (rfb.focus) rfb.focus();
                 });
 
                 rfb.addEventListener('disconnect', (e) => {
-                    loadingOverlay.style.opacity = '1';
-                    loadingOverlay.classList.remove('pointer-events-none');
+                    loadingOverlay.style.display = 'flex';
                     loadingText.textContent = 'Mất kết nối. Đang tự động kết nối lại...';
                     statusPill.className = 'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-500/10 text-rose-400 border border-rose-500/20';
                     statusLabel.textContent = 'Đã ngắt';
@@ -208,32 +210,62 @@
         // Initialize RFB connection
         connect();
 
-        // Virtual Keypad Action Handlers
-        const keysymMap = {
-            'ArrowUp': 0xFF52,
-            'ArrowDown': 0xFF54,
-            'ArrowLeft': 0xFF51,
-            'ArrowRight': 0xFF53,
-            'Enter': 0xFF0D,
-            'SoftLeft': 0xFF6A,
-            'SoftRight': 0xFF6B,
-            '1': 0x0031, '2': 0x0032, '3': 0x0033,
-            '4': 0x0034, '5': 0x0035, '6': 0x0036,
-            '7': 0x0037, '8': 0x0038, '9': 0x0039,
-            '0': 0x0030, '*': 0x002A, '#': 0x0023
+        // Guaranteed pulse key sender (Press + Release pulse)
+        function sendKeyPulse(keysym, code) {
+            if (!rfb) return;
+            rfb.sendKey(keysym, code, true);
+            setTimeout(() => {
+                rfb.sendKey(keysym, code, false);
+            }, 60);
+        }
+
+        // Comprehensive Key mappings for FreeJ2ME / Ngoc Rong Online
+        const keyMap = {
+            'SoftLeft':  { sym: 0x0071, code: 'KeyQ' },       // Q (Chọn Trái)
+            'SoftRight': { sym: 0x0077, code: 'KeyW' },       // W (Chọn Phải)
+            'Enter':     { sym: 0xFF0D, code: 'Enter' },      // Enter (OK)
+            'ArrowUp':   { sym: 0xFF52, code: 'ArrowUp' },    // Up
+            'ArrowDown': { sym: 0xFF54, code: 'ArrowDown' },  // Down
+            'ArrowLeft': { sym: 0xFF51, code: 'ArrowLeft' },  // Left
+            'ArrowRight':{ sym: 0xFF53, code: 'ArrowRight' }, // Right
+            '1': { sym: 0x0031, code: 'Digit1' },
+            '2': { sym: 0x0032, code: 'Digit2' },
+            '3': { sym: 0x0033, code: 'Digit3' },
+            '4': { sym: 0x0034, code: 'Digit4' },
+            '5': { sym: 0x0035, code: 'Digit5' },
+            '6': { sym: 0x0036, code: 'Digit6' },
+            '7': { sym: 0x0037, code: 'Digit7' },
+            '8': { sym: 0x0038, code: 'Digit8' },
+            '9': { sym: 0x0039, code: 'Digit9' },
+            '0': { sym: 0x0030, code: 'Digit0' },
+            '*': { sym: 0x002A, code: 'NumpadMultiply' },
+            '#': { sym: 0x0023, code: 'IntlHash' }
         };
 
+        // Virtual Keypad Button Click Handlers
         document.querySelectorAll('.btn-ctrl').forEach(btn => {
-            const sendKey = (isDown) => {
+            const handlePress = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
                 const key = btn.getAttribute('data-key');
-                const sym = keysymMap[key];
-                if (rfb && sym) {
-                    rfb.sendKey(sym, null, isDown);
+                const def = keyMap[key];
+                if (def) {
+                    sendKeyPulse(def.sym, def.code);
+                    // Also send secondary fallback keys
+                    if (key === 'SoftLeft') sendKeyPulse(0xFFBE, 'F1');
+                    if (key === 'SoftRight') sendKeyPulse(0xFFBF, 'F2');
+                    if (key === 'Enter') {
+                        sendKeyPulse(0x0020, 'Space');
+                        sendKeyPulse(0x0035, 'Digit5');
+                    }
                 }
             };
-            btn.addEventListener('pointerdown', (e) => { e.preventDefault(); sendKey(true); });
-            btn.addEventListener('pointerup', (e) => { e.preventDefault(); sendKey(false); });
-            btn.addEventListener('pointerleave', (e) => { sendKey(false); });
+            btn.addEventListener('pointerdown', handlePress);
+        });
+
+        // Ensure canvas retains focus whenever clicked
+        document.getElementById('screen-wrapper').addEventListener('pointerdown', () => {
+            if (rfb && rfb.focus) rfb.focus();
         });
 
         // Toggle Keypad Drawer
@@ -241,8 +273,14 @@
         const gamepadDrawer = document.getElementById('gamepad-drawer');
         const btnClosePad = document.getElementById('btn-close-pad');
 
-        btnTogglePad.addEventListener('click', () => gamepadDrawer.classList.toggle('hidden'));
-        btnClosePad.addEventListener('click', () => gamepadDrawer.classList.add('hidden'));
+        btnTogglePad.addEventListener('click', (e) => {
+            e.stopPropagation();
+            gamepadDrawer.classList.toggle('hidden');
+        });
+        btnClosePad.addEventListener('click', (e) => {
+            e.stopPropagation();
+            gamepadDrawer.classList.add('hidden');
+        });
 
         // Fullscreen toggle
         document.getElementById('btn-fullscreen').addEventListener('click', () => {
