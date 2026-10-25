@@ -3,7 +3,7 @@ set -e
 
 PORT=${PORT:-7860}
 echo "=========================================================="
-echo "🚀 Khởi động Cloud Gaming Ngọc Rồng Online 24/24..."
+echo "🚀 Khởi động Cloud Gaming J2ME 24/24..."
 echo "📡 Cổng phục vụ: $PORT"
 echo "=========================================================="
 
@@ -23,20 +23,25 @@ echo "[3/4] Khởi động x11vnc (Port 5900)..."
 x11vnc -display :1 -forever -shared -nopw -rfbport 5900 -listen 127.0.0.1 -q &
 sleep 1
 
-# 4. Start Ngoc Rong Online Watchdog Loop
-echo "[4/4] Khởi chạy Ngọc Rồng Online (DragonBoy250.jar)..."
+# 4. Start Dynamic Game Watchdog Loop (Runs any .jar in workspace)
 (
     while true; do
-        echo "[GAME] Bắt đầu phiên chạy Ngọc Rồng..."
-        java -Xms128m -Xmx1G -jar /app/emulator/freej2me.jar /app/workspace/DragonBoy250.jar || true
-        echo "[GAME] Game đã tắt hoặc mất kết nối. Tự động bật lại sau 3 giây..."
+        # Dynamically find the game .jar in workspace
+        TARGET_JAR=$(ls /app/workspace/*.jar 2>/dev/null | head -n 1)
+        if [ -n "$TARGET_JAR" ]; then
+            echo "[GAME] Bắt đầu chạy game: $TARGET_JAR"
+            java -Xms128m -Xmx1G -jar /app/emulator/freej2me.jar "$TARGET_JAR" || true
+        else
+            echo "[GAME] Không tìm thấy file .jar nào trong /app/workspace. Đang chờ file..."
+        fi
+        echo "[GAME] Game đã kết thúc hoặc khởi động lại. Tự động kiểm tra sau 3 giây..."
         sleep 3
     done
 ) &
 
 # Prepare noVNC directory and UptimeRobot health-check
 mkdir -p /usr/share/novnc/health
-echo '{"status":"alive","game":"Ngoc Rong Online 24/24"}' > /usr/share/novnc/health/index.html
+echo '{"status":"alive","game":"J2ME Cloud Game 24/24"}' > /usr/share/novnc/health/index.html
 
 # Set default index.html to auto-connect with auto-scaling to fit screen
 cat << 'EOF' > /usr/share/novnc/index.html
@@ -45,11 +50,11 @@ cat << 'EOF' > /usr/share/novnc/index.html
 <head>
     <meta charset="UTF-8">
     <meta http-equiv="refresh" content="0; url=/vnc.html?autoconnect=true&reconnect=true&resize=scale&quality=8">
-    <title>Ngọc Rồng Online 24/24 Cloud Player</title>
+    <title>J2ME Cloud Gaming 24/24 Player</title>
 </head>
 <body style="background:#0b0f19;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-family:sans-serif;">
     <div style="text-align:center;">
-        <h2 style="color:#fbbf24;margin-bottom:8px;">🐉 Ngọc Rồng Online 24/24</h2>
+        <h2 style="color:#fbbf24;margin-bottom:8px;">🎮 J2ME Cloud Gaming 24/24</h2>
         <p style="color:#94a3b8;font-size:14px;">Đang kết nối vào màn hình game trên máy chủ đám mây...</p>
     </div>
 </body>
