@@ -2,6 +2,8 @@
 set -e
 
 PORT=${PORT:-7860}
+export DISPLAY=:1
+
 echo "=========================================================="
 echo "🚀 Khởi động Cloud Gaming J2ME 24/24..."
 echo "📡 Cổng phục vụ: $PORT"
@@ -10,8 +12,7 @@ echo "=========================================================="
 # 1. Start Virtual Display (Xvfb :1)
 echo "[1/4] Khởi động Màn hình ảo (Xvfb :1)..."
 Xvfb :1 -screen 0 1024x768x24 -nolisten tcp &
-sleep 1
-export DISPLAY=:1
+sleep 2
 
 # 2. Start Lightweight Window Manager (Fluxbox)
 echo "[2/4] Khởi động Window Manager (Fluxbox)..."
@@ -23,18 +24,19 @@ echo "[3/4] Khởi động x11vnc (Port 5900)..."
 x11vnc -display :1 -forever -shared -nopw -rfbport 5900 -listen 127.0.0.1 -q &
 sleep 1
 
-# 4. Start Dynamic Game Watchdog Loop (Runs any .jar in workspace)
+# 4. Start Dynamic Game Watchdog Loop (Runs any .jar in workspace with ISO_8859_1 encoding)
+echo "[4/4] Bắt đầu vòng lặp giám sát game (Watchdog)..."
 (
+    export DISPLAY=:1
     while true; do
-        # Dynamically find the game .jar in workspace
         TARGET_JAR=$(ls /app/workspace/*.jar 2>/dev/null | head -n 1)
         if [ -n "$TARGET_JAR" ]; then
             echo "[GAME] Bắt đầu chạy game: $TARGET_JAR"
-            java -Xms128m -Xmx1G -jar /app/emulator/freej2me.jar "$TARGET_JAR" || true
+            java -Dfile.encoding=ISO_8859_1 -Xms128m -Xmx1G -jar /app/emulator/freej2me.jar "$TARGET_JAR" || true
         else
             echo "[GAME] Không tìm thấy file .jar nào trong /app/workspace. Đang chờ file..."
         fi
-        echo "[GAME] Game đã kết thúc hoặc khởi động lại. Tự động kiểm tra sau 3 giây..."
+        echo "[GAME] Game đã tắt hoặc thoát. Tự động khởi chạy lại sau 3 giây..."
         sleep 3
     done
 ) &
