@@ -7,29 +7,24 @@ echo "🚀 Khởi động Cloud Gaming Ngọc Rồng Online 24/24..."
 echo "📡 Cổng phục vụ: $PORT"
 echo "=========================================================="
 
-# 1. Start Virtual Display (Xvfb)
-echo "[1/5] Khởi động Màn hình ảo (Xvfb :1)..."
+# 1. Start Virtual Display (Xvfb :1)
+echo "[1/4] Khởi động Màn hình ảo (Xvfb :1)..."
 Xvfb :1 -screen 0 1024x768x24 -nolisten tcp &
 sleep 1
 export DISPLAY=:1
 
 # 2. Start Lightweight Window Manager (Fluxbox)
-echo "[2/5] Khởi động Window Manager (Fluxbox)..."
+echo "[2/4] Khởi động Window Manager (Fluxbox)..."
 fluxbox &
 sleep 1
 
 # 3. Start VNC Server (x11vnc)
-echo "[3/5] Khởi động x11vnc (Port 5900)..."
+echo "[3/4] Khởi động x11vnc (Port 5900)..."
 x11vnc -display :1 -forever -shared -nopw -rfbport 5900 -listen 127.0.0.1 -q &
 sleep 1
 
-# 4. Start Websockify (Port 6080 for noVNC WebSocket)
-echo "[4/5] Kết nối Websockify WebSocket..."
-websockify 6080 127.0.0.1:5900 &
-sleep 1
-
-# 5. Start Ngoc Rong Online Watchdog Loop
-echo "[5/5] Khởi chạy Ngọc Rồng Online (DragonBoy250.jar)..."
+# 4. Start Ngoc Rong Online Watchdog Loop
+echo "[4/4] Khởi chạy Ngọc Rồng Online (DragonBoy250.jar)..."
 (
     while true; do
         echo "[GAME] Bắt đầu phiên chạy Ngọc Rồng..."
@@ -39,11 +34,28 @@ echo "[5/5] Khởi chạy Ngọc Rồng Online (DragonBoy250.jar)..."
     done
 ) &
 
-# Link noVNC static files into public directory
-mkdir -p /app/public/novnc
-cp -r /usr/share/novnc/* /app/public/novnc/ 2>/dev/null || true
+# Prepare noVNC directory and UptimeRobot health-check
+mkdir -p /usr/share/novnc/health
+echo '{"status":"alive","game":"Ngoc Rong Online 24/24"}' > /usr/share/novnc/health/index.html
 
-# Start Web Server & Health Check on main PORT
+# Set default index.html to auto-connect with auto-scaling to fit screen
+cat << 'EOF' > /usr/share/novnc/index.html
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="refresh" content="0; url=/vnc.html?autoconnect=true&reconnect=true&resize=scale&quality=8">
+    <title>Ngọc Rồng Online 24/24 Cloud Player</title>
+</head>
+<body style="background:#0b0f19;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-family:sans-serif;">
+    <div style="text-align:center;">
+        <h2 style="color:#fbbf24;margin-bottom:8px;">🐉 Ngọc Rồng Online 24/24</h2>
+        <p style="color:#94a3b8;font-size:14px;">Đang kết nối vào màn hình game trên máy chủ đám mây...</p>
+    </div>
+</body>
+</html>
+EOF
+
+# Start Websockify directly on $PORT (handles both HTTP static files, /health, and WebSocket)
 echo "[READY] Hệ thống đã sẵn sàng phục vụ tại cổng $PORT!"
-exec python3 /app/web_server.py
-
+exec websockify --web /usr/share/novnc "$PORT" 127.0.0.1:5900
