@@ -3,3 +3,4 @@ uvicorn[standard]
 gradio>=4.44.0
 psutil
 python-multipart
+

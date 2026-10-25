@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="vi" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Ngọc Rồng Online 24/24 Cloud Player</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        body { margin: 0; padding: 0; background-color: #0b0f19; overflow: hidden; }
+        #vnc-frame { width: 100%; height: 100%; border: none; }
+        .key-btn {
+            background: #1e293b;
+            color: #f8fafc;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+            touch-action: manipulation;
+            transition: all 0.1s;
+        }
+        .key-btn:active {
+            background: #3b82f6;
+            transform: scale(0.95);
+        }
+    </style>
+</head>
+<body class="flex flex-col h-screen text-slate-100 select-none">
+
+    <!-- Top Navigation Bar -->
+    <header class="bg-slate-900 border-b border-slate-800 px-3 py-2 flex items-center justify-between z-30 shadow-md">
+        <div class="flex items-center gap-2">
+            <span class="text-xl">🐉</span>
+            <div>
+                <h1 class="font-bold text-sm text-amber-400 leading-tight">Ngọc Rồng Online 24/24</h1>
+                <p class="text-[10px] text-slate-400">Cloud AFK Auto-Farm • UptimeRobot Keep-Alive</p>
+            </div>
+            <span class="ml-2 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-950 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>Treo 24/24</span>
+            </span>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <button id="btn-toggle-keypad" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-amber-300 flex items-center gap-1 transition" title="Bật/Tắt Bàn phím ảo cho điện thoại">
+                <i class="fa-solid fa-gamepad"></i>
+                <span class="hidden sm:inline">Bàn phím ảo</span>
+            </button>
+            <button id="btn-fullscreen" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-300 flex items-center gap-1 transition">
+                <i class="fa-solid fa-expand"></i>
+            </button>
+            <a href="/health" target="_blank" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-rose-400 flex items-center gap-1 transition" title="Link UptimeRobot">
+                <i class="fa-solid fa-heart-pulse"></i>
+                <span class="hidden sm:inline">Health</span>
+            </a>
+        </div>
+    </header>
+
+    <!-- Main Game Display Area (noVNC Frame) -->
+    <div class="relative flex-1 bg-black flex items-center justify-center overflow-hidden">
+        <iframe id="vnc-frame" src="/novnc/vnc.html?autoconnect=true&reconnect=true&resize=scale&quality=8" class="w-full h-full"></iframe>
+
+        <!-- Mobile / Touch Virtual Keypad (Collapsible) -->
+        <div id="virtual-keypad" class="hidden absolute bottom-3 right-3 bg-slate-900/90 backdrop-blur-md p-3 rounded-2xl border border-slate-700 shadow-2xl z-40 max-w-[280px]">
+            <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800 text-[11px] text-slate-400">
+                <span>Bàn phím ảo J2ME</span>
+                <button id="btn-close-keypad" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <!-- Direction Pad & Action Keys -->
+            <div class="grid grid-cols-3 gap-1.5 mb-2">
+                <button class="key-btn h-10" data-key="SoftLeft">Chọn Trái</button>
+                <button class="key-btn h-10" data-key="ArrowUp"><i class="fa-solid fa-arrow-up"></i></button>
+                <button class="key-btn h-10" data-key="SoftRight">Chọn Phải</button>
+
+                <button class="key-btn h-10" data-key="ArrowLeft"><i class="fa-solid fa-arrow-left"></i></button>
+                <button class="key-btn h-10 bg-indigo-600 border-indigo-500" data-key="Enter">OK</button>
+                <button class="key-btn h-10" data-key="ArrowRight"><i class="fa-solid fa-arrow-right"></i></button>
+
+                <div></div>
+                <button class="key-btn h-10" data-key="ArrowDown"><i class="fa-solid fa-arrow-down"></i></button>
+                <div></div>
+            </div>
+
+            <!-- Number Keypad (1 - 9, *, 0, #) -->
+            <div class="grid grid-cols-3 gap-1.5 text-xs">
+                <button class="key-btn h-9" data-key="1">1</button>
+                <button class="key-btn h-9" data-key="2">2</button>
+                <button class="key-btn h-9" data-key="3">3</button>
+                <button class="key-btn h-9" data-key="4">4</button>
+                <button class="key-btn h-9" data-key="5">5</button>
+                <button class="key-btn h-9" data-key="6">6</button>
+                <button class="key-btn h-9" data-key="7">7</button>
+                <button class="key-btn h-9" data-key="8">8</button>
+                <button class="key-btn h-9" data-key="9">9</button>
+                <button class="key-btn h-9" data-key="*">*</button>
+                <button class="key-btn h-9" data-key="0">0</button>
+                <button class="key-btn h-9" data-key="#">#</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script to Handle Virtual Keypad & Fullscreen -->
+    <script>
+        const btnToggleKeypad = document.getElementById('btn-toggle-keypad');
+        const virtualKeypad = document.getElementById('virtual-keypad');
+        const btnCloseKeypad = document.getElementById('btn-close-keypad');
+        const btnFullscreen = document.getElementById('btn-fullscreen');
+        const vncFrame = document.getElementById('vnc-frame');
+
+        btnToggleKeypad.addEventListener('click', () => {
+            virtualKeypad.classList.toggle('hidden');
+        });
+        btnCloseKeypad.addEventListener('click', () => {
+            virtualKeypad.classList.add('hidden');
+        });
+
+        btnFullscreen.addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(() => {});
+            } else {
+                document.exitFullscreen().catch(() => {});
+            }
+        });
+
+        // Forward Virtual Keypad events into noVNC iframe
+        document.querySelectorAll('.key-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const key = btn.getAttribute('data-key');
+                try {
+                    const win = vncFrame.contentWindow;
+                    if (win && win.rfb) {
+                        const codeMap = {
+                            'ArrowUp': 0xFF52,
+                            'ArrowDown': 0xFF54,
+                            'ArrowLeft': 0xFF51,
+                            'ArrowRight': 0xFF53,
+                            'Enter': 0xFF0D,
+                            'SoftLeft': 0xFF6A,
+                            'SoftRight': 0xFF6B,
+                            '1': 0x0031, '2': 0x0032, '3': 0x0033,
+                            '4': 0x0034, '5': 0x0035, '6': 0x0036,
+                            '7': 0x0037, '8': 0x0038, '9': 0x0039,
+                            '0': 0x0030, '*': 0x002A, '#': 0x0023
+                        };
+                        const keysym = codeMap[key];
+                        if (keysym) {
+                            win.rfb.sendKey(keysym, null, true);
+                            setTimeout(() => win.rfb.sendKey(keysym, null, false), 80);
+                        }
+                    }
+                } catch (e) {}
+            });
+        });
+    </script>
+</body>
+</html>

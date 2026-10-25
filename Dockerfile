@@ -1,49 +1,35 @@
 # ========================================================
-# Dockerfile for Java 24/7 Cloud Runner on Hugging Face Spaces
-# Base Image: Eclipse Temurin OpenJDK 21
+# Dockerfile: Ngọc Rồng Online 24/24 Cloud Player (noVNC + J2ME)
 # ========================================================
 
-FROM eclipse-temurin:21-jdk-jammy
+FROM ubuntu:22.04
 
-# Install Node.js LTS and essential tools
+ENV DEBIAN_FRONTEND=noninteractive \
+    PORT=7860 \
+    DISPLAY=:1
+
+# Install OpenJDK, Xvfb virtual display, Fluxbox, x11vnc, noVNC, and Python
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
+    default-jre \
+    xvfb \
+    fluxbox \
+    x11vnc \
+    novnc \
+    websockify \
+    python3 \
     ca-certificates \
-    gnupg \
     procps \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Hugging Face Spaces standard: Non-root user with UID 1000
-RUN useradd -m -u 1000 user
+WORKDIR /app
 
-# Set environment variables
-ENV HOME=/home/user \
-    PATH=/home/user/.local/bin:$PATH \
-    PORT=7860 \
-    NODE_ENV=production
+# Copy application files
+COPY . .
 
-# Set working directory inside user home
-WORKDIR /home/user/app
+# Set permissions
+RUN chmod +x /app/entrypoint.sh
 
-# Copy dependency definitions and install production packages
-COPY --chown=user:user package*.json ./
-RUN npm ci --only=production
-
-# Copy application code with proper ownership
-COPY --chown=user:user . .
-
-# Ensure workspace directory exists and has full write permissions
-RUN mkdir -p /home/user/app/workspace && chown -R user:user /home/user/app
-
-# Switch to non-root user UID 1000
-USER user
-
-# Hugging Face Spaces default port
 EXPOSE 7860
 
-# Start Web Controller & Java Process Manager
-CMD ["node", "server.js"]
-
+CMD ["/bin/bash", "/app/entrypoint.sh"]
