@@ -61,31 +61,41 @@
 <body class="flex flex-col h-screen select-none text-slate-100">
 
     <!-- Top Navbar -->
-    <header class="h-12 bg-slate-950/90 backdrop-blur-md border-b border-white/5 px-4 flex items-center justify-between z-30 shrink-0">
-        <div class="flex items-center gap-3">
+    <header class="h-12 bg-slate-950/90 backdrop-blur-md border-b border-white/5 px-3 sm:px-4 flex items-center justify-between z-30 shrink-0">
+        <div class="flex items-center gap-2 sm:gap-3">
             <div class="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center shadow-lg shadow-amber-500/20 text-white text-xs font-bold">
                 🐉
             </div>
             <div class="flex items-center gap-2">
-                <span class="font-bold text-sm text-slate-100 tracking-tight">Ngọc Rồng Online</span>
-                <span id="status-pill" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <span class="font-bold text-xs sm:text-sm text-slate-100 tracking-tight">Ngọc Rồng Online</span>
+                <span id="status-pill" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                     <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                    <span id="status-label">Đang kết nối...</span>
+                    <span id="status-label">Đang chạy 24/24</span>
                 </span>
             </div>
         </div>
 
-        <div class="flex items-center gap-2">
-            <button id="btn-toggle-pad" class="h-8 px-3 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 active:scale-95 border border-amber-500/30 text-xs font-semibold text-amber-300 flex items-center gap-1.5 transition">
-                <i class="fa-solid fa-gamepad"></i>
-                <span>Phím ảo</span>
+        <div class="flex items-center gap-1.5 sm:gap-2">
+            <!-- Upload / Switch Mod Button -->
+            <button id="btn-open-upload" class="h-8 px-2.5 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 active:scale-95 border border-indigo-500/30 text-xs font-semibold text-indigo-300 flex items-center gap-1.5 transition">
+                <i class="fa-solid fa-cloud-arrow-up"></i>
+                <span>Đổi Game (.jar)</span>
             </button>
+
+            <!-- Virtual Keypad Toggle -->
+            <button id="btn-toggle-pad" class="h-8 px-2.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 active:scale-95 border border-amber-500/30 text-xs font-semibold text-amber-300 flex items-center gap-1.5 transition">
+                <i class="fa-solid fa-gamepad"></i>
+                <span class="hidden sm:inline">Phím ảo</span>
+            </button>
+
+            <!-- Fullscreen Toggle -->
             <button id="btn-fullscreen" class="h-8 w-8 rounded-lg bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 text-xs text-slate-300 flex items-center justify-center transition" title="Toàn màn hình">
                 <i class="fa-solid fa-expand"></i>
             </button>
-            <a href="/health" target="_blank" class="h-8 px-2.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-xs font-medium text-rose-400 flex items-center gap-1.5 transition" title="UptimeRobot Health Check">
+
+            <!-- UptimeRobot Keep-Alive Badge -->
+            <a href="/health" target="_blank" class="h-8 px-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-xs font-medium text-rose-400 flex items-center gap-1 transition" title="Link UptimeRobot">
                 <i class="fa-solid fa-heart-pulse"></i>
-                <span class="hidden md:inline">24/7 Keep-Alive</span>
             </a>
         </div>
     </header>
@@ -102,7 +112,7 @@
                 <div class="w-10 h-10 rounded-full border-2 border-amber-500/20 border-t-amber-400 animate-spin"></div>
                 <span class="absolute inset-0 flex items-center justify-center text-xs">🐉</span>
             </div>
-            <p class="text-xs font-medium text-slate-300" id="loading-text">Đang tải màn hình game...</p>
+            <p class="text-xs font-medium text-slate-300" id="loading-text">Đang kết nối vào màn hình game...</p>
         </div>
 
         <!-- Floating Mobile Keypad -->
@@ -150,6 +160,43 @@
         </div>
     </main>
 
+    <!-- MODAL: Đổi File Game / Bản Mod (.JAR) Trực tiếp trên Web -->
+    <div id="modal-upload" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-cloud-arrow-up text-indigo-400"></i>
+                    <h3 class="font-bold text-sm text-white">Đổi File Game / Mod (.JAR)</h3>
+                </div>
+                <button id="btn-close-upload" class="text-slate-400 hover:text-white">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="space-y-3 text-xs">
+                <div class="bg-slate-950 p-2.5 rounded-lg border border-slate-800 flex items-center justify-between">
+                    <span class="text-slate-400">File đang chạy:</span>
+                    <span id="label-current-game" class="font-mono text-amber-300 font-semibold truncate max-w-[170px]">Đang tải...</span>
+                </div>
+
+                <div>
+                    <label class="block text-slate-300 font-medium mb-1.5">Chọn file .jar mới từ máy hoặc điện thoại:</label>
+                    <input type="file" id="input-game-file" accept=".jar" class="block w-full text-xs text-slate-400 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-600 file:text-white hover:file:bg-indigo-500 cursor-pointer bg-slate-950 border border-slate-800 rounded-lg p-1.5">
+                </div>
+
+                <div id="upload-status" class="hidden text-center py-1 text-xs"></div>
+            </div>
+
+            <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
+                <button id="btn-cancel-upload" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium">Hủy</button>
+                <button id="btn-submit-upload" class="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white text-xs font-semibold flex items-center gap-1.5 transition">
+                    <i class="fa-solid fa-play text-[10px]"></i>
+                    <span>Tải Lên & Chạy Ngay</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- RFB Core Library Script -->
     <script type="module">
         import RFB from './core/rfb.js';
@@ -172,7 +219,6 @@
                     credentials: { password: '' }
                 });
 
-                // Ultra-fast rendering: Zero compression, instant frames
                 rfb.scaleViewport = true;
                 rfb.resizeSession = false;
                 rfb.compressionLevel = 0;
@@ -180,7 +226,7 @@
 
                 rfb.addEventListener('connect', () => {
                     loadingOverlay.style.display = 'none';
-                    statusPill.className = 'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+                    statusPill.className = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
                     statusLabel.textContent = 'Đang chạy 24/24';
 
                     if (rfb.focus) rfb.focus();
@@ -189,7 +235,7 @@
                 rfb.addEventListener('disconnect', (e) => {
                     loadingOverlay.style.display = 'flex';
                     loadingText.textContent = 'Đang kết nối lại tức thì...';
-                    statusPill.className = 'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20';
+                    statusPill.className = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20';
                     statusLabel.textContent = 'Đang nạp';
                     setTimeout(connect, 1000);
                 });
@@ -257,6 +303,7 @@
             if (rfb && rfb.focus) rfb.focus();
         });
 
+        // Toggle Keypad Drawer
         const btnTogglePad = document.getElementById('btn-toggle-pad');
         const gamepadDrawer = document.getElementById('gamepad-drawer');
         const btnClosePad = document.getElementById('btn-close-pad');
@@ -270,11 +317,91 @@
             gamepadDrawer.classList.add('hidden');
         });
 
+        // Fullscreen toggle
         document.getElementById('btn-fullscreen').addEventListener('click', () => {
             if (!document.fullscreenElement) {
                 document.documentElement.requestFullscreen().catch(() => {});
             } else {
                 document.exitFullscreen().catch(() => {});
+            }
+        });
+
+        // ==================== UPLOAD MOD MODAL LOGIC ====================
+        const btnOpenUpload = document.getElementById('btn-open-upload');
+        const modalUpload = document.getElementById('modal-upload');
+        const btnCloseUpload = document.getElementById('btn-close-upload');
+        const btnCancelUpload = document.getElementById('btn-cancel-upload');
+        const btnSubmitUpload = document.getElementById('btn-submit-upload');
+        const inputGameFile = document.getElementById('input-game-file');
+        const uploadStatus = document.getElementById('upload-status');
+        const labelCurrentGame = document.getElementById('label-current-game');
+
+        async function refreshCurrentGame() {
+            try {
+                const res = await fetch('/api/current');
+                const data = await res.json();
+                labelCurrentGame.textContent = data.current || 'DragonBoy250.jar';
+            } catch (e) {
+                labelCurrentGame.textContent = 'DragonBoy250.jar';
+            }
+        }
+
+        btnOpenUpload.addEventListener('click', () => {
+            refreshCurrentGame();
+            uploadStatus.classList.add('hidden');
+            inputGameFile.value = '';
+            modalUpload.classList.remove('hidden');
+        });
+
+        btnCloseUpload.addEventListener('click', () => modalUpload.classList.add('hidden'));
+        btnCancelUpload.addEventListener('click', () => modalUpload.classList.add('hidden'));
+
+        btnSubmitUpload.addEventListener('click', async () => {
+            if (!inputGameFile.files || inputGameFile.files.length === 0) {
+                uploadStatus.className = 'text-center py-1 text-xs text-rose-400';
+                uploadStatus.textContent = 'Vui lòng chọn 1 file .jar!';
+                uploadStatus.classList.remove('hidden');
+                return;
+            }
+
+            const file = inputGameFile.files[0];
+            if (!file.name.toLowerCase().endsWith('.jar')) {
+                uploadStatus.className = 'text-center py-1 text-xs text-rose-400';
+                uploadStatus.textContent = 'Chỉ chấp nhận file có đuôi .jar!';
+                uploadStatus.classList.remove('hidden');
+                return;
+            }
+
+            uploadStatus.className = 'text-center py-1 text-xs text-amber-300 animate-pulse';
+            uploadStatus.textContent = 'Đang tải lên và khởi động lại game...';
+            uploadStatus.classList.remove('hidden');
+            btnSubmitUpload.disabled = true;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const res = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                if (data.success) {
+                    uploadStatus.className = 'text-center py-1 text-xs text-emerald-400 font-semibold';
+                    uploadStatus.textContent = `Thành công! Đang chuyển sang ${data.filename}...`;
+                    setTimeout(() => {
+                        modalUpload.classList.add('hidden');
+                        btnSubmitUpload.disabled = false;
+                    }, 1500);
+                } else {
+                    uploadStatus.className = 'text-center py-1 text-xs text-rose-400';
+                    uploadStatus.textContent = data.error || 'Lỗi tải file!';
+                    btnSubmitUpload.disabled = false;
+                }
+            } catch (err) {
+                uploadStatus.className = 'text-center py-1 text-xs text-rose-400';
+                uploadStatus.textContent = 'Lỗi mạng khi tải lên!';
+                btnSubmitUpload.disabled = false;
             }
         });
     </script>
