@@ -21,7 +21,7 @@ sleep 1
 
 # 3. Start VNC Server (x11vnc)
 echo "[3/4] Khởi động x11vnc (Port 5900)..."
-x11vnc -display :1 -forever -shared -nopw -rfbport 5900 -listen 127.0.0.1 -q &
+x11vnc -display :1 -forever -shared -nopw -rfbport 5900 -listen 127.0.0.1 -wait 50 -q &
 sleep 1
 
 # 4. Start Dynamic Game Watchdog Loop (Runs any .jar in workspace with ISO_8859_1 encoding)
@@ -45,9 +45,10 @@ echo "[4/4] Bắt đầu vòng lặp giám sát game (Watchdog)..."
 mkdir -p /usr/share/novnc/health
 echo '{"status":"alive","game":"Ngoc Rong Online 24/24"}' > /usr/share/novnc/health/index.html
 
-# Deploy modern minimalist UI directly to root
+# Deploy modern minimalist UI to both index.html and vnc.html
 cp /app/public/index.html /usr/share/novnc/index.html
+cp /app/public/index.html /usr/share/novnc/vnc.html
 
-# Start Websockify directly on $PORT (handles both HTTP static files, /health, and WebSocket)
+# Start Websockify directly on 0.0.0.0:$PORT
 echo "[READY] Hệ thống đã sẵn sàng phục vụ tại cổng $PORT!"
-exec websockify --web /usr/share/novnc "$PORT" 127.0.0.1:5900
+exec websockify --web /usr/share/novnc 0.0.0.0:"$PORT" 127.0.0.1:5900
