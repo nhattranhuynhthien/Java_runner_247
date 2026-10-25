@@ -3,8 +3,9 @@ title: Java 24/7 Cloud Runner
 emoji: ☕
 colorFrom: indigo
 colorTo: purple
-sdk: docker
-app_port: 7860
+sdk: gradio
+sdk_version: 4.44.0
+app_file: app.py
 ---
 
 # ☕ Nền tảng Chạy và Quản lý Tiến trình Java 24/24 trên Web
