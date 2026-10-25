@@ -46,3 +46,4 @@ cp -r /usr/share/novnc/* /app/public/novnc/ 2>/dev/null || true
 # Start Web Server & Health Check on main PORT
 echo "[READY] Hệ thống đã sẵn sàng phục vụ tại cổng $PORT!"
 exec python3 /app/web_server.py
+
