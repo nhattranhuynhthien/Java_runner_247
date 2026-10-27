@@ -301,6 +301,32 @@
                             </div>
                         </div>
 
+                        <!-- Server Selector Field -->
+                        <div class="flex flex-col gap-1">
+                            <div class="flex items-center justify-between text-[10px] text-slate-400">
+                                <span>Máy chủ (Server)</span>
+                                <button type="button" id="btn-switch-server" class="text-indigo-400 hover:text-indigo-300 hover:underline font-mono" title="Chỉ đổi máy chủ ngay lập tức trên màn hình hiện tại">
+                                    Đổi Server ngay
+                                </button>
+                            </div>
+                            <select id="login-server" class="w-full bg-slate-950 border border-white/15 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500 font-medium transition cursor-pointer">
+                                <option value="0">🟢 Giữ nguyên máy chủ hiện tại</option>
+                                <option value="1">Vũ trụ 1 (Sao Băng)</option>
+                                <option value="2">Vũ trụ 2 (Mặt Trăng)</option>
+                                <option value="3">Vũ trụ 3 (Trái Đất)</option>
+                                <option value="4">Vũ trụ 4 (Namếc)</option>
+                                <option value="5">Vũ trụ 5 (Xayda)</option>
+                                <option value="6">Vũ trụ 6</option>
+                                <option value="7" selected>Vũ trụ 7 (Mặc định)</option>
+                                <option value="8">Vũ trụ 8</option>
+                                <option value="9">Vũ trụ 9</option>
+                                <option value="10">Vũ trụ 10</option>
+                                <option value="11">Vũ trụ 11</option>
+                                <option value="12">Vũ trụ 12</option>
+                                <option value="13">Võ Đài Liên Vũ Trụ</option>
+                            </select>
+                        </div>
+
                         <!-- Options: Remember & From Menu -->
                         <div class="flex items-center justify-between text-[11px] text-slate-400 pt-0.5">
                             <label class="flex items-center gap-1.5 cursor-pointer select-none hover:text-slate-200" title="Lưu tài khoản & mật khẩu an toàn trong trình duyệt của bạn">
@@ -970,6 +996,8 @@
             // Quick Login & Dialog Input Handler
             const loginUser = document.getElementById('login-user');
             const loginPass = document.getElementById('login-pass');
+            const loginServer = document.getElementById('login-server');
+            const btnSwitchServer = document.getElementById('btn-switch-server');
             const btnLoginToggleMask = document.getElementById('btn-login-toggle-mask');
             const loginIconMask = document.getElementById('login-icon-mask');
             const chkRememberLogin = document.getElementById('chk-remember-login');
@@ -1001,7 +1029,7 @@
                 }
             }
 
-            // Restore saved credentials from localStorage
+            // Restore saved credentials & server preference from localStorage
             try {
                 const savedRemember = localStorage.getItem('nro_remember_login');
                 if (savedRemember === '0') {
@@ -1013,7 +1041,57 @@
                     if (savedU) loginUser.value = savedU;
                     if (savedP) loginPass.value = unmaskSecret(savedP);
                 }
+                const savedS = localStorage.getItem('nro_saved_server');
+                if (savedS !== null && loginServer) {
+                    loginServer.value = savedS;
+                }
             } catch (e) {}
+
+            if (loginServer) {
+                loginServer.addEventListener('change', () => {
+                    try { localStorage.setItem('nro_saved_server', loginServer.value); } catch (e) {}
+                });
+            }
+
+            // Handle Immediate Server Switch
+            if (btnSwitchServer) {
+                btnSwitchServer.addEventListener('click', () => {
+                    const sVal = loginServer ? parseInt(loginServer.value, 10) : 0;
+                    if (!sVal || sVal < 1) {
+                        showToast("Vui lòng chọn một máy chủ cụ thể (Vũ trụ 1 - 12 hoặc Võ Đài)", "amber");
+                        loginServer.focus();
+                        return;
+                    }
+                    btnSwitchServer.disabled = true;
+                    const origText = btnSwitchServer.textContent;
+                    btnSwitchServer.textContent = "Đang đổi...";
+                    showToast(`Đang chuyển sang Máy chủ: Vũ trụ ${sVal}...`, "indigo");
+
+                    fetch('/api/select_server', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ pin: state.pin, server: sVal })
+                    })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.status === 'ok') {
+                            showToast(data.message, "emerald");
+                            try { localStorage.setItem('nro_saved_server', sVal.toString()); } catch (e) {}
+                        } else {
+                            showToast(data.error || "Lỗi khi đổi máy chủ", "rose");
+                        }
+                    })
+                    .catch(() => {
+                        showToast("Lỗi kết nối máy chủ", "rose");
+                    })
+                    .finally(() => {
+                        btnSwitchServer.disabled = false;
+                        btnSwitchServer.textContent = origText;
+                        setTimeout(fetchScreenshot, 400);
+                        setTimeout(fetchScreenshot, 1000);
+                    });
+                });
+            }
 
             // Toggle password visibility
             btnLoginToggleMask.addEventListener('click', () => {
@@ -1030,6 +1108,7 @@
             function executeQuickLogin() {
                 const username = loginUser.value.trim();
                 const password = loginPass.value;
+                const serverVal = loginServer ? parseInt(loginServer.value, 10) : 0;
                 const fromMenu = chkFromMenu.checked;
                 const remember = chkRememberLogin.checked;
 
@@ -1044,6 +1123,7 @@
                     if (remember) {
                         localStorage.setItem('nro_saved_user', username);
                         localStorage.setItem('nro_saved_pass', maskSecret(password));
+                        localStorage.setItem('nro_saved_server', serverVal.toString());
                         localStorage.setItem('nro_remember_login', '1');
                     } else {
                         localStorage.removeItem('nro_saved_user');
@@ -1069,6 +1149,7 @@
                         pin: state.pin,
                         username: username,
                         password: password,
+                        server: serverVal,
                         from_menu: fromMenu,
                         auto_enter: true
                     })
