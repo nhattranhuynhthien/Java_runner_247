@@ -166,7 +166,8 @@ def add_security_headers(response):
     return response
 
 ALLOWED_KEYS = {
-    'Up', 'Down', 'Left', 'Right', 'Return', 'F1', 'F2', 'BackSpace', 'space', 'Escape', 'Tab'
+    'Up', 'Down', 'Left', 'Right', 'Return', 'F1', 'F2', 'BackSpace', 'space', 'Escape', 'Tab',
+    'asterisk', 'numbersign', 'KP_Enter', 'KP_Space'
 } | {chr(c) for c in range(ord('a'), ord('z') + 1)} | {chr(c) for c in range(ord('A'), ord('Z') + 1)} | {chr(c) for c in range(ord('0'), ord('9') + 1)} | {'*', '#', '@', '.', '_', '-', '+', '/', ':', '!', '?', '$', '%', '&'}
 
 KEY_MAP = {
@@ -174,8 +175,8 @@ KEY_MAP = {
     'down': 'Down',
     'left': 'Left',
     'right': 'Right',
-    'ok': 'space',
-    'select': 'space',
+    'ok': 'Return',
+    'select': 'Return',
     'return': 'Return',
     'enter': 'Return',
     'space': 'space',
@@ -462,21 +463,23 @@ def handle_input():
             wid = focus_game_window()
 
             if action == "key":
-                raw_val = str(data.get("value", ""))
+                raw_val = str(data.get("value", "")).strip()
                 key_to_send = KEY_MAP.get(raw_val.lower(), raw_val)
-                # If single character, type it directly with xdotool type to preserve casing & symbols
-                if len(key_to_send) == 1:
-                    cmd = ["xdotool", "type", "--delay", "20", "--", key_to_send]
+
+                if key_to_send not in ALLOWED_KEYS and key_to_send not in KEY_MAP.values():
+                    return jsonify({"error": f"Invalid key: {raw_val}"}), 400
+
+                cmd = ["xdotool", "key", key_to_send]
+                if wid:
+                    cmd = ["xdotool", "key", "--window", wid, key_to_send]
+                safe_run(cmd, timeout=2)
+
+                # Khi người dùng bấm OK / Select: Gửi kèm space để hỗ trợ trọn vẹn mọi ngữ cảnh game (cả Enter lẫn Space)
+                if raw_val.lower() in ("ok", "select"):
+                    cmd_space = ["xdotool", "key", "space"]
                     if wid:
-                        cmd = ["xdotool", "type", "--window", wid, "--delay", "20", "--", key_to_send]
-                    subprocess.run(cmd, timeout=2, check=False)
-                else:
-                    if key_to_send not in ALLOWED_KEYS and key_to_send not in KEY_MAP.values():
-                        return jsonify({"error": f"Invalid key: {raw_val}"}), 400
-                    cmd = ["xdotool", "key", key_to_send]
-                    if wid:
-                        cmd = ["xdotool", "key", "--window", wid, key_to_send]
-                    subprocess.run(cmd, timeout=2, check=False)
+                        cmd_space = ["xdotool", "key", "--window", wid, "space"]
+                    safe_run(cmd_space, timeout=2)
 
             elif action == "click":
                 try:
