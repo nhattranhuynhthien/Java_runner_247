@@ -213,6 +213,7 @@ def get_game_window():
         if wids:
             wid = wids[-1]
             subprocess.run(["xdotool", "windowfocus", wid], timeout=1, check=False)
+            subprocess.run(["xdotool", "windowactivate", wid], timeout=1, check=False)
             return wid
     except Exception:
         pass
@@ -588,13 +589,60 @@ def get_menu_layout():
         print(f"[LAYOUT] Lỗi kiểm tra bố cục menu: {e}")
     return 4
 
+def nav_to_menu_button(button_name, layout, do_key):
+    """
+    Điều hướng menu chính hoàn toàn bằng phím mũi tên (Up / Down) - KHÔNG DÙNG TỌA ĐỘ CHUỘT:
+    1. Gửi phím Up 6 lần để đưa con trỏ lên nút trên cùng (Nút 1).
+    2. Sau đó gửi phím Down tương ứng với nút cần đến:
+       * Layout 5 nút:
+         - 'choi_tiep': Nút 1 (0 Down)
+         - 'choi_moi': Nút 2 (1 Down)
+         - 'doi_tai_khoan': Nút 3 (2 Down)
+         - 'may_chu': Nút 4 (3 Down)
+         - 'cau_hinh': Nút 5 (4 Down)
+       * Layout 4 nút:
+         - 'choi_moi': Nút 1 (0 Down)
+         - 'doi_tai_khoan': Nút 2 (1 Down)
+         - 'may_chu': Nút 3 (2 Down)
+         - 'cau_hinh': Nút 4 (3 Down)
+    """
+    # 1. Đưa con trỏ lên đỉnh menu
+    for _ in range(6):
+        do_key("Up")
+        time.sleep(0.04)
+    time.sleep(0.1)
+
+    # 2. Tính số bước Down cần thiết
+    if layout == 5:
+        steps = {
+            'choi_tiep': 0,
+            'choi_moi': 1,
+            'doi_tai_khoan': 2,
+            'may_chu': 3,
+            'cau_hinh': 4
+        }.get(button_name, 0)
+    else:
+        steps = {
+            'choi_moi': 0,
+            'doi_tai_khoan': 1,
+            'may_chu': 2,
+            'cau_hinh': 3
+        }.get(button_name, 0)
+
+    for _ in range(steps):
+        do_key("Down")
+        time.sleep(0.08)
+    time.sleep(0.12)
+
 def execute_server_selection(server_num, wid=None):
     """
-    Thực hiện chọn Máy chủ trong Ngọc Rồng Online:
-    - Click nút 'Máy chủ' theo tọa độ chuẩn của layout hiện tại
-    - Đưa con trỏ lên đầu danh sách (Vũ trụ 1)
+    Thực hiện chọn Máy chủ trong Ngọc Rồng Online hoàn toàn bằng phím bấm (Keypad Navigation):
+    - Đóng prompt thừa bằng Escape
+    - Điều hướng menu chính đến nút 'Máy chủ' bằng Up/Down
+    - Bấm Enter để mở bảng danh sách Máy chủ
+    - Đưa con trỏ lên đầu danh sách (Vũ trụ 1) bằng Up 15 lần
     - Di chuyển xuống server mục tiêu (server_num - 1 bước)
-    - Xác nhận bằng Enter / F2
+    - Xác nhận bằng Enter & F2
     """
     if not wid:
         wid = get_game_window()
@@ -606,36 +654,63 @@ def execute_server_selection(server_num, wid=None):
         cmd.append(k)
         safe_run(cmd, timeout=2)
 
-    def do_click(x, y):
-        cmd = ["xdotool", "mousemove", str(x), str(y), "click", "1"]
-        safe_run(cmd, timeout=2)
+    # 1. Đóng prompt thừa nếu có
+    do_key("Escape")
+    time.sleep(0.15)
 
+    # 2. Điều hướng trên menu chính đến nút 'Máy chủ' bằng phím
     layout = get_menu_layout()
-    # Layout 5 nút: 'Máy chủ' là nút 4 tại y = 234 (y cửa sổ = 234 + MENU_BAR_OFFSET = 258)
-    # Layout 4 nút: 'Máy chủ' là nút 3 tại y = 217 (y cửa sổ = 217 + MENU_BAR_OFFSET = 241)
-    server_btn_y = (234 if layout == 5 else 217) + MENU_BAR_OFFSET
+    nav_to_menu_button('may_chu', layout, do_key)
 
-    # 1. Bấm mở danh sách Máy chủ
-    do_click(120, server_btn_y)
-    time.sleep(0.5)
+    # 3. Bấm mở danh sách Máy chủ
+    do_key("Return")
+    time.sleep(0.8)
 
-    # 2. Đưa con trỏ lên đầu danh sách (Vũ trụ 1) bằng cách gửi Up 15 lần
+    # 4. Đưa con trỏ lên đầu danh sách (Vũ trụ 1) bằng cách gửi Up 15 lần
     for _ in range(15):
         do_key("Up")
-        time.sleep(0.03)
+        time.sleep(0.04)
+    time.sleep(0.1)
 
-    # 3. Bước xuống server được chọn
+    # 5. Bước xuống server được chọn
     steps_down = max(0, min(12, int(server_num) - 1))
     for _ in range(steps_down):
         do_key("Down")
-        time.sleep(0.04)
+        time.sleep(0.08)
+    time.sleep(0.2)
 
-    # 4. Xác nhận chọn server (Enter & F2)
-    time.sleep(0.1)
+    # 6. Xác nhận chọn server (Enter & F2)
     do_key("Return")
-    time.sleep(0.06)
+    time.sleep(0.15)
     do_key("F2")
-    time.sleep(0.5)
+    time.sleep(0.6)
+
+@app.route('/api/open_account_dialog', methods=['POST'])
+def handle_open_account_dialog():
+    if not check_pin(request):
+        return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
+
+    try:
+        with x11_lock:
+            wid = focus_game_window()
+
+            def do_key(k):
+                cmd = ["xdotool", "key"]
+                if wid:
+                    cmd += ["--window", wid]
+                cmd.append(k)
+                safe_run(cmd, timeout=2)
+
+            do_key("Escape")
+            time.sleep(0.15)
+            layout = get_menu_layout()
+            nav_to_menu_button('doi_tai_khoan', layout, do_key)
+            do_key("Return")
+            time.sleep(0.6)
+
+        return jsonify({"status": "ok", "message": "Đã mở hộp thoại Đổi tài khoản!"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/select_server', methods=['POST'])
 def handle_select_server():
@@ -692,12 +767,8 @@ def handle_quick_login():
                 cmd = ["xdotool", "type"]
                 if wid:
                     cmd += ["--window", wid]
-                cmd += ["--delay", "20", "--", t]
+                cmd += ["--delay", "25", "--", t]
                 safe_run(cmd, timeout=8)
-
-            def do_click(x, y):
-                cmd = ["xdotool", "mousemove", str(x), str(y), "click", "1"]
-                safe_run(cmd, timeout=2)
 
             def do_clear():
                 cmd = ["xdotool", "key"]
@@ -706,24 +777,24 @@ def handle_quick_login():
                 cmd += ["--repeat", "45", "--delay", "8", "BackSpace"]
                 safe_run(cmd, timeout=3)
 
-            # 1. Từ menu chính nếu được chọn: Mở hộp thoại 'Đổi tài khoản'
+            # 1. Từ menu chính nếu được chọn: Điều hướng bằng phím mũi tên đến 'Đổi tài khoản'
             if from_menu:
+                do_key("Escape")
+                time.sleep(0.15)
                 layout = get_menu_layout()
-                # 5 nút: 'Đổi tài khoản' là nút 3 tại y = 204 (y cửa sổ = 204 + MENU_BAR_OFFSET = 228)
-                # 4 nút: 'Đổi tài khoản' là nút 2 tại y = 187 (y cửa sổ = 187 + MENU_BAR_OFFSET = 211)
-                doi_tk_y = (204 if layout == 5 else 187) + MENU_BAR_OFFSET
-                do_click(120, doi_tk_y)
+                nav_to_menu_button('doi_tai_khoan', layout, do_key)
+                do_key("Return")
                 time.sleep(0.8)
 
             # 2. Xóa ô tài khoản và gõ tài khoản
             do_clear()
             time.sleep(0.1)
             do_type(username)
-            time.sleep(0.15)
+            time.sleep(0.2)
 
             # Xác nhận tài khoản: Gửi F2 (softkey OK) và Return
             do_key("F2")
-            time.sleep(0.1)
+            time.sleep(0.15)
             do_key("Return")
             # Chờ hộp thoại 'Mật khẩu' mở ra
             time.sleep(0.8)
@@ -733,31 +804,29 @@ def handle_quick_login():
                 do_clear()
                 time.sleep(0.1)
                 do_type(password)
-                time.sleep(0.15)
+                time.sleep(0.2)
 
                 # Xác nhận mật khẩu: Gửi F2 và Return
                 do_key("F2")
-                time.sleep(0.1)
+                time.sleep(0.15)
                 do_key("Return")
                 # Chờ màn hình trở lại menu chính
-                time.sleep(0.8)
+                time.sleep(0.9)
 
-            # 4. Nếu có chọn Server: Đổi máy chủ
+            # 4. Nếu có chọn Server: Đổi máy chủ (hoàn toàn bằng phím)
             if server_num > 0:
                 execute_server_selection(server_num, wid=wid)
-                time.sleep(0.4)
+                time.sleep(0.5)
 
-            # 5. Nếu auto_enter: Kiểm tra layout an toàn để bấm 'Chơi tiếp'
+            # 5. Nếu auto_enter: Điều hướng về 'Chơi tiếp' an toàn bằng phím
             if auto_enter:
                 layout = get_menu_layout()
                 if layout == 5:
-                    # 'Chơi tiếp' là nút 1 tại y = 144 (y cửa sổ = 144 + MENU_BAR_OFFSET = 168)
-                    play_y = 144 + MENU_BAR_OFFSET
-                    do_click(120, play_y)
-                    time.sleep(0.15)
+                    nav_to_menu_button('choi_tiep', layout, do_key)
                     do_key("Return")
+                    time.sleep(0.3)
                 else:
-                    # Nếu vẫn là 4 nút (không có nút Chơi tiếp): TUYỆT ĐỐI KHÔNG bấm nút 1 để tránh 'Chơi mới'
+                    # Nếu vẫn là 4 nút (không có nút Chơi tiếp): TUYỆT ĐỐI KHÔNG bấm Enter để tránh 'Chơi mới'
                     print("[LOGIN] Menu vẫn ở layout 4 nút, không có nút 'Chơi tiếp'. Đã ngăn chặn kích hoạt 'Chơi mới'.")
 
         return jsonify({"status": "ok", "message": "Đã thực hiện chuỗi đăng nhập tự động thành công!"})

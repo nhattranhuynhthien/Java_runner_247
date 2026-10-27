@@ -276,9 +276,15 @@
                         <div class="flex flex-col gap-1">
                             <div class="flex items-center justify-between text-[10px] text-slate-400">
                                 <span>Tài khoản (SĐT / Email)</span>
-                                <button type="button" id="btn-fill-user" class="text-indigo-400 hover:text-indigo-300 hover:underline font-mono" title="Chỉ gõ tài khoản vào ô hiện tại trong game">
-                                    Điền ô này (F2)
-                                </button>
+                                <div class="flex items-center gap-1 font-mono text-[10px]">
+                                    <button type="button" id="btn-open-account-dialog" class="text-amber-400 hover:text-amber-300 hover:underline font-semibold" title="Tự động bấm phím mở hộp thoại Đổi tài khoản trên màn hình game">
+                                        Mở ô Đổi TK
+                                    </button>
+                                    <span class="text-slate-600">•</span>
+                                    <button type="button" id="btn-fill-user" class="text-indigo-400 hover:text-indigo-300 hover:underline" title="Chỉ gõ tài khoản vào ô hiện tại trong game">
+                                        Điền ô này (F2)
+                                    </button>
+                                </div>
                             </div>
                             <input type="text" id="login-user" placeholder="Nhập tài khoản, SĐT hoặc email..." autocomplete="username" spellcheck="false"
                                 class="w-full bg-slate-950 border border-white/15 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono transition">
@@ -998,6 +1004,7 @@
             const loginPass = document.getElementById('login-pass');
             const loginServer = document.getElementById('login-server');
             const btnSwitchServer = document.getElementById('btn-switch-server');
+            const btnOpenAccountDialog = document.getElementById('btn-open-account-dialog');
             const btnLoginToggleMask = document.getElementById('btn-login-toggle-mask');
             const loginIconMask = document.getElementById('login-icon-mask');
             const chkRememberLogin = document.getElementById('chk-remember-login');
@@ -1089,6 +1096,33 @@
                         btnSwitchServer.textContent = origText;
                         setTimeout(fetchScreenshot, 400);
                         setTimeout(fetchScreenshot, 1000);
+                    });
+                });
+            }
+
+            // Open Account Dialog directly via keyboard arrow navigation
+            if (btnOpenAccountDialog) {
+                btnOpenAccountDialog.addEventListener('click', () => {
+                    btnOpenAccountDialog.disabled = true;
+                    showToast("Đang mở hộp thoại Đổi tài khoản...", "indigo");
+                    fetch('/api/open_account_dialog', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ pin: state.pin })
+                    })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.status === 'ok') {
+                            showToast(data.message, "emerald");
+                        } else {
+                            showToast(data.error || "Lỗi mở hộp thoại", "rose");
+                        }
+                    })
+                    .catch(() => showToast("Lỗi kết nối máy chủ", "rose"))
+                    .finally(() => {
+                        btnOpenAccountDialog.disabled = false;
+                        setTimeout(fetchScreenshot, 350);
+                        setTimeout(fetchScreenshot, 900);
                     });
                 });
             }
