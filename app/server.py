@@ -147,7 +147,7 @@ def check_pin(req):
         pin = req.form.get("pin")
     return verify_pin(pin)
 
-def focus_game_window():
+def get_game_window():
     try:
         p = subprocess.run(["xdotool", "search", "--onlyvisible", "--class", "java"], capture_output=True, text=True, timeout=1)
         wids = p.stdout.strip().split()
@@ -155,9 +155,15 @@ def focus_game_window():
             p = subprocess.run(["xdotool", "search", "--onlyvisible", ""], capture_output=True, text=True, timeout=1)
             wids = p.stdout.strip().split()
         if wids:
-            subprocess.run(["xdotool", "windowfocus", "--sync", wids[0]], timeout=1)
+            wid = wids[-1]
+            subprocess.run(["xdotool", "windowfocus", wid], timeout=1, check=False)
+            return wid
     except Exception:
         pass
+    return None
+
+def focus_game_window():
+    return get_game_window()
 
 def get_ram_info():
     try:
@@ -343,18 +349,24 @@ def handle_input():
 
     try:
         with x11_lock:
-            focus_game_window()
+            wid = focus_game_window()
 
             if action == "key":
                 raw_val = str(data.get("value", ""))
                 key_to_send = KEY_MAP.get(raw_val.lower(), raw_val)
                 # If single character, type it directly with xdotool type to preserve casing & symbols
                 if len(key_to_send) == 1:
-                    subprocess.run(["xdotool", "type", "--delay", "20", "--", key_to_send], timeout=2, check=False)
+                    cmd = ["xdotool", "type", "--delay", "20", "--", key_to_send]
+                    if wid:
+                        cmd = ["xdotool", "type", "--window", wid, "--delay", "20", "--", key_to_send]
+                    subprocess.run(cmd, timeout=2, check=False)
                 else:
                     if key_to_send not in ALLOWED_KEYS and key_to_send not in KEY_MAP.values():
                         return jsonify({"error": f"Invalid key: {raw_val}"}), 400
-                    subprocess.run(["xdotool", "key", key_to_send], timeout=2, check=False)
+                    cmd = ["xdotool", "key", key_to_send]
+                    if wid:
+                        cmd = ["xdotool", "key", "--window", wid, key_to_send]
+                    subprocess.run(cmd, timeout=2, check=False)
 
             elif action == "click":
                 try:
@@ -362,36 +374,39 @@ def handle_input():
                     raw_y = float(data.get("y", 0))
                     x = max(0, min(SCREEN_WIDTH, int(round(raw_x))))
                     y = max(0, min(SCREEN_HEIGHT, int(round(raw_y)))) + MENU_BAR_OFFSET
-                    subprocess.run(
-                        ["xdotool", "mousemove", "--sync", str(x), str(y), "click", "1"],
-                        timeout=2,
-                        check=False
-                    )
+                    cmd = ["xdotool", "mousemove", "--sync", str(x), str(y), "click", "1"]
+                    if wid:
+                        cmd = ["xdotool", "mousemove", "--window", wid, "--sync", str(x), str(y), "click", "1"]
+                    subprocess.run(cmd, timeout=2, check=False)
                 except (ValueError, TypeError):
                     return jsonify({"error": "Invalid coordinates"}), 400
 
             elif action == "text":
                 value = str(data.get("value", ""))
                 if value:
-                    subprocess.run(
-                        ["xdotool", "type", "--delay", "25", "--", value],
-                        timeout=8,
-                        check=False
-                    )
+                    cmd = ["xdotool", "type", "--delay", "20", "--", value]
+                    if wid:
+                        cmd = ["xdotool", "type", "--window", wid, "--delay", "20", "--", value]
+                    subprocess.run(cmd, timeout=8, check=False)
                 time.sleep(0.08)
                 submit = data.get("submit")
                 if submit == "f2" or data.get("f2") is True:
-                    subprocess.run(["xdotool", "key", "F2"], timeout=2, check=False)
+                    cmd = ["xdotool", "key", "F2"]
+                    if wid:
+                        cmd = ["xdotool", "key", "--window", wid, "F2"]
+                    subprocess.run(cmd, timeout=2, check=False)
                 elif submit == "enter" or data.get("enter") is True:
-                    subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
+                    cmd = ["xdotool", "key", "Return"]
+                    if wid:
+                        cmd = ["xdotool", "key", "--window", wid, "Return"]
+                    subprocess.run(cmd, timeout=2, check=False)
 
             elif action == "clear_text":
                 # Clear all characters in the active text box
-                subprocess.run(
-                    ["xdotool", "key", "--repeat", "35", "--delay", "10", "BackSpace"],
-                    timeout=3,
-                    check=False
-                )
+                cmd = ["xdotool", "key", "--repeat", "45", "--delay", "8", "BackSpace"]
+                if wid:
+                    cmd = ["xdotool", "key", "--window", wid, "--repeat", "45", "--delay", "8", "BackSpace"]
+                subprocess.run(cmd, timeout=3, check=False)
 
             elif action == "anti_stuck":
                 ok_y = 245 + MENU_BAR_OFFSET
@@ -423,16 +438,25 @@ def handle_quick_cmd():
 
     try:
         with x11_lock:
-            focus_game_window()
+            wid = focus_game_window()
             for c in cmds:
                 # 1. Open chat in NRO (Press Return)
-                subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
+                cmd = ["xdotool", "key", "Return"]
+                if wid:
+                    cmd = ["xdotool", "key", "--window", wid, "Return"]
+                subprocess.run(cmd, timeout=2, check=False)
                 time.sleep(0.12)
                 # 2. Type command
-                subprocess.run(["xdotool", "type", "--delay", "25", "--", c], timeout=3, check=False)
+                cmd = ["xdotool", "type", "--delay", "25", "--", c]
+                if wid:
+                    cmd = ["xdotool", "type", "--window", wid, "--delay", "25", "--", c]
+                subprocess.run(cmd, timeout=3, check=False)
                 time.sleep(0.12)
                 # 3. Submit command (Press Return)
-                subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
+                cmd = ["xdotool", "key", "Return"]
+                if wid:
+                    cmd = ["xdotool", "key", "--window", wid, "Return"]
+                subprocess.run(cmd, timeout=2, check=False)
                 time.sleep(0.16)
 
         return jsonify({"status": "ok", "sent_cmd": raw_cmd, "executed": cmds})
@@ -454,42 +478,80 @@ def handle_quick_login():
         return jsonify({"error": "Vui lòng nhập tài khoản (hoặc SĐT/Email)"}), 400
 
     try:
-        with x11_lock:
-            focus_game_window()
+        wid = get_game_window()
 
-            if from_menu:
-                # 1. Từ menu chính: Bấm phím Xuống chọn 'Đổi tài khoản' và bấm Return mở hộp thoại
-                subprocess.run(["xdotool", "key", "Down"], timeout=2, check=False)
-                time.sleep(0.14)
-                subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
-                time.sleep(0.55)
+        def do_key(k):
+            cmd = ["xdotool", "key"]
+            if wid:
+                cmd += ["--window", wid]
+            cmd.append(k)
+            subprocess.run(cmd, timeout=2, check=False)
 
-            # 2. Xóa sạch hộp tài khoản cũ và gõ tài khoản mới
-            subprocess.run(["xdotool", "key", "--repeat", "40", "--delay", "10", "BackSpace"], timeout=3, check=False)
-            time.sleep(0.08)
-            subprocess.run(["xdotool", "type", "--delay", "25", "--", username], timeout=6, check=False)
+        def do_type(t):
+            cmd = ["xdotool", "type"]
+            if wid:
+                cmd += ["--window", wid]
+            cmd += ["--delay", "20", "--", t]
+            subprocess.run(cmd, timeout=8, check=False)
+
+        def do_click(x, y):
+            cmd = ["xdotool", "mousemove", "--sync", str(x), str(y), "click", "1"]
+            if wid:
+                cmd = ["xdotool", "mousemove", "--window", wid, "--sync", str(x), str(y), "click", "1"]
+            subprocess.run(cmd, timeout=2, check=False)
+
+        def do_clear():
+            cmd = ["xdotool", "key"]
+            if wid:
+                cmd += ["--window", wid]
+            cmd += ["--repeat", "45", "--delay", "8", "BackSpace"]
+            subprocess.run(cmd, timeout=3, check=False)
+
+        # 1. Từ menu chính nếu được chọn: Mở hộp thoại Đổi tài khoản
+        if from_menu:
+            # Click trực tiếp nút 'Đổi tài khoản' tại (120, 118 + MENU_BAR_OFFSET)
+            btn_y = 118 + MENU_BAR_OFFSET
+            do_click(120, btn_y)
             time.sleep(0.12)
-            # Xác nhận tài khoản (gửi cả F2 và Return để chắc chắn hộp thoại ăn phím)
-            subprocess.run(["xdotool", "key", "F2"], timeout=2, check=False)
+            # Gửi thêm Down + Return phòng khi game cần phím
+            do_key("Down")
             time.sleep(0.1)
-            subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
-            time.sleep(0.55)
+            do_key("Return")
+            # Chờ hộp thoại 'Số di động/Địa chỉ mail' mở ra
+            time.sleep(0.8)
 
-            if password:
-                # 3. Xóa sạch hộp mật khẩu cũ và gõ mật khẩu mới
-                subprocess.run(["xdotool", "key", "--repeat", "40", "--delay", "10", "BackSpace"], timeout=3, check=False)
-                time.sleep(0.08)
-                subprocess.run(["xdotool", "type", "--delay", "25", "--", password], timeout=6, check=False)
-                time.sleep(0.12)
-                # Xác nhận mật khẩu
-                subprocess.run(["xdotool", "key", "F2"], timeout=2, check=False)
-                time.sleep(0.1)
-                subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
-                time.sleep(0.55)
+        # 2. Xóa ô tài khoản và gõ tài khoản
+        do_clear()
+        time.sleep(0.1)
+        do_type(username)
+        time.sleep(0.15)
 
-            if auto_enter:
-                # 4. Bấm OK vào game
-                subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
+        # Xác nhận tài khoản: Gửi F2 (softkey OK) và Return
+        do_key("F2")
+        time.sleep(0.1)
+        do_key("Return")
+        # Chờ hộp thoại 'Mật khẩu' mở ra
+        time.sleep(0.8)
+
+        if password:
+            # 3. Xóa ô mật khẩu và gõ mật khẩu
+            do_clear()
+            time.sleep(0.1)
+            do_type(password)
+            time.sleep(0.15)
+
+            # Xác nhận mật khẩu: Gửi F2 và Return
+            do_key("F2")
+            time.sleep(0.1)
+            do_key("Return")
+            # Chờ màn hình trở lại menu đăng nhập
+            time.sleep(0.8)
+
+        if auto_enter:
+            # 4. Bấm Đăng nhập vào game (Return hoặc click nút Đăng nhập)
+            do_key("Return")
+            time.sleep(0.15)
+            do_click(120, 118 + MENU_BAR_OFFSET)
 
         return jsonify({"status": "ok", "message": "Đã thực hiện chuỗi đăng nhập tự động thành công!"})
     except Exception as e:

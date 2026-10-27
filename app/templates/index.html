@@ -1019,6 +1019,12 @@
                 txtQuickLoginBtn.textContent = "Đang đăng nhập vào game...";
                 showToast("Đang thực hiện chuỗi đăng nhập tự động...", "indigo");
 
+                // Live polling so screen updates in real time during login sequence
+                const loginPollTimer = setInterval(() => {
+                    state.isFetching = false;
+                    fetchScreenshot();
+                }, 450);
+
                 fetch('/api/quick_login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1042,9 +1048,12 @@
                     showToast("Lỗi kết nối máy chủ", "rose");
                 })
                 .finally(() => {
+                    clearInterval(loginPollTimer);
                     btnDoQuickLogin.disabled = false;
                     txtQuickLoginBtn.textContent = "ĐĂNG NHẬP TỰ ĐỘNG";
-                    refreshFrame();
+                    state.isFetching = false;
+                    setTimeout(fetchScreenshot, 200);
+                    setTimeout(fetchScreenshot, 800);
                 });
             }
 
@@ -1069,8 +1078,10 @@
                 showToast("Đang điền tài khoản vào ô...", "indigo");
                 sendInput({ action: 'clear_text' }).then(() => {
                     setTimeout(() => {
-                        sendInput({ action: 'text', value: u, f2: true });
-                    }, 100);
+                        sendInput({ action: 'text', value: u, f2: true }).then(() => {
+                            setTimeout(fetchScreenshot, 300);
+                        });
+                    }, 150);
                 });
             });
 
@@ -1084,8 +1095,10 @@
                 showToast("Đang điền mật khẩu vào ô...", "indigo");
                 sendInput({ action: 'clear_text' }).then(() => {
                     setTimeout(() => {
-                        sendInput({ action: 'text', value: p, f2: true });
-                    }, 100);
+                        sendInput({ action: 'text', value: p, f2: true }).then(() => {
+                            setTimeout(fetchScreenshot, 300);
+                        });
+                    }, 150);
                 });
             });
 
