@@ -612,7 +612,7 @@ def execute_server_selection(server_num, wid=None):
     Thực hiện chọn Máy chủ trong Ngọc Rồng Online theo đúng luồng UI game:
     1. Đóng thông báo lỗi nếu có
     2. Click nút 'Máy chủ' trên Menu chính
-    3. Click chọn 'VIỆT NAM' trên bảng khu vực
+    3. Click xác nhận 'VIỆT NAM' (nút OK tại 120, 240 hoặc nút VIỆT NAM tại 70, 172)
     4. Click chọn server mục tiêu trong danh sách
     """
     def do_click(x, y):
@@ -628,9 +628,14 @@ def execute_server_selection(server_num, wid=None):
     do_click(120, y_maychu)
     time.sleep(0.6)
 
-    # 3. Bấm nút 'VIỆT NAM' trên popup chọn khu vực
+    # 3. Xác nhận chọn 'VIỆT NAM' để mở bảng danh sách server:
+    # Trên màn hình chọn khu vực: Nút OK nằm ở tâm (120, 240)
+    do_click(120, 240)
+    safe_run(["xdotool", "key", "Return"], timeout=1)
+    safe_run(["xdotool", "key", "space"], timeout=1)
+    # Hỗ trợ trường hợp giao diện 2 nút ngang (VIỆT NAM / GLOBAL)
     do_click(70, 172)
-    time.sleep(0.6)
+    time.sleep(0.7)
 
     # 4. Click chọn Server trong danh sách:
     # Server 1: y = 93
