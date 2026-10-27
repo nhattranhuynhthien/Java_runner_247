@@ -12,18 +12,14 @@ done
 
 export DISPLAY=:1
 
-# Background auto-trigger to bypass launcher menu or initial modal if needed
+# Background watcher to ensure window focus
 (
     sleep 3
-    for k in 1 2 3 4 5; do
-        if xdotool search --name "MicroEmulator" >/dev/null 2>&1; then
-            echo "[AUTO-LAUNCH] Gửi tín hiệu F2 & Enter..."
-            xdotool key F2 2>/dev/null || true
-            xdotool mousemove 180 340 click 1 2>/dev/null || true
-            xdotool key Return 2>/dev/null || true
-        fi
-        sleep 2
-    done
+    WID=$(xdotool search --onlyvisible --class "java" 2>/dev/null | head -n 1 || true)
+    if [ -n "$WID" ]; then
+        xdotool windowfocus "$WID" 2>/dev/null || true
+        echo "[EMU] Đã kích hoạt focus cửa sổ game: $WID"
+    fi
 ) &
 
 JAR_FILE="/app/roms/NRO.jar"
@@ -49,12 +45,12 @@ except Exception:
 
     if [ -n "$MIDLET_CLASS" ]; then
         echo "[EMU] Khởi chạy trực tiếp MIDlet: $MIDLET_CLASS"
-        exec java -Xmx220m -Xms128m -Dsun.java2d.opengl=false -jar /app/microemulator.jar --impl org.microemu.device.j2se.J2SEDevice --appclasspath "$JAR_FILE" "$MIDLET_CLASS"
+        exec java -Xmx220m -Xms128m -Dsun.java2d.opengl=false -jar /app/microemulator.jar --appclasspath "$JAR_FILE" "$MIDLET_CLASS"
     else
         echo "[EMU] Khởi chạy file JAR mặc định..."
-        exec java -Xmx220m -Xms128m -Dsun.java2d.opengl=false -jar /app/microemulator.jar --impl org.microemu.device.j2se.J2SEDevice "$JAR_FILE"
+        exec java -Xmx220m -Xms128m -Dsun.java2d.opengl=false -jar /app/microemulator.jar "$JAR_FILE"
     fi
 else
     echo "[EMU] Chưa có file NRO.jar trong /app/roms. Chạy ở chế độ chờ..."
-    exec java -Xmx220m -Xms128m -Dsun.java2d.opengl=false -jar /app/microemulator.jar --impl org.microemu.device.j2se.J2SEDevice
+    exec java -Xmx220m -Xms128m -Dsun.java2d.opengl=false -jar /app/microemulator.jar
 fi
