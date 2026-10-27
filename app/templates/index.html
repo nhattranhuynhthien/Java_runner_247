@@ -270,43 +270,100 @@
                     </div>
                 </div>
 
-                <!-- NRO Mod Quick Actions (Inspired by upnro.pro) -->
-                <div class="w-full max-w-[288px] sm:max-w-[340px] bg-slate-900/80 border border-white/10 rounded-xl p-2.5 flex flex-col gap-2">
-                    <div class="flex items-center justify-between text-[11px] font-semibold text-slate-300">
-                        <span class="flex items-center gap-1">
-                            <i class="fa-solid fa-wand-magic-sparkles text-amber-400 text-[10px]"></i>
-                            <span>Lệnh Mod NRO (1 Chạm)</span>
+                <!-- NRO Mod Quick Actions & XMAP Controller -->
+                <div class="w-full max-w-[288px] sm:max-w-[340px] bg-slate-900/90 border border-white/10 rounded-xl p-2.5 flex flex-col gap-2.5 shadow-lg">
+                    <div class="flex items-center justify-between text-[11px] font-bold text-slate-200">
+                        <span class="flex items-center gap-1.5">
+                            <i class="fa-solid fa-wand-magic-sparkles text-amber-400 text-xs"></i>
+                            <span>Treo Map & Tối Ưu GDL (1 Chạm)</span>
                         </span>
-                        <span class="text-[9px] text-slate-500">Auto Chat</span>
+                        <span class="text-[9px] text-amber-400 font-semibold px-1.5 py-0.5 rounded bg-amber-400/10 border border-amber-400/20">Xmap Pro</span>
                     </div>
 
-                    <div class="flex flex-wrap gap-1.5">
-                        <button class="mod-chip" data-cmd="ak" title="Tự động đánh quái">
-                            <span>⚔️</span> <span>ak (Tự đánh)</span>
-                        </button>
-                        <button class="mod-chip" data-cmd="anhat" title="Tự động nhặt đồ rơi">
-                            <span>🎁</span> <span>anhat (Nhặt)</span>
-                        </button>
-                        <button class="mod-chip" data-cmd="td" title="Tàn sát cả khu vực">
-                            <span>🔥</span> <span>td (Tàn sát)</span>
-                        </button>
-                        <button class="mod-chip" data-cmd="cs" title="Sử dụng Capsule">
-                            <span>💊</span> <span>cs (Capsule)</span>
-                        </button>
-                        <button class="mod-chip" data-cmd="hs" title="Tự hồi sinh khi chết">
-                            <span>❤️</span> <span>hs (Hồi sinh)</span>
-                        </button>
-                        <button class="mod-chip" data-cmd="k" title="Đổi sang khu khác">
-                            <span>🗺️</span> <span>k (Đổi khu)</span>
-                        </button>
-                        <button class="mod-chip" data-cmd="abf" title="Auto dùng bông băng / đậu">
-                            <span>🩹</span> <span>abf (Buff)</span>
-                        </button>
+                    <!-- 1-Click Super AFK Hang Mode Button -->
+                    <button class="w-full py-2 px-3 rounded-lg bg-gradient-to-r from-amber-500 via-orange-500 to-rose-600 hover:brightness-110 active:scale-95 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-2 shadow-md shadow-orange-500/20 transition mod-chip" data-cmd="xdh, annguoi, s20, gb, ts, anhat" title="Kích hoạt tức thì: Xóa đồ họa + Ẩn người + Chạy nhanh x5 + Giữ map + Tàn sát + Auto nhặt">
+                        <i class="fa-solid fa-bolt text-xs"></i>
+                        <span>1 CHẠM TREO SIÊU MƯỢT (GDL)</span>
+                    </button>
+
+                    <!-- Group 1: Map Treo & Di Chuyển -->
+                    <div class="flex flex-col gap-1">
+                        <span class="text-[10px] text-indigo-300 font-semibold flex items-center gap-1">
+                            <i class="fa-solid fa-map-location-dot text-[9px]"></i> Map Treo & Di Chuyển (Xmap)
+                        </span>
+                        <div class="flex flex-wrap gap-1">
+                            <button class="mod-chip bg-indigo-950/40 border-indigo-500/30 text-indigo-200 hover:border-indigo-400" data-cmd="xmap" title="Mở bảng Menu Xmap để chọn mọi map/hành tinh muốn treo">
+                                <span>🗺️</span> <span>Chọn Map (Xmap)</span>
+                            </button>
+                            <button class="mod-chip" data-cmd="gb" title="Tự động quay lại đúng map treo khi bị chết hoặc mất mạng">
+                                <span>🔄</span> <span>Giữ Map (gb)</span>
+                            </button>
+                            <button class="mod-chip" data-cmd="s20" title="Tăng tốc chạy lên 5 lần, di chuyển qua map tức thì không lag">
+                                <span>⚡</span> <span>Chạy Nhanh (s20)</span>
+                            </button>
+                            <button class="mod-chip" data-cmd="kvt" title="Khóa vị trí đứng yên tại bãi quái, không bị xô đẩy">
+                                <span>🛑</span> <span>Khóa Vị Trí (kvt)</span>
+                            </button>
+                            <button class="mod-chip" data-cmd="nb" title="Tự động đổi khu tránh Boss khi Boss xuất hiện">
+                                <span>👾</span> <span>Né Boss (nb)</span>
+                            </button>
+                            <button class="mod-chip" data-cmd="cflag" title="Bật cờ chống PK để người khác không thể đồ sát">
+                                <span>🛡️</span> <span>Cờ Chống PK</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Group 2: Giảm Đồ Họa & Xóa Hiệu Ứng (GDL) -->
+                    <div class="flex flex-col gap-1 border-t border-white/5 pt-1.5">
+                        <span class="text-[10px] text-emerald-300 font-semibold flex items-center gap-1">
+                            <i class="fa-solid fa-leaf text-[9px]"></i> Giảm Lag & Xóa Hiệu Ứng (GDL)
+                        </span>
+                        <div class="flex flex-wrap gap-1">
+                            <button class="mod-chip bg-emerald-950/40 border-emerald-500/30 text-emerald-200 hover:border-emerald-400" data-cmd="xdh" title="Bật/Tắt xóa toàn bộ đồ họa nền và hiệu ứng nặng">
+                                <span>🍃</span> <span>Xóa Đồ Họa (xdh)</span>
+                            </button>
+                            <button class="mod-chip" data-cmd="annguoi" title="Ẩn toàn bộ người chơi khác trong map, load map siêu tốc">
+                                <span>👤</span> <span>Ẩn Người (annguoi)</span>
+                            </button>
+                            <button class="mod-chip" data-cmd="anquai" title="Ẩn quái trong map">
+                                <span>👻</span> <span>Ẩn Quái</span>
+                            </button>
+                            <button class="mod-chip" data-cmd="anitem" title="Ẩn item rơi dưới đất">
+                                <span>📦</span> <span>Ẩn Item</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Group 3: Chiến Đấu & Tiện Ích -->
+                    <div class="flex flex-col gap-1 border-t border-white/5 pt-1.5">
+                        <span class="text-[10px] text-amber-300 font-semibold flex items-center gap-1">
+                            <i class="fa-solid fa-crosshairs text-[9px]"></i> Chiến Đấu & Auto Treo
+                        </span>
+                        <div class="flex flex-wrap gap-1">
+                            <button class="mod-chip" data-cmd="ts" title="Tàn sát tất cả quái trong map">
+                                <span>⚔️</span> <span>Tàn Sát (ts)</span>
+                            </button>
+                            <button class="mod-chip" data-cmd="anhat" title="Tự động nhặt mọi vật phẩm rơi">
+                                <span>🎁</span> <span>Auto Nhặt</span>
+                            </button>
+                            <button class="mod-chip" data-cmd="ak" title="Tự động đánh quái">
+                                <span>🗡️</span> <span>Tự Đánh (ak)</span>
+                            </button>
+                            <button class="mod-chip" data-cmd="tdlt" title="Bật tự động luyện tập kết hợp tàn sát">
+                                <span>📖</span> <span>Auto TDLT</span>
+                            </button>
+                            <button class="mod-chip" data-cmd="cs" title="Sử dụng Capsule">
+                                <span>💊</span> <span>Capsule</span>
+                            </button>
+                            <button class="mod-chip" data-cmd="k" title="Đổi sang khu khác">
+                                <span>🗺️</span> <span>Đổi Khu (k)</span>
+                            </button>
+                        </div>
                     </div>
 
                     <!-- Custom Chat / Command Input -->
-                    <div class="flex items-center gap-1.5 mt-1">
-                        <input type="text" id="input-cmd" placeholder="Lệnh mod khác (vd: c, s10, xd)..." class="flex-1 bg-slate-950 border border-white/10 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50">
+                    <div class="flex items-center gap-1.5 mt-0.5 border-t border-white/5 pt-1.5">
+                        <input type="text" id="input-cmd" placeholder="Lệnh mod khác (vd: k5, s30, xmap)..." class="flex-1 bg-slate-950 border border-white/10 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50 font-mono">
                         <button id="btn-send-cmd" class="px-3 py-1 bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-bold text-xs rounded-lg flex items-center justify-center">
                             Gửi
                         </button>

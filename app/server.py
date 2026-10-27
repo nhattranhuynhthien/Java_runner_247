@@ -251,23 +251,27 @@ def handle_quick_cmd():
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
 
     data = request.get_json(silent=True) or {}
-    cmd = str(data.get("cmd", "")).strip()
-    if not cmd:
+    raw_cmd = str(data.get("cmd", "")).strip()
+    if not raw_cmd:
         return jsonify({"error": "Command is empty"}), 400
+
+    cmds = [c.strip() for c in raw_cmd.replace(';', ',').split(',') if c.strip()]
 
     try:
         with x11_lock:
             focus_game_window()
-            # 1. Open chat in NRO (Press Return)
-            subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
-            time.sleep(0.12)
-            # 2. Type command
-            subprocess.run(["xdotool", "type", "--delay", "25", "--", cmd], timeout=3, check=False)
-            time.sleep(0.12)
-            # 3. Submit command (Press Return)
-            subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
+            for c in cmds:
+                # 1. Open chat in NRO (Press Return)
+                subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
+                time.sleep(0.12)
+                # 2. Type command
+                subprocess.run(["xdotool", "type", "--delay", "25", "--", c], timeout=3, check=False)
+                time.sleep(0.12)
+                # 3. Submit command (Press Return)
+                subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
+                time.sleep(0.16)
 
-        return jsonify({"status": "ok", "sent_cmd": cmd})
+        return jsonify({"status": "ok", "sent_cmd": raw_cmd, "executed": cmds})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
