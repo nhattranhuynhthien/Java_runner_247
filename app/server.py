@@ -551,24 +551,26 @@ def handle_quick_cmd():
         with x11_lock:
             wid = focus_game_window()
             for c in cmds:
-                # 1. Open chat in NRO (Press Return)
-                cmd = ["xdotool", "key", "Return"]
+                # 1. Mở khung chat trong game bằng phím Return
+                cmd_open = ["xdotool", "key", "Return"]
                 if wid:
-                    cmd = ["xdotool", "key", "--window", wid, "Return"]
-                subprocess.run(cmd, timeout=2, check=False)
-                time.sleep(0.12)
-                # 2. Type command
-                cmd = ["xdotool", "type", "--delay", "25", "--", c]
+                    cmd_open = ["xdotool", "key", "--window", wid, "Return"]
+                safe_run(cmd_open, timeout=2)
+                time.sleep(0.22)
+
+                # 2. Gõ lệnh mod
+                cmd_type = ["xdotool", "type", "--delay", "25", "--", c]
                 if wid:
-                    cmd = ["xdotool", "type", "--window", wid, "--delay", "25", "--", c]
-                subprocess.run(cmd, timeout=3, check=False)
-                time.sleep(0.12)
-                # 3. Submit command (Press Return)
-                cmd = ["xdotool", "key", "Return"]
+                    cmd_type = ["xdotool", "type", "--window", wid, "--delay", "25", "--", c]
+                safe_run(cmd_type, timeout=3)
+                time.sleep(0.18)
+
+                # 3. Gửi lệnh bằng phím Return
+                cmd_enter = ["xdotool", "key", "Return"]
                 if wid:
-                    cmd = ["xdotool", "key", "--window", wid, "Return"]
-                subprocess.run(cmd, timeout=2, check=False)
-                time.sleep(0.16)
+                    cmd_enter = ["xdotool", "key", "--window", wid, "Return"]
+                safe_run(cmd_enter, timeout=2)
+                time.sleep(0.3)
 
         return jsonify({"status": "ok", "sent_cmd": raw_cmd, "executed": cmds})
     except Exception as e:

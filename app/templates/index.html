@@ -832,12 +832,20 @@
             document.querySelectorAll('[data-cmd]').forEach(btn => {
                 const cmd = btn.getAttribute('data-cmd');
                 btn.addEventListener('click', () => {
+                    showToast(`Đang gửi lệnh: ${cmd}`, 'indigo');
                     fetch('/api/quick_cmd', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ pin: state.pin, cmd: cmd })
-                    }).then(() => {
-                        setTimeout(fetchScreenshot, 300);
+                    }).then(r => r.json()).then(res => {
+                        if (res.error) {
+                            showToast(res.error, 'rose');
+                        } else {
+                            showToast(`Đã bật: ${cmd}`, 'emerald');
+                        }
+                        setTimeout(fetchScreenshot, 400);
+                    }).catch(() => {
+                        showToast('Lỗi gửi lệnh', 'rose');
                     });
                 });
             });
@@ -848,13 +856,21 @@
             function handleSendCmd() {
                 const text = inputCmd.value.trim();
                 if (!text) return;
+                showToast(`Đang gửi: ${text}`, 'indigo');
                 fetch('/api/quick_cmd', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ pin: state.pin, cmd: text })
-                }).then(() => {
+                }).then(r => r.json()).then(res => {
                     inputCmd.value = '';
-                    setTimeout(fetchScreenshot, 300);
+                    if (res.error) {
+                        showToast(res.error, 'rose');
+                    } else {
+                        showToast(`Đã gửi: ${text}`, 'emerald');
+                    }
+                    setTimeout(fetchScreenshot, 400);
+                }).catch(() => {
+                    showToast('Lỗi kết nối', 'rose');
                 });
             }
             btnSendCmd.addEventListener('click', handleSendCmd);
