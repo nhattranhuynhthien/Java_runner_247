@@ -556,21 +556,29 @@ def handle_quick_cmd():
                 if wid:
                     cmd_open = ["xdotool", "key", "--window", wid, "Return"]
                 safe_run(cmd_open, timeout=2)
-                time.sleep(0.22)
+                time.sleep(0.28)
 
-                # 2. Gõ lệnh mod
+                # 2. Xóa sạch chữ cũ còn sót trong ô chat
+                cmd_clear = ["xdotool", "key", "--repeat", "30", "--delay", "6", "BackSpace"]
+                if wid:
+                    cmd_clear = ["xdotool", "key", "--window", wid, "--repeat", "30", "--delay", "6", "BackSpace"]
+                safe_run(cmd_clear, timeout=2)
+                time.sleep(0.08)
+
+                # 3. Gõ lệnh mod
                 cmd_type = ["xdotool", "type", "--delay", "25", "--", c]
                 if wid:
                     cmd_type = ["xdotool", "type", "--window", wid, "--delay", "25", "--", c]
                 safe_run(cmd_type, timeout=3)
                 time.sleep(0.18)
 
-                # 3. Gửi lệnh bằng phím Return
-                cmd_enter = ["xdotool", "key", "Return"]
-                if wid:
-                    cmd_enter = ["xdotool", "key", "--window", wid, "Return"]
-                safe_run(cmd_enter, timeout=2)
-                time.sleep(0.3)
+                # 4. Xác nhận gửi lệnh: Click nút OK màu cam trên hộp thoại Chat (x=81, y=337)
+                cmd_click_ok = ["xdotool", "mousemove", "81", str(337 + MENU_BAR_OFFSET), "click", "1"]
+                safe_run(cmd_click_ok, timeout=2)
+                time.sleep(0.1)
+                safe_run(["xdotool", "key", "Return"], timeout=1)
+                # Chờ khung chat đóng hẳn trước khi gõ lệnh tiếp theo
+                time.sleep(0.4)
 
         return jsonify({"status": "ok", "sent_cmd": raw_cmd, "executed": cmds})
     except Exception as e:
