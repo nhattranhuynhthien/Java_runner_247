@@ -29,9 +29,9 @@ echo "[2/6] Khởi động Window Manager (Fluxbox)..."
 fluxbox &
 sleep 1
 
-# 4. Start VNC Server (x11vnc) with zero latency
-echo "[3/6] Khởi động x11vnc (Port 5900)..."
-x11vnc -display :1 -forever -shared -nopw -rfbport 5900 -listen 127.0.0.1 -nowf -noxdamage -repeat -wait 10 -q &
+# 4. Start VNC Server (x11vnc) with frame cache and ultra-low latency
+echo "[3/6] Khởi động x11vnc (Port 5900) với bộ nhớ đệm khung hình tức thì..."
+x11vnc -display :1 -forever -shared -nopw -rfbport 5900 -listen 127.0.0.1 -nowf -noxdamage -ncache 10 -threads 2 -wait 5 -repeat -q &
 sleep 1
 
 # 5. Start Websockify internal bridge (Port 6080)
