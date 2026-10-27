@@ -237,41 +237,83 @@
                     </button>
                 </div>
 
-                <!-- Dedicated Game Text / Account / Password Input -->
-                <div class="w-full max-w-[288px] sm:max-w-[340px] bg-slate-900/85 border border-white/10 rounded-xl p-2.5 flex flex-col gap-2 shadow-lg">
-                    <div class="flex items-center justify-between text-[11px] font-bold text-slate-300">
-                        <span>Nhập Tài Khoản / Mật Khẩu</span>
-                        <span class="text-[9px] text-slate-500 font-mono">Gõ trực tiếp vào game</span>
+                <!-- Dedicated Quick Login & Game Input Section -->
+                <div class="w-full max-w-[288px] sm:max-w-[340px] bg-slate-900/90 border border-white/10 rounded-xl p-3 flex flex-col gap-2.5 shadow-xl">
+                    <div class="flex items-center justify-between text-xs font-bold text-slate-200">
+                        <span class="flex items-center gap-1.5">
+                            <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                            Đăng Nhập Nhanh
+                        </span>
+                        <span class="text-[10px] text-emerald-400/90 font-mono font-medium">Tự động 1 chạm</span>
                     </div>
 
-                    <!-- Input field with eye mask & Send button -->
-                    <div class="flex items-center gap-1.5">
-                        <div class="relative flex-1">
-                            <input type="text" id="input-game-text" placeholder="Tài khoản, mật khẩu, email..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
-                                class="w-full bg-slate-950 border border-white/15 rounded-lg pl-2.5 pr-12 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 font-mono">
-                            <button type="button" id="btn-toggle-mask" class="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 hover:text-white px-1 py-0.5 rounded bg-slate-800/80 border border-white/10 font-mono" title="Ẩn / Hiện">
-                                <span id="icon-mask">Ẩn</span>
+                    <!-- Account & Password Inputs -->
+                    <div class="flex flex-col gap-2">
+                        <!-- Username Field -->
+                        <div class="flex flex-col gap-1">
+                            <div class="flex items-center justify-between text-[10px] text-slate-400">
+                                <span>Tài khoản (SĐT / Email)</span>
+                                <button type="button" id="btn-fill-user" class="text-indigo-400 hover:text-indigo-300 hover:underline font-mono" title="Chỉ gõ tài khoản vào ô hiện tại trong game">
+                                    Điền ô này (F2)
+                                </button>
+                            </div>
+                            <input type="text" id="login-user" placeholder="Nhập tài khoản, SĐT hoặc email..." autocomplete="username" spellcheck="false"
+                                class="w-full bg-slate-950 border border-white/15 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono transition">
+                        </div>
+
+                        <!-- Password Field -->
+                        <div class="flex flex-col gap-1">
+                            <div class="flex items-center justify-between text-[10px] text-slate-400">
+                                <span>Mật khẩu</span>
+                                <button type="button" id="btn-fill-pass" class="text-indigo-400 hover:text-indigo-300 hover:underline font-mono" title="Chỉ gõ mật khẩu vào ô hiện tại trong game">
+                                    Điền ô này (F2)
+                                </button>
+                            </div>
+                            <div class="relative">
+                                <input type="password" id="login-pass" placeholder="Nhập mật khẩu..." autocomplete="current-password" spellcheck="false"
+                                    class="w-full bg-slate-950 border border-white/15 rounded-lg pl-2.5 pr-14 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono transition">
+                                <button type="button" id="btn-login-toggle-mask" class="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 hover:text-white px-1.5 py-0.5 rounded bg-slate-800 border border-white/10 font-mono" title="Ẩn / Hiện mật khẩu">
+                                    <span id="login-icon-mask">Hiện</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Options: Remember & From Menu -->
+                        <div class="flex items-center justify-between text-[11px] text-slate-400 pt-0.5">
+                            <label class="flex items-center gap-1.5 cursor-pointer select-none hover:text-slate-200" title="Lưu tài khoản & mật khẩu an toàn trong trình duyệt của bạn">
+                                <input type="checkbox" id="chk-remember-login" checked class="rounded bg-slate-950 border-white/20 text-emerald-500 focus:ring-0">
+                                <span>Ghi nhớ</span>
+                            </label>
+
+                            <label class="flex items-center gap-1.5 cursor-pointer select-none hover:text-slate-200" title="Nếu bật: Tự động bấm 'Đổi tài khoản' từ Menu chính. Nếu tắt: Bạn đang ở sẵn hộp thoại nhập.">
+                                <input type="checkbox" id="chk-from-menu" checked class="rounded bg-slate-950 border-white/20 text-emerald-500 focus:ring-0">
+                                <span>Từ Menu chính</span>
+                            </label>
+                        </div>
+
+                        <!-- Main 1-Click Auto Login Button -->
+                        <button id="btn-do-quick-login" class="w-full py-2 px-3 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/40 transition">
+                            <span id="txt-quick-login-btn">ĐĂNG NHẬP TỰ ĐỘNG</span>
+                        </button>
+                    </div>
+
+                    <!-- Quick dialog actions -->
+                    <div class="pt-1.5 border-t border-white/5 flex items-center justify-between text-[10px] text-slate-400">
+                        <span class="font-mono text-slate-500">Phím tắt:</span>
+                        <div class="flex items-center gap-1">
+                            <button id="btn-text-ok" class="px-2 py-0.5 rounded bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-300 font-semibold border border-emerald-500/25" title="Xác nhận hộp thoại hiện tại">
+                                OK (F2)
+                            </button>
+                            <button id="btn-text-clear" class="px-2 py-0.5 rounded bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 font-medium border border-rose-500/25" title="Xóa sạch ký tự trong ô">
+                                Xóa ô
+                            </button>
+                            <button id="btn-text-enter" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium border border-white/10" title="Bấm phím Enter vào game">
+                                Enter
+                            </button>
+                            <button id="btn-text-cancel" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 font-medium border border-white/10" title="Hủy bỏ hộp thoại">
+                                Hủy (F1)
                             </button>
                         </div>
-                        <button id="btn-send-text" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-bold text-xs rounded-lg flex items-center shadow-md shadow-indigo-600/30 whitespace-nowrap" title="Gõ nội dung này vào ô nhập trong game">
-                            Gõ
-                        </button>
-                    </div>
-
-                    <!-- Action controls for TextBox dialog -->
-                    <div class="grid grid-cols-4 gap-1.5 text-[11px]">
-                        <button id="btn-text-paste" class="py-1 px-1 rounded bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 font-medium flex items-center justify-center border border-white/5" title="Dán nội dung từ Clipboard">
-                            Dán
-                        </button>
-                        <button id="btn-text-ok" class="py-1 px-1 rounded bg-emerald-600/25 hover:bg-emerald-600/40 active:scale-95 text-emerald-300 font-bold flex items-center justify-center border border-emerald-500/30" title="Bấm OK (Phím F2) để xác nhận">
-                            Xong (OK)
-                        </button>
-                        <button id="btn-text-clear" class="py-1 px-1 rounded bg-rose-500/15 hover:bg-rose-500/30 active:scale-95 text-rose-300 font-medium flex items-center justify-center border border-rose-500/25" title="Xóa toàn bộ ký tự trong ô">
-                            Xóa hết
-                        </button>
-                        <button id="btn-text-cancel" class="py-1 px-1 rounded bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-400 font-medium flex items-center justify-center border border-white/5" title="Hủy bỏ (Phím F1)">
-                            Hủy
-                        </button>
                     </div>
                 </div>
 
@@ -815,69 +857,177 @@
             });
             btnReloadLogs.addEventListener('click', loadLogs);
 
-            // Dedicated Game Text / Account / Password Handler
-            const inputGameText = document.getElementById('input-game-text');
-            const btnSendText = document.getElementById('btn-send-text');
-            const btnToggleMask = document.getElementById('btn-toggle-mask');
-            const iconMask = document.getElementById('icon-mask');
-            const btnTextPaste = document.getElementById('btn-text-paste');
+            // Notification Toast Helper
+            function showToast(message, color = 'emerald') {
+                const toast = document.createElement('div');
+                toast.className = `fixed bottom-5 left-1/2 -translate-x-1/2 z-50 px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow-2xl backdrop-blur-md bg-slate-900/95 border transition-all duration-300 pointer-events-none flex items-center gap-2 ${
+                    color === 'emerald' ? 'border-emerald-500/40 text-emerald-300 shadow-emerald-950/60' :
+                    color === 'rose' ? 'border-rose-500/40 text-rose-300 shadow-rose-950/60' :
+                    color === 'amber' ? 'border-amber-500/40 text-amber-300 shadow-amber-950/60' :
+                    'border-indigo-500/40 text-indigo-300 shadow-indigo-950/60'
+                }`;
+                toast.textContent = message;
+                document.body.appendChild(toast);
+                setTimeout(() => {
+                    toast.classList.add('opacity-0', 'translate-y-2');
+                    setTimeout(() => toast.remove(), 300);
+                }, 2800);
+            }
+
+            // Quick Login & Dialog Input Handler
+            const loginUser = document.getElementById('login-user');
+            const loginPass = document.getElementById('login-pass');
+            const btnLoginToggleMask = document.getElementById('btn-login-toggle-mask');
+            const loginIconMask = document.getElementById('login-icon-mask');
+            const chkRememberLogin = document.getElementById('chk-remember-login');
+            const chkFromMenu = document.getElementById('chk-from-menu');
+            const btnDoQuickLogin = document.getElementById('btn-do-quick-login');
+            const txtQuickLoginBtn = document.getElementById('txt-quick-login-btn');
+            const btnFillUser = document.getElementById('btn-fill-user');
+            const btnFillPass = document.getElementById('btn-fill-pass');
             const btnTextOk = document.getElementById('btn-text-ok');
             const btnTextClear = document.getElementById('btn-text-clear');
+            const btnTextEnter = document.getElementById('btn-text-enter');
             const btnTextCancel = document.getElementById('btn-text-cancel');
 
-            // Toggle password mask
-            btnToggleMask.addEventListener('click', () => {
-                if (inputGameText.type === 'text') {
-                    inputGameText.type = 'password';
-                    iconMask.textContent = 'Hiện';
+            // Restore saved credentials from localStorage
+            try {
+                const savedRemember = localStorage.getItem('nro_remember_login');
+                if (savedRemember === '0') {
+                    chkRememberLogin.checked = false;
                 } else {
-                    inputGameText.type = 'text';
-                    iconMask.textContent = 'Ẩn';
+                    chkRememberLogin.checked = true;
+                    const savedU = localStorage.getItem('nro_saved_user');
+                    const savedP = localStorage.getItem('nro_saved_pass');
+                    if (savedU) loginUser.value = savedU;
+                    if (savedP) loginPass.value = savedP;
+                }
+            } catch (e) {}
+
+            // Toggle password visibility
+            btnLoginToggleMask.addEventListener('click', () => {
+                if (loginPass.type === 'password') {
+                    loginPass.type = 'text';
+                    loginIconMask.textContent = 'Ẩn';
+                } else {
+                    loginPass.type = 'password';
+                    loginIconMask.textContent = 'Hiện';
                 }
             });
 
-            // Send text to game
-            function handleSendGameText() {
-                const text = inputGameText.value;
-                if (!text) return;
-                sendInput({ action: 'text', value: text }).then(() => {
-                    inputGameText.value = '';
+            // Handle Quick Login (1-Click Auto Login)
+            function executeQuickLogin() {
+                const username = loginUser.value.trim();
+                const password = loginPass.value;
+                const fromMenu = chkFromMenu.checked;
+                const remember = chkRememberLogin.checked;
+
+                if (!username) {
+                    showToast("Vui lòng nhập tài khoản (hoặc SĐT/Email)", "amber");
+                    loginUser.focus();
+                    return;
+                }
+
+                // Save or clear remembered credentials
+                try {
+                    if (remember) {
+                        localStorage.setItem('nro_saved_user', username);
+                        localStorage.setItem('nro_saved_pass', password);
+                        localStorage.setItem('nro_remember_login', '1');
+                    } else {
+                        localStorage.removeItem('nro_saved_user');
+                        localStorage.removeItem('nro_saved_pass');
+                        localStorage.setItem('nro_remember_login', '0');
+                    }
+                } catch (e) {}
+
+                btnDoQuickLogin.disabled = true;
+                txtQuickLoginBtn.textContent = "Đang đăng nhập vào game...";
+                showToast("Đang thực hiện chuỗi đăng nhập tự động...", "indigo");
+
+                fetch('/api/quick_login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        pin: state.pin,
+                        username: username,
+                        password: password,
+                        from_menu: fromMenu,
+                        auto_enter: true
+                    })
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'ok') {
+                        showToast("Đã gửi thông tin đăng nhập thành công!", "emerald");
+                    } else {
+                        showToast(data.error || "Lỗi khi đăng nhập", "rose");
+                    }
+                })
+                .catch(() => {
+                    showToast("Lỗi kết nối máy chủ", "rose");
+                })
+                .finally(() => {
+                    btnDoQuickLogin.disabled = false;
+                    txtQuickLoginBtn.textContent = "ĐĂNG NHẬP TỰ ĐỘNG";
+                    refreshFrame();
                 });
             }
-            btnSendText.addEventListener('click', handleSendGameText);
-            inputGameText.addEventListener('keydown', (e) => {
+
+            btnDoQuickLogin.addEventListener('click', executeQuickLogin);
+
+            // Pressing Enter in loginPass triggers quick login
+            loginPass.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
                     e.preventDefault();
-                    handleSendGameText();
+                    executeQuickLogin();
                 }
             });
 
-            // Paste from clipboard
-            btnTextPaste.addEventListener('click', () => {
-                if (navigator.clipboard && navigator.clipboard.readText) {
-                    navigator.clipboard.readText().then(clip => {
-                        if (clip) inputGameText.value = clip;
-                    }).catch(() => {
-                        const manual = prompt("Dán tài khoản / mật khẩu vào đây:");
-                        if (manual) inputGameText.value = manual;
-                    });
-                } else {
-                    const manual = prompt("Dán tài khoản / mật khẩu vào đây:");
-                    if (manual) inputGameText.value = manual;
+            // Single field fill shortcuts
+            btnFillUser.addEventListener('click', () => {
+                const u = loginUser.value.trim();
+                if (!u) {
+                    showToast("Vui lòng nhập tài khoản vào ô trước", "amber");
+                    loginUser.focus();
+                    return;
                 }
+                showToast("Đang điền tài khoản vào ô...", "indigo");
+                sendInput({ action: 'clear_text' }).then(() => {
+                    setTimeout(() => {
+                        sendInput({ action: 'text', value: u, f2: true });
+                    }, 100);
+                });
             });
 
-            // TextBox OK (F2 in J2ME LCDUI)
+            btnFillPass.addEventListener('click', () => {
+                const p = loginPass.value;
+                if (!p) {
+                    showToast("Vui lòng nhập mật khẩu vào ô trước", "amber");
+                    loginPass.focus();
+                    return;
+                }
+                showToast("Đang điền mật khẩu vào ô...", "indigo");
+                sendInput({ action: 'clear_text' }).then(() => {
+                    setTimeout(() => {
+                        sendInput({ action: 'text', value: p, f2: true });
+                    }, 100);
+                });
+            });
+
+            // Dialog shortcut buttons
             btnTextOk.addEventListener('click', () => {
                 sendInput({ action: 'key', value: 'f2' });
             });
 
-            // Clear text in active game text box
             btnTextClear.addEventListener('click', () => {
                 sendInput({ action: 'clear_text' });
             });
 
-            // Cancel / Hủy (F1 in J2ME LCDUI)
+            btnTextEnter.addEventListener('click', () => {
+                sendInput({ action: 'key', value: 'Return' });
+            });
+
             btnTextCancel.addEventListener('click', () => {
                 sendInput({ action: 'key', value: 'f1' });
             });

@@ -275,6 +275,62 @@ def handle_quick_cmd():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/quick_login', methods=['POST'])
+def handle_quick_login():
+    if not check_pin(request):
+        return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
+
+    data = request.get_json(silent=True) or {}
+    username = str(data.get("username", "")).strip()
+    password = str(data.get("password", "")).strip()
+    from_menu = bool(data.get("from_menu", True))
+    auto_enter = bool(data.get("auto_enter", True))
+
+    if not username:
+        return jsonify({"error": "Vui lòng nhập tài khoản (hoặc SĐT/Email)"}), 400
+
+    try:
+        with x11_lock:
+            focus_game_window()
+
+            if from_menu:
+                # 1. Từ menu chính: Bấm phím Xuống chọn 'Đổi tài khoản' và bấm Return mở hộp thoại
+                subprocess.run(["xdotool", "key", "Down"], timeout=2, check=False)
+                time.sleep(0.14)
+                subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
+                time.sleep(0.55)
+
+            # 2. Xóa sạch hộp tài khoản cũ và gõ tài khoản mới
+            subprocess.run(["xdotool", "key", "--repeat", "40", "--delay", "10", "BackSpace"], timeout=3, check=False)
+            time.sleep(0.08)
+            subprocess.run(["xdotool", "type", "--delay", "25", "--", username], timeout=6, check=False)
+            time.sleep(0.12)
+            # Xác nhận tài khoản (gửi cả F2 và Return để chắc chắn hộp thoại ăn phím)
+            subprocess.run(["xdotool", "key", "F2"], timeout=2, check=False)
+            time.sleep(0.1)
+            subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
+            time.sleep(0.55)
+
+            if password:
+                # 3. Xóa sạch hộp mật khẩu cũ và gõ mật khẩu mới
+                subprocess.run(["xdotool", "key", "--repeat", "40", "--delay", "10", "BackSpace"], timeout=3, check=False)
+                time.sleep(0.08)
+                subprocess.run(["xdotool", "type", "--delay", "25", "--", password], timeout=6, check=False)
+                time.sleep(0.12)
+                # Xác nhận mật khẩu
+                subprocess.run(["xdotool", "key", "F2"], timeout=2, check=False)
+                time.sleep(0.1)
+                subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
+                time.sleep(0.55)
+
+            if auto_enter:
+                # 4. Bấm OK vào game
+                subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
+
+        return jsonify({"status": "ok", "message": "Đã thực hiện chuỗi đăng nhập tự động thành công!"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/restart', methods=['POST'])
 def restart_game():
     if not check_pin(request):
