@@ -7,6 +7,8 @@ FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PORT=8080 \
+    ADMIN_USER=admin \
+    ADMIN_PASSWORD=admin \
     ADMIN_PIN=1234 \
     DISPLAY=:1
 
