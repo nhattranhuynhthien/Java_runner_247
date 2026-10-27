@@ -28,6 +28,16 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 x11_lock = threading.Lock()
 
+def safe_run(cmd, timeout=3):
+    try:
+        return subprocess.run(cmd, timeout=timeout, check=False)
+    except subprocess.TimeoutExpired:
+        print(f"[TIMEOUT] Lệnh timed out (được bỏ qua an toàn): {cmd}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] Lỗi thực thi lệnh {cmd}: {e}")
+        return None
+
 # Persistent Security Configuration & Ban System
 SECURITY_CONFIG_FILE = os.path.join(os.path.dirname(__file__), "security_config.json")
 
@@ -471,10 +481,8 @@ def handle_input():
                     raw_y = float(data.get("y", 0))
                     x = max(0, min(SCREEN_WIDTH, int(round(raw_x))))
                     y = max(0, min(SCREEN_HEIGHT, int(round(raw_y)))) + MENU_BAR_OFFSET
-                    cmd = ["xdotool", "mousemove", "--sync", str(x), str(y), "click", "1"]
-                    if wid:
-                        cmd = ["xdotool", "mousemove", "--window", wid, "--sync", str(x), str(y), "click", "1"]
-                    subprocess.run(cmd, timeout=2, check=False)
+                    cmd = ["xdotool", "mousemove", str(x), str(y), "click", "1"]
+                    safe_run(cmd, timeout=2)
                 except (ValueError, TypeError):
                     return jsonify({"error": "Invalid coordinates"}), 400
 
@@ -484,32 +492,32 @@ def handle_input():
                     cmd = ["xdotool", "type", "--delay", "20", "--", value]
                     if wid:
                         cmd = ["xdotool", "type", "--window", wid, "--delay", "20", "--", value]
-                    subprocess.run(cmd, timeout=8, check=False)
+                    safe_run(cmd, timeout=8)
                 time.sleep(0.08)
                 submit = data.get("submit")
                 if submit == "f2" or data.get("f2") is True:
                     cmd = ["xdotool", "key", "F2"]
                     if wid:
                         cmd = ["xdotool", "key", "--window", wid, "F2"]
-                    subprocess.run(cmd, timeout=2, check=False)
+                    safe_run(cmd, timeout=2)
                 elif submit == "enter" or data.get("enter") is True:
                     cmd = ["xdotool", "key", "Return"]
                     if wid:
                         cmd = ["xdotool", "key", "--window", wid, "Return"]
-                    subprocess.run(cmd, timeout=2, check=False)
+                    safe_run(cmd, timeout=2)
 
             elif action == "clear_text":
                 # Clear all characters in the active text box
                 cmd = ["xdotool", "key", "--repeat", "45", "--delay", "8", "BackSpace"]
                 if wid:
                     cmd = ["xdotool", "key", "--window", wid, "--repeat", "45", "--delay", "8", "BackSpace"]
-                subprocess.run(cmd, timeout=3, check=False)
+                safe_run(cmd, timeout=3)
 
             elif action == "anti_stuck":
                 ok_y = 245 + MENU_BAR_OFFSET
-                subprocess.run(["xdotool", "mousemove", "--sync", "120", str(ok_y), "click", "1"], timeout=2, check=False)
-                subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
-                subprocess.run(["xdotool", "key", "space"], timeout=2, check=False)
+                safe_run(["xdotool", "mousemove", "120", str(ok_y), "click", "1"], timeout=2)
+                safe_run(["xdotool", "key", "Return"], timeout=2)
+                safe_run(["xdotool", "key", "space"], timeout=2)
 
             else:
                 return jsonify({"error": "Invalid action"}), 400
@@ -582,39 +590,31 @@ def handle_quick_login():
             if wid:
                 cmd += ["--window", wid]
             cmd.append(k)
-            subprocess.run(cmd, timeout=2, check=False)
+            safe_run(cmd, timeout=2)
 
         def do_type(t):
             cmd = ["xdotool", "type"]
             if wid:
                 cmd += ["--window", wid]
             cmd += ["--delay", "20", "--", t]
-            subprocess.run(cmd, timeout=8, check=False)
+            safe_run(cmd, timeout=8)
 
         def do_click(x, y):
-            cmd = ["xdotool", "mousemove", "--sync", str(x), str(y), "click", "1"]
-            if wid:
-                cmd = ["xdotool", "mousemove", "--window", wid, "--sync", str(x), str(y), "click", "1"]
-            subprocess.run(cmd, timeout=2, check=False)
+            cmd = ["xdotool", "mousemove", str(x), str(y), "click", "1"]
+            safe_run(cmd, timeout=2)
 
         def do_clear():
             cmd = ["xdotool", "key"]
             if wid:
                 cmd += ["--window", wid]
             cmd += ["--repeat", "45", "--delay", "8", "BackSpace"]
-            subprocess.run(cmd, timeout=3, check=False)
+            safe_run(cmd, timeout=3)
 
         # 1. Từ menu chính nếu được chọn: Mở hộp thoại Đổi tài khoản
         if from_menu:
-            # Click trực tiếp nút 'Đổi tài khoản' tại (120, 118 + MENU_BAR_OFFSET)
-            btn_y = 118 + MENU_BAR_OFFSET
+            # Click trực tiếp nút 'Đổi tài khoản' tại (120, 126 + MENU_BAR_OFFSET)
+            btn_y = 126 + MENU_BAR_OFFSET
             do_click(120, btn_y)
-            time.sleep(0.12)
-            # Gửi thêm Down + Return phòng khi game cần phím
-            do_key("Down")
-            time.sleep(0.1)
-            do_key("Return")
-            # Chờ hộp thoại 'Số di động/Địa chỉ mail' mở ra
             time.sleep(0.8)
 
         # 2. Xóa ô tài khoản và gõ tài khoản
@@ -645,10 +645,11 @@ def handle_quick_login():
             time.sleep(0.8)
 
         if auto_enter:
-            # 4. Bấm Đăng nhập vào game (Return hoặc click nút Đăng nhập)
+            # 4. Bấm Đăng nhập / Chơi tiếp vào game
+            play_y = 88 + MENU_BAR_OFFSET
+            do_click(120, play_y)
+            time.sleep(0.1)
             do_key("Return")
-            time.sleep(0.15)
-            do_click(120, 118 + MENU_BAR_OFFSET)
 
         return jsonify({"status": "ok", "message": "Đã thực hiện chuỗi đăng nhập tự động thành công!"})
     except Exception as e:
