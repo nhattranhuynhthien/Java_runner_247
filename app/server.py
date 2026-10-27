@@ -174,9 +174,11 @@ KEY_MAP = {
     'down': 'Down',
     'left': 'Left',
     'right': 'Right',
-    'ok': 'Return',
+    'ok': 'space',
+    'select': 'space',
     'return': 'Return',
     'enter': 'Return',
+    'space': 'space',
     'escape': 'Escape',
     'f1': 'F1',
     'f2': 'F2',
@@ -662,7 +664,8 @@ def execute_server_selection(server_num, wid=None):
     layout = get_menu_layout()
     nav_to_menu_button('may_chu', layout, do_key)
 
-    # 3. Bấm mở danh sách Máy chủ
+    # 3. Bấm mở danh sách Máy chủ bằng phím SELECT (space & Return)
+    do_key("space")
     do_key("Return")
     time.sleep(0.8)
 
@@ -679,7 +682,8 @@ def execute_server_selection(server_num, wid=None):
         time.sleep(0.08)
     time.sleep(0.2)
 
-    # 6. Xác nhận chọn server (Enter & F2)
+    # 6. Xác nhận chọn server (Enter, space & F2)
+    do_key("space")
     do_key("Return")
     time.sleep(0.15)
     do_key("F2")
@@ -705,6 +709,7 @@ def handle_open_account_dialog():
             time.sleep(0.15)
             layout = get_menu_layout()
             nav_to_menu_button('doi_tai_khoan', layout, do_key)
+            do_key("space")
             do_key("Return")
             time.sleep(0.6)
 
@@ -783,6 +788,7 @@ def handle_quick_login():
                 time.sleep(0.15)
                 layout = get_menu_layout()
                 nav_to_menu_button('doi_tai_khoan', layout, do_key)
+                do_key("space")
                 do_key("Return")
                 time.sleep(0.8)
 
@@ -823,8 +829,9 @@ def handle_quick_login():
                 layout = get_menu_layout()
                 if layout == 5:
                     nav_to_menu_button('choi_tiep', layout, do_key)
+                    do_key("space")
                     do_key("Return")
-                    time.sleep(0.3)
+                    time.sleep(0.4)
                 else:
                     # Nếu vẫn là 4 nút (không có nút Chơi tiếp): TUYỆT ĐỐI KHÔNG bấm Enter để tránh 'Chơi mới'
                     print("[LOGIN] Menu vẫn ở layout 4 nút, không có nút 'Chơi tiếp'. Đã ngăn chặn kích hoạt 'Chơi mới'.")
