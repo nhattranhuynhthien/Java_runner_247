@@ -16,6 +16,9 @@
             margin: 0;
             padding: 0;
             background: #090d16;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(20, 30, 48, 0.45) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(15, 23, 42, 0.5) 0px, transparent 50%);
             color: #f1f5f9;
             touch-action: manipulation;
             user-select: none;
@@ -28,9 +31,9 @@
             width: 240px;
             height: 360px;
             background: #000;
-            border-radius: 14px;
+            border-radius: 12px;
             overflow: hidden;
-            box-shadow: 0 12px 35px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.12);
+            box-shadow: 0 16px 36px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.08);
         }
         @media (min-width: 640px) {
             .screen-wrapper {
@@ -46,100 +49,112 @@
             cursor: crosshair;
         }
 
-        /* Keypad button styles */
+        /* Modern Keypad Buttons */
         .key-btn {
-            background: #141c2e;
+            background: #131b2c;
             color: #e2e8f0;
             border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 10px;
-            font-weight: 700;
+            border-radius: 8px;
+            font-weight: 600;
             display: flex;
             align-items: center;
             justify-content: center;
             transition: all 0.06s ease;
             cursor: pointer;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        }
+        .key-btn:hover {
+            background: #19243a;
+            border-color: rgba(255, 255, 255, 0.16);
+            color: #ffffff;
         }
         .key-btn:active {
-            background: #4f46e5 !important;
+            background: #3b82f6 !important;
             color: #ffffff !important;
-            transform: scale(0.92);
-            border-color: #818cf8 !important;
-            box-shadow: 0 0 12px rgba(99, 102, 241, 0.6);
+            transform: scale(0.93);
+            border-color: #60a5fa !important;
         }
 
         .dpad-btn {
-            background: #1a233a;
+            background: #162035;
             color: #cbd5e1;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.09);
+            border-radius: 8px;
             display: flex;
             align-items: center;
             justify-content: center;
             cursor: pointer;
             transition: all 0.06s ease;
+            font-size: 15px;
+            font-weight: 700;
+        }
+        .dpad-btn:hover {
+            background: #1e2c49;
+            border-color: rgba(255, 255, 255, 0.18);
+            color: #ffffff;
         }
         .dpad-btn:active {
-            background: #6366f1 !important;
+            background: #2563eb !important;
             color: #fff !important;
-            transform: scale(0.9);
+            transform: scale(0.92);
         }
 
         .mod-chip {
-            background: #111827;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 8px;
-            padding: 6px 10px;
+            background: #111828;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            padding: 5px 8px;
             font-size: 11px;
-            font-weight: 600;
-            color: #cbd5e1;
+            font-weight: 500;
+            color: #94a3b8;
             display: inline-flex;
             align-items: center;
-            gap: 5px;
+            justify-content: center;
             cursor: pointer;
-            transition: all 0.1s ease;
+            transition: all 0.08s ease;
         }
         .mod-chip:hover {
-            border-color: #fbbf24;
-            color: #fbbf24;
-            background: #1f2937;
+            border-color: rgba(255, 255, 255, 0.22);
+            color: #f8fafc;
+            background: #1b243b;
         }
         .mod-chip:active {
-            transform: scale(0.92);
-            background: #f59e0b;
-            color: #000;
+            transform: scale(0.94);
+            background: #2563eb;
+            color: #fff;
+            border-color: #3b82f6;
         }
 
         /* Scrollbar */
-        ::-webkit-scrollbar { width: 5px; height: 5px; }
-        ::-webkit-scrollbar-track { background: #0b0f19; }
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: #080c14; }
         ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
     </style>
 </head>
 <body class="flex flex-col min-h-screen">
 
-    <!-- Header bar inspired by upnro.pro -->
+    <!-- Header bar -->
     <header class="bg-slate-950/95 backdrop-blur border-b border-white/10 px-3 py-2 sticky top-0 z-40">
         <div class="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-2">
             <!-- Brand & Status -->
-            <div class="flex items-center gap-2 sm:gap-3">
-                <div class="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-600 flex items-center justify-center text-white text-sm font-bold shadow-md shadow-amber-500/30">
-                    🐉
+            <div class="flex items-center gap-2.5">
+                <div class="w-7 h-7 rounded-lg bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-300 font-mono text-xs font-bold tracking-tight">
+                    NR
                 </div>
                 <div>
                     <div class="flex items-center gap-1.5">
-                        <span class="font-bold text-xs sm:text-sm text-slate-100 tracking-tight">UP NRO PRO</span>
-                        <span class="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-400 font-semibold border border-amber-500/30 uppercase tracking-wider">Private</span>
+                        <span class="font-bold text-xs sm:text-sm text-slate-100 tracking-tight">NRO CLOUD</span>
+                        <span class="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500/15 text-indigo-400 font-semibold border border-indigo-500/25 uppercase tracking-wider font-mono">Private</span>
                     </div>
-                    <div class="flex items-center gap-2 text-[10px] text-slate-400">
-                        <span id="badge-running" class="flex items-center gap-1 text-emerald-400">
+                    <div class="flex items-center gap-2 text-[10px] text-slate-400 font-mono">
+                        <span id="badge-running" class="flex items-center gap-1 text-emerald-400 font-sans">
                             <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                            <span id="txt-status">Đang chạy 24/7</span>
+                            <span id="txt-status">Trực tuyến</span>
                         </span>
                         <span>•</span>
                         <span id="txt-uptime">0m</span>
                         <span>•</span>
-                        <span id="txt-ram" class="text-slate-400">RAM: -- MB</span>
+                        <span id="txt-ram" class="text-slate-400">RAM: --</span>
                     </div>
                 </div>
             </div>
@@ -148,32 +163,31 @@
             <div class="flex items-center gap-1.5 sm:gap-2">
                 <!-- PIN -->
                 <div class="flex items-center bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-xs">
-                    <i class="fa-solid fa-lock text-[10px] text-slate-400 mr-1.5"></i>
-                    <input type="password" id="input-pin" placeholder="PIN" value="1234" class="bg-transparent text-xs w-12 text-white focus:outline-none font-mono">
+                    <span class="text-[10px] text-slate-500 mr-1 font-mono">PIN</span>
+                    <input type="password" id="input-pin" placeholder="1234" value="1234" class="bg-transparent text-xs w-10 text-white focus:outline-none font-mono">
                 </div>
 
                 <!-- Stream Mode -->
                 <select id="select-fps" class="bg-slate-900 border border-white/10 rounded-lg text-xs px-2 py-1 text-slate-300 focus:outline-none">
-                    <option value="350">⚡ Cực Nhanh (0.35s)</option>
-                    <option value="700" selected>🚀 Nhanh (0.7s)</option>
-                    <option value="1500">🐢 Tiết Kiệm (1.5s)</option>
-                    <option value="0">🍃 Eco (Dừng)</option>
+                    <option value="350">0.35s (Cực nhanh)</option>
+                    <option value="700" selected>0.7s (Nhanh)</option>
+                    <option value="1500">1.5s (Tiết kiệm)</option>
+                    <option value="0">Tạm dừng (Eco)</option>
                 </select>
 
                 <!-- Refresh frame -->
-                <button id="btn-refresh" class="h-7 w-7 rounded-lg bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 text-xs text-slate-300 flex items-center justify-center" title="Làm mới khung hình">
-                    <i class="fa-solid fa-rotate-right"></i>
+                <button id="btn-refresh" class="h-7 px-2.5 rounded-lg bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 text-xs text-slate-300 flex items-center justify-center font-medium" title="Làm mới khung hình">
+                    Làm mới
                 </button>
 
                 <!-- Download Screen -->
-                <button id="btn-download-shot" class="h-7 w-7 rounded-lg bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 text-xs text-slate-300 flex items-center justify-center" title="Tải ảnh màn hình HD">
-                    <i class="fa-solid fa-camera"></i>
+                <button id="btn-download-shot" class="h-7 px-2.5 rounded-lg bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 text-xs text-slate-300 flex items-center justify-center font-medium" title="Tải ảnh màn hình HD">
+                    Tải ảnh
                 </button>
 
                 <!-- Upload ROM -->
-                <button id="btn-open-upload" class="h-7 px-2.5 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/40 text-xs font-semibold flex items-center gap-1" title="Đổi file mod JAR">
-                    <i class="fa-solid fa-cloud-arrow-up text-[10px]"></i>
-                    <span class="hidden sm:inline">Đổi Mod</span>
+                <button id="btn-open-upload" class="h-7 px-2.5 rounded-lg bg-indigo-600/25 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/35 text-xs font-semibold flex items-center" title="Đổi file mod JAR">
+                    Đổi Mod
                 </button>
             </div>
         </div>
@@ -182,12 +196,9 @@
     <!-- Main Workspace -->
     <main class="flex-1 max-w-5xl mx-auto w-full p-2 sm:p-4 flex flex-col items-center">
         
-        <!-- Action Notification Banner (e.g. anti-stuck / server socket offline) -->
+        <!-- Action Notification Banner -->
         <div id="server-alert" class="hidden w-full max-w-md mb-2 p-2 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs flex items-center justify-between">
-            <span class="flex items-center gap-1.5">
-                <i class="fa-solid fa-triangle-exclamation"></i>
-                <span id="server-alert-text">Đang kiểm tra kết nối...</span>
-            </span>
+            <span id="server-alert-text">Đang kiểm tra kết nối...</span>
             <button id="btn-fix-stuck" class="px-2 py-0.5 rounded bg-amber-500/30 hover:bg-amber-500/40 text-amber-200 font-semibold text-[10px]">
                 Chống Kẹt
             </button>
@@ -196,175 +207,159 @@
         <div class="w-full flex flex-col lg:flex-row items-center lg:items-start justify-center gap-4 sm:gap-6">
             
             <!-- LEFT: Screen & Immediate Quick Tools -->
-            <div class="flex flex-col items-center gap-3">
+            <div class="flex flex-col items-center gap-2.5">
                 <!-- Screen Frame -->
                 <div class="screen-wrapper" id="screen-container">
                     <img id="screen-img" src="" alt="DragonBoy Canvas" draggable="false">
                     
                     <!-- Loading / Disconnected Overlay -->
-                    <div id="screen-overlay" class="absolute inset-0 bg-slate-950/80 backdrop-blur flex flex-col items-center justify-center text-slate-400 gap-2 transition-opacity duration-300">
-                        <i class="fa-solid fa-spinner fa-spin text-2xl text-amber-400"></i>
+                    <div id="screen-overlay" class="absolute inset-0 bg-slate-950/85 backdrop-blur flex flex-col items-center justify-center text-slate-400 gap-2 transition-opacity duration-300">
+                        <div class="w-5 h-5 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin"></div>
                         <span class="text-xs font-medium" id="overlay-text">Đang kết nối game...</span>
                     </div>
 
                     <!-- Touch ripple marker -->
-                    <div id="touch-marker" class="hidden absolute w-6 h-6 rounded-full border-2 border-amber-400 bg-amber-400/30 pointer-events-none transform -translate-x-1/2 -translate-y-1/2 transition-all duration-150"></div>
+                    <div id="touch-marker" class="hidden absolute w-5 h-5 rounded-full border border-indigo-400 bg-indigo-400/25 pointer-events-none transform -translate-x-1/2 -translate-y-1/2 transition-all duration-150"></div>
                 </div>
 
                 <!-- Emergency / Quick Screen Bar -->
                 <div class="flex items-center gap-2 w-full max-w-[288px] justify-between">
-                    <button id="btn-anti-stuck" class="flex-1 py-1.5 px-2 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-semibold flex items-center justify-center gap-1.5" title="Tự động bấm OK để bỏ qua thông báo mất sóng / kẹt">
-                        <i class="fa-solid fa-shield-halved text-[11px]"></i>
-                        <span>Chống Kẹt</span>
+                    <button id="btn-anti-stuck" class="flex-1 py-1.5 px-2 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/25 text-xs font-semibold flex items-center justify-center" title="Bỏ qua thông báo mất sóng / kẹt">
+                        Chống Kẹt
                     </button>
 
-                    <button id="btn-restart" class="flex-1 py-1.5 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 border border-white/10 text-xs font-semibold flex items-center justify-center gap-1.5" title="Khởi động lại emulator">
-                        <i class="fa-solid fa-arrows-rotate text-[11px]"></i>
-                        <span>Restart</span>
+                    <button id="btn-restart" class="flex-1 py-1.5 px-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 active:scale-95 text-slate-200 border border-white/10 text-xs font-semibold flex items-center justify-center" title="Khởi động lại emulator">
+                        Khởi động lại
                     </button>
 
-                    <button id="btn-open-logs" class="py-1.5 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 border border-white/10 text-xs font-semibold flex items-center justify-center" title="Xem nhật ký console game">
-                        <i class="fa-solid fa-terminal text-[11px]"></i>
+                    <button id="btn-open-logs" class="py-1.5 px-3 rounded-lg bg-slate-800/80 hover:bg-slate-700 active:scale-95 text-slate-300 border border-white/10 text-xs font-semibold flex items-center justify-center" title="Xem nhật ký console game">
+                        Nhật ký
                     </button>
                 </div>
 
                 <!-- Dedicated Game Text / Account / Password Input -->
-                <div class="w-full max-w-[288px] sm:max-w-[340px] bg-slate-900/90 border border-indigo-500/30 rounded-xl p-2.5 flex flex-col gap-2 shadow-lg">
-                    <div class="flex items-center justify-between text-[11px] font-bold text-indigo-300">
-                        <span class="flex items-center gap-1.5">
-                            <i class="fa-solid fa-keyboard text-indigo-400"></i>
-                            <span>Gõ Tài Khoản / Mật Khẩu</span>
-                        </span>
-                        <span class="text-[9px] text-slate-400">Nhập trực tiếp vào game</span>
+                <div class="w-full max-w-[288px] sm:max-w-[340px] bg-slate-900/85 border border-white/10 rounded-xl p-2.5 flex flex-col gap-2 shadow-lg">
+                    <div class="flex items-center justify-between text-[11px] font-bold text-slate-300">
+                        <span>Nhập Tài Khoản / Mật Khẩu</span>
+                        <span class="text-[9px] text-slate-500 font-mono">Gõ trực tiếp vào game</span>
                     </div>
 
                     <!-- Input field with eye mask & Send button -->
                     <div class="flex items-center gap-1.5">
                         <div class="relative flex-1">
-                            <input type="text" id="input-game-text" placeholder="Gõ tài khoản, mật khẩu, email..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
-                                class="w-full bg-slate-950 border border-white/15 rounded-lg pl-2.5 pr-8 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 font-mono">
-                            <button type="button" id="btn-toggle-mask" class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs" title="Ẩn / Hiện mật khẩu">
-                                <i class="fa-solid fa-eye" id="icon-mask"></i>
+                            <input type="text" id="input-game-text" placeholder="Tài khoản, mật khẩu, email..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+                                class="w-full bg-slate-950 border border-white/15 rounded-lg pl-2.5 pr-12 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 font-mono">
+                            <button type="button" id="btn-toggle-mask" class="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 hover:text-white px-1 py-0.5 rounded bg-slate-800/80 border border-white/10 font-mono" title="Ẩn / Hiện">
+                                <span id="icon-mask">Ẩn</span>
                             </button>
                         </div>
-                        <button id="btn-send-text" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-bold text-xs rounded-lg flex items-center gap-1 shadow-md shadow-indigo-600/30 whitespace-nowrap" title="Gõ nội dung này vào ô nhập trong game">
-                            <i class="fa-solid fa-paper-plane text-[10px]"></i>
-                            <span>Gõ</span>
+                        <button id="btn-send-text" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-bold text-xs rounded-lg flex items-center shadow-md shadow-indigo-600/30 whitespace-nowrap" title="Gõ nội dung này vào ô nhập trong game">
+                            Gõ
                         </button>
                     </div>
 
                     <!-- Action controls for TextBox dialog -->
                     <div class="grid grid-cols-4 gap-1.5 text-[11px]">
-                        <button id="btn-text-paste" class="py-1 px-1 rounded bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 font-medium flex items-center justify-center gap-1 border border-white/5" title="Dán nội dung từ Clipboard">
-                            <i class="fa-solid fa-paste text-[10px] text-amber-400"></i> <span>Dán</span>
+                        <button id="btn-text-paste" class="py-1 px-1 rounded bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 font-medium flex items-center justify-center border border-white/5" title="Dán nội dung từ Clipboard">
+                            Dán
                         </button>
-                        <button id="btn-text-ok" class="py-1 px-1 rounded bg-emerald-600/30 hover:bg-emerald-600/50 active:scale-95 text-emerald-300 font-bold flex items-center justify-center gap-1 border border-emerald-500/30" title="Bấm OK (Phím F2) để xác nhận">
-                            <i class="fa-solid fa-check text-[10px]"></i> <span>Xong (OK)</span>
+                        <button id="btn-text-ok" class="py-1 px-1 rounded bg-emerald-600/25 hover:bg-emerald-600/40 active:scale-95 text-emerald-300 font-bold flex items-center justify-center border border-emerald-500/30" title="Bấm OK (Phím F2) để xác nhận">
+                            Xong (OK)
                         </button>
-                        <button id="btn-text-clear" class="py-1 px-1 rounded bg-rose-500/20 hover:bg-rose-500/40 active:scale-95 text-rose-300 font-medium flex items-center justify-center gap-1 border border-rose-500/30" title="Xóa toàn bộ ký tự trong ô">
-                            <i class="fa-solid fa-eraser text-[10px]"></i> <span>Xóa hết</span>
+                        <button id="btn-text-clear" class="py-1 px-1 rounded bg-rose-500/15 hover:bg-rose-500/30 active:scale-95 text-rose-300 font-medium flex items-center justify-center border border-rose-500/25" title="Xóa toàn bộ ký tự trong ô">
+                            Xóa hết
                         </button>
-                        <button id="btn-text-cancel" class="py-1 px-1 rounded bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-400 font-medium flex items-center justify-center gap-1 border border-white/5" title="Hủy bỏ (Phím F1)">
-                            <i class="fa-solid fa-xmark text-[10px]"></i> <span>Hủy</span>
+                        <button id="btn-text-cancel" class="py-1 px-1 rounded bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-400 font-medium flex items-center justify-center border border-white/5" title="Hủy bỏ (Phím F1)">
+                            Hủy
                         </button>
                     </div>
                 </div>
 
                 <!-- NRO Mod Quick Actions & XMAP Controller -->
-                <div class="w-full max-w-[288px] sm:max-w-[340px] bg-slate-900/90 border border-white/10 rounded-xl p-2.5 flex flex-col gap-2.5 shadow-lg">
-                    <div class="flex items-center justify-between text-[11px] font-bold text-slate-200">
-                        <span class="flex items-center gap-1.5">
-                            <i class="fa-solid fa-wand-magic-sparkles text-amber-400 text-xs"></i>
-                            <span>Treo Map & Tối Ưu GDL (1 Chạm)</span>
-                        </span>
-                        <span class="text-[9px] text-amber-400 font-semibold px-1.5 py-0.5 rounded bg-amber-400/10 border border-amber-400/20">Xmap Pro</span>
+                <div class="w-full max-w-[288px] sm:max-w-[340px] bg-slate-900/85 border border-white/10 rounded-xl p-2.5 flex flex-col gap-2.5 shadow-lg">
+                    <div class="flex items-center justify-between text-[11px] font-bold text-slate-300">
+                        <span>Treo Map & Tối Ưu GDL</span>
+                        <span class="text-[9px] text-indigo-400 font-mono px-1.5 py-0.2 rounded bg-indigo-500/15 border border-indigo-500/25">Xmap Pro</span>
                     </div>
 
                     <!-- 1-Click Super AFK Hang Mode Button -->
-                    <button class="w-full py-2 px-3 rounded-lg bg-gradient-to-r from-amber-500 via-orange-500 to-rose-600 hover:brightness-110 active:scale-95 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-2 shadow-md shadow-orange-500/20 transition mod-chip" data-cmd="xdh, annguoi, s20, gb, ts, anhat" title="Kích hoạt tức thì: Xóa đồ họa + Ẩn người + Chạy nhanh x5 + Giữ map + Tàn sát + Auto nhặt">
-                        <i class="fa-solid fa-bolt text-xs"></i>
-                        <span>1 CHẠM TREO SIÊU MƯỢT (GDL)</span>
+                    <button class="w-full py-2 px-3 rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 active:scale-95 text-white font-bold text-xs flex items-center justify-center shadow-md shadow-indigo-600/25 transition mod-chip tracking-wide" data-cmd="xdh, annguoi, s20, gb, ts, anhat" title="Kích hoạt tức thì: Xóa đồ họa + Ẩn người + Chạy nhanh x5 + Giữ map + Tàn sát + Auto nhặt">
+                        BẬT TREO SIÊU MƯỢT (GDL)
                     </button>
 
                     <!-- Group 1: Map Treo & Di Chuyển -->
                     <div class="flex flex-col gap-1">
-                        <span class="text-[10px] text-indigo-300 font-semibold flex items-center gap-1">
-                            <i class="fa-solid fa-map-location-dot text-[9px]"></i> Map Treo & Di Chuyển (Xmap)
-                        </span>
+                        <span class="text-[10px] text-slate-400 font-semibold">Map Treo & Di Chuyển</span>
                         <div class="flex flex-wrap gap-1">
-                            <button class="mod-chip bg-indigo-950/40 border-indigo-500/30 text-indigo-200 hover:border-indigo-400" data-cmd="xmap" title="Mở bảng Menu Xmap để chọn mọi map/hành tinh muốn treo">
-                                <span>🗺️</span> <span>Chọn Map (Xmap)</span>
+                            <button class="mod-chip text-indigo-300 border-indigo-500/25 bg-indigo-950/30" data-cmd="xmap" title="Mở bảng Menu Xmap để chọn mọi map/hành tinh muốn treo">
+                                Chọn Map (Xmap)
                             </button>
                             <button class="mod-chip" data-cmd="gb" title="Tự động quay lại đúng map treo khi bị chết hoặc mất mạng">
-                                <span>🔄</span> <span>Giữ Map (gb)</span>
+                                Giữ Map (gb)
                             </button>
                             <button class="mod-chip" data-cmd="s20" title="Tăng tốc chạy lên 5 lần, di chuyển qua map tức thì không lag">
-                                <span>⚡</span> <span>Chạy Nhanh (s20)</span>
+                                Chạy Nhanh (s20)
                             </button>
                             <button class="mod-chip" data-cmd="kvt" title="Khóa vị trí đứng yên tại bãi quái, không bị xô đẩy">
-                                <span>🛑</span> <span>Khóa Vị Trí (kvt)</span>
+                                Khóa Vị Trí (kvt)
                             </button>
                             <button class="mod-chip" data-cmd="nb" title="Tự động đổi khu tránh Boss khi Boss xuất hiện">
-                                <span>👾</span> <span>Né Boss (nb)</span>
+                                Né Boss (nb)
                             </button>
                             <button class="mod-chip" data-cmd="cflag" title="Bật cờ chống PK để người khác không thể đồ sát">
-                                <span>🛡️</span> <span>Cờ Chống PK</span>
+                                Cờ Chống PK
                             </button>
                         </div>
                     </div>
 
                     <!-- Group 2: Giảm Đồ Họa & Xóa Hiệu Ứng (GDL) -->
                     <div class="flex flex-col gap-1 border-t border-white/5 pt-1.5">
-                        <span class="text-[10px] text-emerald-300 font-semibold flex items-center gap-1">
-                            <i class="fa-solid fa-leaf text-[9px]"></i> Giảm Lag & Xóa Hiệu Ứng (GDL)
-                        </span>
+                        <span class="text-[10px] text-slate-400 font-semibold">Giảm Lag & Xóa Đồ Họa</span>
                         <div class="flex flex-wrap gap-1">
-                            <button class="mod-chip bg-emerald-950/40 border-emerald-500/30 text-emerald-200 hover:border-emerald-400" data-cmd="xdh" title="Bật/Tắt xóa toàn bộ đồ họa nền và hiệu ứng nặng">
-                                <span>🍃</span> <span>Xóa Đồ Họa (xdh)</span>
+                            <button class="mod-chip text-emerald-300 border-emerald-500/25 bg-emerald-950/30" data-cmd="xdh" title="Bật/Tắt xóa toàn bộ đồ họa nền và hiệu ứng nặng">
+                                Xóa Đồ Họa (xdh)
                             </button>
                             <button class="mod-chip" data-cmd="annguoi" title="Ẩn toàn bộ người chơi khác trong map, load map siêu tốc">
-                                <span>👤</span> <span>Ẩn Người (annguoi)</span>
+                                Ẩn Người (annguoi)
                             </button>
                             <button class="mod-chip" data-cmd="anquai" title="Ẩn quái trong map">
-                                <span>👻</span> <span>Ẩn Quái</span>
+                                Ẩn Quái
                             </button>
                             <button class="mod-chip" data-cmd="anitem" title="Ẩn item rơi dưới đất">
-                                <span>📦</span> <span>Ẩn Item</span>
+                                Ẩn Item
                             </button>
                         </div>
                     </div>
 
                     <!-- Group 3: Chiến Đấu & Tiện Ích -->
                     <div class="flex flex-col gap-1 border-t border-white/5 pt-1.5">
-                        <span class="text-[10px] text-amber-300 font-semibold flex items-center gap-1">
-                            <i class="fa-solid fa-crosshairs text-[9px]"></i> Chiến Đấu & Auto Treo
-                        </span>
+                        <span class="text-[10px] text-slate-400 font-semibold">Chiến Đấu & Auto Treo</span>
                         <div class="flex flex-wrap gap-1">
-                            <button class="mod-chip" data-cmd="ts" title="Tàn sát tất cả quái trong map">
-                                <span>⚔️</span> <span>Tàn Sát (ts)</span>
+                            <button class="mod-chip text-blue-300 border-blue-500/25 bg-blue-950/30" data-cmd="ts" title="Tàn sát tất cả quái trong map">
+                                Tàn Sát (ts)
                             </button>
                             <button class="mod-chip" data-cmd="anhat" title="Tự động nhặt mọi vật phẩm rơi">
-                                <span>🎁</span> <span>Auto Nhặt</span>
+                                Auto Nhặt
                             </button>
                             <button class="mod-chip" data-cmd="ak" title="Tự động đánh quái">
-                                <span>🗡️</span> <span>Tự Đánh (ak)</span>
+                                Tự Đánh (ak)
                             </button>
                             <button class="mod-chip" data-cmd="tdlt" title="Bật tự động luyện tập kết hợp tàn sát">
-                                <span>📖</span> <span>Auto TDLT</span>
+                                Auto TDLT
                             </button>
                             <button class="mod-chip" data-cmd="cs" title="Sử dụng Capsule">
-                                <span>💊</span> <span>Capsule</span>
+                                Capsule
                             </button>
                             <button class="mod-chip" data-cmd="k" title="Đổi sang khu khác">
-                                <span>🗺️</span> <span>Đổi Khu (k)</span>
+                                Đổi Khu (k)
                             </button>
                         </div>
                     </div>
 
                     <!-- Custom Chat / Command Input -->
                     <div class="flex items-center gap-1.5 mt-0.5 border-t border-white/5 pt-1.5">
-                        <input type="text" id="input-cmd" placeholder="Lệnh mod khác (vd: k5, s30, xmap)..." class="flex-1 bg-slate-950 border border-white/10 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50 font-mono">
-                        <button id="btn-send-cmd" class="px-3 py-1 bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-bold text-xs rounded-lg flex items-center justify-center">
+                        <input type="text" id="input-cmd" placeholder="Lệnh khác (vd: k5, s30, xmap)..." class="flex-1 bg-slate-950 border border-white/10 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 font-mono">
+                        <button id="btn-send-cmd" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 font-semibold text-xs rounded-lg flex items-center justify-center border border-white/10">
                             Gửi
                         </button>
                     </div>
@@ -373,62 +368,61 @@
             </div>
 
             <!-- RIGHT: Ergonomic J2ME Keypad -->
-            <div class="w-full max-w-[288px] sm:max-w-[320px] bg-slate-900/60 border border-white/10 rounded-2xl p-3 flex flex-col gap-3">
+            <div class="w-full max-w-[288px] sm:max-w-[320px] bg-slate-900/85 border border-white/10 rounded-2xl p-3 flex flex-col gap-3 shadow-lg">
                 <div class="flex items-center justify-between border-b border-white/5 pb-2">
-                    <span class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                        <i class="fa-solid fa-gamepad text-indigo-400"></i>
-                        <span>Bàn phím J2ME</span>
+                    <span class="text-xs font-bold text-slate-300">
+                        Bàn phím Game
                     </span>
-                    <span class="text-[10px] text-slate-500 font-mono">240x360 Layout</span>
+                    <span class="text-[10px] text-slate-500 font-mono">Layout 240x360</span>
                 </div>
 
                 <!-- Soft Keys (F1, F2) -->
                 <div class="grid grid-cols-2 gap-2">
                     <button class="key-btn py-2 text-xs text-indigo-300" data-key="f1" title="Phím Chọn Trái (Hủy / Menu)">
-                        <i class="fa-solid fa-caret-left mr-1"></i> Trái (F1 / Hủy)
+                        Trái (F1)
                     </button>
                     <button class="key-btn py-2 text-xs text-indigo-300" data-key="f2" title="Phím Chọn Phải (OK / Đóng)">
-                        Phải (F2 / OK) <i class="fa-solid fa-caret-right ml-1"></i>
+                        Phải (F2)
                     </button>
                 </div>
 
                 <!-- D-Pad (Up, Down, Left, Right, OK) -->
                 <div class="grid grid-cols-3 gap-2 w-44 mx-auto my-1">
                     <div></div>
-                    <button class="dpad-btn h-11 text-base" data-key="up" title="Lên">
-                        <i class="fa-solid fa-arrow-up"></i>
+                    <button class="dpad-btn h-11" data-key="up" title="Lên">
+                        ↑
                     </button>
                     <div></div>
 
-                    <button class="dpad-btn h-11 text-base" data-key="left" title="Trái">
-                        <i class="fa-solid fa-arrow-left"></i>
+                    <button class="dpad-btn h-11" data-key="left" title="Trái">
+                        ←
                     </button>
                     <button class="key-btn h-11 bg-indigo-600 text-white font-extrabold text-xs shadow-md shadow-indigo-600/30 border-indigo-400/40" data-key="ok" title="OK / Enter">
                         OK
                     </button>
-                    <button class="dpad-btn h-11 text-base" data-key="right" title="Phải">
-                        <i class="fa-solid fa-arrow-right"></i>
+                    <button class="dpad-btn h-11" data-key="right" title="Phải">
+                        →
                     </button>
 
                     <div></div>
-                    <button class="dpad-btn h-11 text-base" data-key="down" title="Xuống">
-                        <i class="fa-solid fa-arrow-down"></i>
+                    <button class="dpad-btn h-11" data-key="down" title="Xuống">
+                        ↓
                     </button>
                     <div></div>
                 </div>
 
                 <!-- Numpad 12-keys (0-9, *, #) -->
-                <div class="grid grid-cols-3 gap-1.5 pt-1 border-t border-white/5">
+                <div class="grid grid-cols-3 gap-1.5 pt-1 border-t border-white/5 font-mono">
                     <button class="key-btn h-9 text-xs" data-key="1">1</button>
-                    <button class="key-btn h-9 text-xs" data-key="2">2 <span class="text-[8px] text-slate-500 block -mt-1 font-normal">▲</span></button>
+                    <button class="key-btn h-9 text-xs" data-key="2">2</button>
                     <button class="key-btn h-9 text-xs" data-key="3">3</button>
 
-                    <button class="key-btn h-9 text-xs" data-key="4">4 <span class="text-[8px] text-slate-500 block -mt-1 font-normal">◀</span></button>
-                    <button class="key-btn h-9 text-xs text-amber-300 font-bold" data-key="5">5 <span class="text-[8px] text-amber-500 block -mt-1 font-normal">OK</span></button>
-                    <button class="key-btn h-9 text-xs" data-key="6">6 <span class="text-[8px] text-slate-500 block -mt-1 font-normal">▶</span></button>
+                    <button class="key-btn h-9 text-xs" data-key="4">4</button>
+                    <button class="key-btn h-9 text-xs text-indigo-300 font-bold" data-key="5">5</button>
+                    <button class="key-btn h-9 text-xs" data-key="6">6</button>
 
                     <button class="key-btn h-9 text-xs" data-key="7">7</button>
-                    <button class="key-btn h-9 text-xs" data-key="8">8 <span class="text-[8px] text-slate-500 block -mt-1 font-normal">▼</span></button>
+                    <button class="key-btn h-9 text-xs" data-key="8">8</button>
                     <button class="key-btn h-9 text-xs" data-key="9">9</button>
 
                     <button class="key-btn h-9 text-xs text-slate-400" data-key="star">*</button>
@@ -439,8 +433,8 @@
                 <!-- Keypad footer -->
                 <div class="flex items-center justify-between text-[10px] text-slate-500 px-1 pt-1">
                     <span>Hỗ trợ chạm trực tiếp trên màn hình</span>
-                    <button class="hover:text-rose-400 transition" data-key="backspace" title="Xóa ký tự">
-                        <i class="fa-solid fa-delete-left"></i> Xóa
+                    <button class="hover:text-rose-400 transition font-medium" data-key="backspace" title="Xóa ký tự">
+                        Xóa
                     </button>
                 </div>
             </div>
@@ -453,22 +447,20 @@
     <div id="modal-upload" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3">
         <div class="bg-slate-900 border border-white/10 rounded-2xl max-w-sm w-full p-4 flex flex-col gap-3 shadow-2xl">
             <div class="flex items-center justify-between">
-                <span class="font-bold text-sm text-slate-100 flex items-center gap-2">
-                    <i class="fa-solid fa-cloud-arrow-up text-indigo-400"></i>
-                    <span>Tải Lên Bản Mod NRO (.JAR)</span>
+                <span class="font-bold text-sm text-slate-100">
+                    Đổi Bản Mod NRO (.JAR)
                 </span>
-                <button id="btn-close-upload" class="text-slate-400 hover:text-white text-sm">
-                    <i class="fa-solid fa-xmark"></i>
+                <button id="btn-close-upload" class="text-slate-400 hover:text-white text-xs font-mono px-1.5 py-0.5 rounded bg-white/5">
+                    Đóng
                 </button>
             </div>
             
             <p class="text-xs text-slate-400">
-                Tải lên bản mod Java (.jar) riêng của bạn (DragonBoy mod pro, v250, v251...). Hệ thống sẽ tự động thay thế và khởi động lại game tức thì.
+                Tải lên bản mod Java (.jar) riêng của bạn. Hệ thống sẽ tự động thay thế và khởi động lại game tức thì.
             </p>
 
             <form id="form-upload" class="flex flex-col gap-3">
                 <div class="border-2 border-dashed border-white/15 rounded-xl p-4 text-center cursor-pointer hover:border-indigo-400/50 transition bg-slate-950/40" id="drop-zone">
-                    <i class="fa-solid fa-file-zipper text-2xl text-indigo-400 mb-1"></i>
                     <p class="text-xs text-slate-300 font-medium" id="file-label">Chọn hoặc kéo thả file .jar vào đây</p>
                     <input type="file" id="file-input" name="file" accept=".jar" class="hidden">
                 </div>
@@ -477,9 +469,8 @@
                     <button type="button" id="btn-cancel-upload" class="px-3 py-1.5 rounded-lg bg-slate-800 text-xs text-slate-300 font-semibold">
                         Hủy
                     </button>
-                    <button type="submit" id="btn-submit-upload" class="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs text-white font-semibold flex items-center gap-1.5">
-                        <i class="fa-solid fa-upload"></i>
-                        <span>Bắt đầu nạp</span>
+                    <button type="submit" id="btn-submit-upload" class="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs text-white font-semibold">
+                        Nạp Mod
                     </button>
                 </div>
             </form>
@@ -490,12 +481,11 @@
     <div id="modal-logs" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3">
         <div class="bg-slate-900 border border-white/10 rounded-2xl max-w-lg w-full p-4 flex flex-col gap-3 shadow-2xl h-[70vh]">
             <div class="flex items-center justify-between border-b border-white/10 pb-2">
-                <span class="font-bold text-sm text-slate-100 flex items-center gap-2">
-                    <i class="fa-solid fa-terminal text-amber-400"></i>
-                    <span>Nhật ký Console Game 24/7</span>
+                <span class="font-bold text-sm text-slate-100">
+                    Nhật ký Console Game 24/7
                 </span>
-                <button id="btn-close-logs" class="text-slate-400 hover:text-white text-sm">
-                    <i class="fa-solid fa-xmark"></i>
+                <button id="btn-close-logs" class="text-slate-400 hover:text-white text-xs font-mono px-1.5 py-0.5 rounded bg-white/5">
+                    Đóng
                 </button>
             </div>
 
@@ -504,8 +494,8 @@
             </div>
 
             <div class="flex items-center justify-between pt-1">
-                <button id="btn-reload-logs" class="px-3 py-1.5 rounded-lg bg-slate-800 text-xs text-slate-300 font-semibold flex items-center gap-1">
-                    <i class="fa-solid fa-rotate-right"></i> Làm mới
+                <button id="btn-reload-logs" class="px-3 py-1.5 rounded-lg bg-slate-800 text-xs text-slate-300 font-semibold">
+                    Làm mới
                 </button>
                 <button id="btn-close-logs-2" class="px-4 py-1.5 rounded-lg bg-indigo-600 text-xs text-white font-semibold">
                     Đóng
@@ -839,10 +829,10 @@
             btnToggleMask.addEventListener('click', () => {
                 if (inputGameText.type === 'text') {
                     inputGameText.type = 'password';
-                    iconMask.className = 'fa-solid fa-eye-slash';
+                    iconMask.textContent = 'Hiện';
                 } else {
                     inputGameText.type = 'text';
-                    iconMask.className = 'fa-solid fa-eye';
+                    iconMask.textContent = 'Ẩn';
                 }
             });
 
