@@ -21,6 +21,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     ca-certificates \
     procps \
+    xdotool \
+    wmctrl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

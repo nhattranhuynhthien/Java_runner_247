@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Ngọc Rồng Online • 24/7 Cloud</title>
-    <!-- Preload core RFB scripts for instant execution -->
+    <!-- Preload core RFB scripts -->
     <link rel="modulepreload" href="./core/rfb.js">
     <link rel="modulepreload" href="./core/display.js">
     <link rel="modulepreload" href="./core/websock.js">
@@ -17,7 +17,7 @@
         body {
             margin: 0;
             padding: 0;
-            background: #070a12;
+            background: #05070d;
             overflow: hidden;
             touch-action: manipulation;
         }
@@ -29,19 +29,29 @@
             width: 100%;
             height: 100%;
             overflow: hidden;
+            background: #05070d;
         }
         #screen {
-            width: 100%;
-            height: 100%;
             display: flex;
             align-items: center;
             justify-content: center;
+            max-width: 100%;
+            max-height: 100%;
+        }
+        #screen canvas {
+            max-width: 100vw;
+            max-height: calc(100vh - 48px);
+            object-fit: contain;
+            aspect-ratio: 480 / 640;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.9);
+            border-radius: 8px;
+            cursor: pointer;
         }
         .btn-ctrl {
             background: #1e293b;
             color: #f1f5f9;
             border: 1px solid rgba(255, 255, 255, 0.12);
-            border-radius: 8px;
+            border-radius: 10px;
             font-weight: 700;
             display: flex;
             align-items: center;
@@ -52,10 +62,10 @@
             cursor: pointer;
         }
         .btn-ctrl:active {
-            background: #3b82f6;
+            background: #4f46e5;
             color: #ffffff;
             transform: scale(0.92);
-            border-color: #60a5fa;
+            border-color: #818cf8;
         }
         .noVNC_vcenter, #noVNC_control_bar_anchor, #noVNC_control_bar {
             display: none !important;
@@ -65,25 +75,31 @@
 <body class="flex flex-col h-screen select-none text-slate-100">
 
     <!-- Top Navbar -->
-    <header class="h-12 bg-slate-950/90 backdrop-blur-md border-b border-white/5 px-3 sm:px-4 flex items-center justify-between z-30 shrink-0">
+    <header class="h-12 bg-slate-950/95 backdrop-blur-md border-b border-white/5 px-2.5 sm:px-4 flex items-center justify-between z-30 shrink-0">
         <div class="flex items-center gap-2 sm:gap-3">
-            <div class="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center shadow-lg shadow-amber-500/20 text-white text-xs font-bold">
+            <div class="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center shadow-lg shadow-amber-500/25 text-white text-xs font-bold">
                 🐉
             </div>
             <div class="flex items-center gap-2">
-                <span class="font-bold text-xs sm:text-sm text-slate-100 tracking-tight">Ngọc Rồng Online</span>
+                <span class="font-bold text-xs sm:text-sm text-slate-100 tracking-tight">Ngọc Rồng 24/7</span>
                 <span id="status-pill" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                     <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                    <span id="status-label">Đang chạy 24/24</span>
+                    <span id="status-label">Đang chạy</span>
                 </span>
             </div>
         </div>
 
         <div class="flex items-center gap-1.5 sm:gap-2">
+            <!-- Quick Action: Bấm OK / Bỏ Báo Mất Sóng -->
+            <button id="btn-quick-dismiss" class="h-8 px-2.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 active:scale-95 border border-emerald-500/30 text-xs font-bold text-emerald-300 flex items-center gap-1.5 transition" title="Bấm OK bỏ qua thông báo mất sóng / xác nhận">
+                <i class="fa-solid fa-circle-check"></i>
+                <span>Bấm OK</span>
+            </button>
+
             <!-- Upload / Switch Mod Button -->
             <button id="btn-open-upload" class="h-8 px-2.5 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 active:scale-95 border border-indigo-500/30 text-xs font-semibold text-indigo-300 flex items-center gap-1.5 transition">
                 <i class="fa-solid fa-cloud-arrow-up"></i>
-                <span>Đổi Game (.jar)</span>
+                <span class="hidden sm:inline">Đổi Mod</span>
             </button>
 
             <!-- Virtual Keypad Toggle -->
@@ -105,23 +121,23 @@
     </header>
 
     <!-- Main Game Canvas Area -->
-    <main class="relative flex-1 bg-[#070a12] flex items-center justify-center overflow-hidden" id="main-area">
+    <main class="relative flex-1 bg-[#05070d] flex items-center justify-center overflow-hidden" id="main-area">
         <div id="screen-wrapper">
             <div id="screen"></div>
         </div>
 
         <!-- Fast Loading Overlay -->
-        <div id="loading-overlay" class="absolute inset-0 bg-[#070a12] flex flex-col items-center justify-center gap-3 z-50 transition-opacity duration-150">
-            <div class="relative w-10 h-10">
-                <div class="w-10 h-10 rounded-full border-2 border-amber-500/20 border-t-amber-400 animate-spin"></div>
-                <span class="absolute inset-0 flex items-center justify-center text-xs">🐉</span>
+        <div id="loading-overlay" class="absolute inset-0 bg-[#05070d] flex flex-col items-center justify-center gap-3 z-50 transition-opacity duration-150">
+            <div class="relative w-11 h-11">
+                <div class="w-11 h-11 rounded-full border-2 border-amber-500/20 border-t-amber-400 animate-spin"></div>
+                <span class="absolute inset-0 flex items-center justify-center text-sm">🐉</span>
             </div>
             <p class="text-xs font-medium text-slate-300" id="loading-text">Đang kết nối vào màn hình game...</p>
         </div>
 
         <!-- Floating Mobile Keypad -->
-        <div id="gamepad-drawer" class="absolute bottom-3 right-3 bg-slate-950/90 backdrop-blur-xl p-2 rounded-2xl border border-white/10 shadow-2xl z-40 max-w-[250px] select-none">
-            <div class="flex items-center justify-between pb-1 mb-1.5 border-b border-white/10 text-[11px] font-semibold text-slate-400">
+        <div id="gamepad-drawer" class="absolute bottom-3 right-3 bg-slate-950/95 backdrop-blur-xl p-2.5 rounded-2xl border border-white/10 shadow-2xl z-40 max-w-[260px] select-none">
+            <div class="flex items-center justify-between pb-1.5 mb-2 border-b border-white/10 text-[11px] font-semibold text-slate-400">
                 <span class="flex items-center gap-1.5 text-amber-400">
                     <i class="fa-solid fa-keyboard"></i>
                     <span>Bàn phím J2ME</span>
@@ -132,7 +148,7 @@
             </div>
 
             <!-- Direction & Softkeys -->
-            <div class="grid grid-cols-3 gap-1 mb-1 text-xs">
+            <div class="grid grid-cols-3 gap-1.5 mb-1.5 text-xs">
                 <button class="btn-ctrl h-9 text-[11px]" data-key="SoftLeft">Chọn Trái</button>
                 <button class="btn-ctrl h-9" data-key="ArrowUp"><i class="fa-solid fa-arrow-up"></i></button>
                 <button class="btn-ctrl h-9 text-[11px]" data-key="SoftRight">Chọn Phải</button>
@@ -147,7 +163,7 @@
             </div>
 
             <!-- Number Keypad (1 - 9, *, 0, #) -->
-            <div class="grid grid-cols-3 gap-1 text-xs">
+            <div class="grid grid-cols-3 gap-1.5 text-xs">
                 <button class="btn-ctrl h-8" data-key="1">1</button>
                 <button class="btn-ctrl h-8" data-key="2">2</button>
                 <button class="btn-ctrl h-8" data-key="3">3</button>
@@ -165,7 +181,7 @@
     </main>
 
     <!-- MODAL: Đổi File Game / Bản Mod (.JAR) Trực tiếp trên Web -->
-    <div id="modal-upload" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div id="modal-upload" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
         <div class="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-sm w-full p-5 shadow-2xl space-y-4">
             <div class="flex items-center justify-between pb-3 border-b border-slate-800">
                 <div class="flex items-center gap-2">
@@ -207,6 +223,7 @@
 
         let rfb = null;
         const screenElem = document.getElementById('screen');
+        const screenWrapper = document.getElementById('screen-wrapper');
         const statusPill = document.getElementById('status-pill');
         const statusLabel = document.getElementById('status-label');
         const loadingOverlay = document.getElementById('loading-overlay');
@@ -231,12 +248,12 @@
                 rfb.addEventListener('connect', () => {
                     loadingOverlay.style.display = 'none';
                     statusPill.className = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
-                    statusLabel.textContent = 'Đang chạy 24/24';
+                    statusLabel.textContent = 'Đang chạy';
 
                     if (rfb.focus) rfb.focus();
                 });
 
-                rfb.addEventListener('disconnect', (e) => {
+                rfb.addEventListener('disconnect', () => {
                     loadingOverlay.style.display = 'flex';
                     loadingText.textContent = 'Đang kết nối lại tức thì...';
                     statusPill.className = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20';
@@ -250,40 +267,47 @@
             }
         }
 
-        // Connect immediately
         connect();
 
-        // Guaranteed pulse key sender (Press + Release pulse)
-        function sendKeyPulse(keysym, code) {
-            if (!rfb) return;
-            rfb.sendKey(keysym, code, true);
-            setTimeout(() => {
-                rfb.sendKey(keysym, code, false);
-            }, 60);
+        // 1. Dual-channel key sender (RFB VNC + Direct Backend X11 Injection)
+        function sendKeyPulse(keysym, code, keyName) {
+            // Channel A: noVNC sendKey
+            if (rfb) {
+                try {
+                    rfb.sendKey(keysym, code, true);
+                    setTimeout(() => rfb.sendKey(keysym, code, false), 50);
+                } catch (e) {}
+            }
+
+            // Channel B: Server-side xdotool injection (100% foolproof)
+            fetch('/api/key?key=' + encodeURIComponent(keyName || code), {
+                method: 'POST'
+            }).catch(() => {});
         }
 
         const keyMap = {
-            'SoftLeft':  { sym: 0x0071, code: 'KeyQ' },
-            'SoftRight': { sym: 0x0077, code: 'KeyW' },
-            'Enter':     { sym: 0xFF0D, code: 'Enter' },
-            'ArrowUp':   { sym: 0xFF52, code: 'ArrowUp' },
-            'ArrowDown': { sym: 0xFF54, code: 'ArrowDown' },
-            'ArrowLeft': { sym: 0xFF51, code: 'ArrowLeft' },
-            'ArrowRight':{ sym: 0xFF53, code: 'ArrowRight' },
-            '1': { sym: 0x0031, code: 'Digit1' },
-            '2': { sym: 0x0032, code: 'Digit2' },
-            '3': { sym: 0x0033, code: 'Digit3' },
-            '4': { sym: 0x0034, code: 'Digit4' },
-            '5': { sym: 0x0035, code: 'Digit5' },
-            '6': { sym: 0x0036, code: 'Digit6' },
-            '7': { sym: 0x0037, code: 'Digit7' },
-            '8': { sym: 0x0038, code: 'Digit8' },
-            '9': { sym: 0x0039, code: 'Digit9' },
-            '0': { sym: 0x0030, code: 'Digit0' },
-            '*': { sym: 0x002A, code: 'NumpadMultiply' },
-            '#': { sym: 0x0023, code: 'IntlHash' }
+            'SoftLeft':  { sym: 0x0071, code: 'KeyQ', xdo: 'SoftLeft' },
+            'SoftRight': { sym: 0x0077, code: 'KeyW', xdo: 'SoftRight' },
+            'Enter':     { sym: 0xFF0D, code: 'Enter', xdo: 'Return' },
+            'ArrowUp':   { sym: 0xFF52, code: 'ArrowUp', xdo: 'ArrowUp' },
+            'ArrowDown': { sym: 0xFF54, code: 'ArrowDown', xdo: 'ArrowDown' },
+            'ArrowLeft': { sym: 0xFF51, code: 'ArrowLeft', xdo: 'ArrowLeft' },
+            'ArrowRight':{ sym: 0xFF53, code: 'ArrowRight', xdo: 'ArrowRight' },
+            '1': { sym: 0x0031, code: 'Digit1', xdo: '1' },
+            '2': { sym: 0x0032, code: 'Digit2', xdo: '2' },
+            '3': { sym: 0x0033, code: 'Digit3', xdo: '3' },
+            '4': { sym: 0x0034, code: 'Digit4', xdo: '4' },
+            '5': { sym: 0x0035, code: 'Digit5', xdo: '5' },
+            '6': { sym: 0x0036, code: 'Digit6', xdo: '6' },
+            '7': { sym: 0x0037, code: 'Digit7', xdo: '7' },
+            '8': { sym: 0x0038, code: 'Digit8', xdo: '8' },
+            '9': { sym: 0x0039, code: 'Digit9', xdo: '9' },
+            '0': { sym: 0x0030, code: 'Digit0', xdo: '0' },
+            '*': { sym: 0x0065, code: 'KeyE', xdo: '*' },
+            '#': { sym: 0x0072, code: 'KeyR', xdo: '#' }
         };
 
+        // Keypad buttons
         document.querySelectorAll('.btn-ctrl').forEach(btn => {
             const handlePress = (e) => {
                 e.preventDefault();
@@ -291,20 +315,73 @@
                 const key = btn.getAttribute('data-key');
                 const def = keyMap[key];
                 if (def) {
-                    sendKeyPulse(def.sym, def.code);
-                    if (key === 'SoftLeft') sendKeyPulse(0xFFBE, 'F1');
-                    if (key === 'SoftRight') sendKeyPulse(0xFFBF, 'F2');
-                    if (key === 'Enter') {
-                        sendKeyPulse(0x0020, 'Space');
-                        sendKeyPulse(0x0035, 'Digit5');
-                    }
+                    sendKeyPulse(def.sym, def.code, def.xdo);
                 }
             };
             btn.addEventListener('pointerdown', handlePress);
         });
 
-        document.getElementById('screen-wrapper').addEventListener('pointerdown', () => {
+        // Quick Dismiss Button (OK / Dismiss Dialog)
+        const btnQuickDismiss = document.getElementById('btn-quick-dismiss');
+        btnQuickDismiss.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            sendKeyPulse(0xFF0D, 'Enter', 'Return');
+            fetch('/api/dismiss', { method: 'POST' }).catch(() => {});
+        });
+
+        // 2. Direct Screen Click & Touch Event Forwarding
+        screenWrapper.addEventListener('pointerdown', (e) => {
             if (rfb && rfb.focus) rfb.focus();
+
+            const canvas = screenWrapper.querySelector('canvas');
+            if (canvas) {
+                const rect = canvas.getBoundingClientRect();
+                if (e.clientX >= rect.left && e.clientX <= rect.right &&
+                    e.clientY >= rect.top && e.clientY <= rect.bottom) {
+                    const x = Math.round(((e.clientX - rect.left) / rect.width) * 480);
+                    const y = Math.round(((e.clientY - rect.top) / rect.height) * 640);
+
+                    // Send click directly to X11 display
+                    fetch('/api/click', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ x, y })
+                    }).catch(() => {});
+                }
+            }
+        });
+
+        // 3. Physical Keyboard Support on Desktop
+        window.addEventListener('keydown', (e) => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+            const codeMap = {
+                'Enter': 'Return',
+                'Space': 'Space',
+                'ArrowUp': 'ArrowUp',
+                'ArrowDown': 'ArrowDown',
+                'ArrowLeft': 'ArrowLeft',
+                'ArrowRight': 'ArrowRight',
+                'KeyQ': 'SoftLeft',
+                'KeyW': 'SoftRight',
+                'Digit0': '0', 'Numpad0': '0',
+                'Digit1': '1', 'Numpad1': '1',
+                'Digit2': '2', 'Numpad2': '2',
+                'Digit3': '3', 'Numpad3': '3',
+                'Digit4': '4', 'Numpad4': '4',
+                'Digit5': '5', 'Numpad5': '5',
+                'Digit6': '6', 'Numpad6': '6',
+                'Digit7': '7', 'Numpad7': '7',
+                'Digit8': '8', 'Numpad8': '8',
+                'Digit9': '9', 'Numpad9': '9',
+            };
+
+            const k = codeMap[e.code];
+            if (k) {
+                const def = keyMap[k] || { sym: 0xFF0D, code: 'Enter', xdo: k };
+                sendKeyPulse(def.sym, def.code, def.xdo);
+            }
         });
 
         // Toggle Keypad Drawer

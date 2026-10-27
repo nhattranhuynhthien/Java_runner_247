@@ -2,8 +2,7 @@ node_modules/
 workspace/app.log
 workspace/app.log.1
 workspace/*.class
-freej2me_system/
-rms/
-config/
+# rms/
+freej2me_system/*.log
 .DS_Store
 .env
