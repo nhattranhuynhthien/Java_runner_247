@@ -4,11 +4,15 @@ import time
 import socket
 import subprocess
 import threading
-from flask import Flask, render_template, request, Response, jsonify
+import json
+import hmac
+import hashlib
+import secrets
+from datetime import timedelta
+from flask import Flask, render_template, request, Response, jsonify, session, redirect, url_for
 from PIL import Image, ImageGrab
 
 os.environ["DISPLAY"] = ":1"
-ADMIN_PIN = os.environ.get("ADMIN_PIN", "1234")
 SERVER_START_TIME = time.time()
 
 # Y offset for cropping out the MicroEmulator window menu bar
@@ -17,7 +21,96 @@ SCREEN_WIDTH = 240
 SCREEN_HEIGHT = 360
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SESSION_SECRET", secrets.token_hex(32))
+app.permanent_session_lifetime = timedelta(days=14)
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+
 x11_lock = threading.Lock()
+
+# Persistent Security Configuration
+SECURITY_CONFIG_FILE = os.path.join(os.path.dirname(__file__), "security_config.json")
+
+def load_security_config():
+    if os.path.exists(SECURITY_CONFIG_FILE):
+        try:
+            with open(SECURITY_CONFIG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_security_config(cfg):
+    try:
+        with open(SECURITY_CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+    except Exception as e:
+        print(f"[SECURITY] Lỗi lưu cấu hình: {e}")
+
+def hash_pin(pin_str, salt=None):
+    if not salt:
+        salt = secrets.token_hex(16)
+    hashed = hashlib.pbkdf2_hmac("sha256", str(pin_str).encode("utf-8"), salt.encode("utf-8"), 100000).hex()
+    return hashed, salt
+
+def verify_pin(candidate_pin):
+    if not candidate_pin:
+        return False
+    candidate_str = str(candidate_pin).strip()
+    cfg = load_security_config()
+    if "hashed_pin" in cfg and "salt" in cfg:
+        calc_hash, _ = hash_pin(candidate_str, cfg["salt"])
+        return hmac.compare_digest(calc_hash, cfg["hashed_pin"])
+    
+    # Fallback to environment variable or default 1234
+    env_pin = os.environ.get("ADMIN_PIN", "1234").strip()
+    return hmac.compare_digest(candidate_str, env_pin)
+
+def update_pin(new_pin_str):
+    hashed, salt = hash_pin(str(new_pin_str).strip())
+    cfg = load_security_config()
+    cfg["hashed_pin"] = hashed
+    cfg["salt"] = salt
+    cfg["updated_at"] = time.time()
+    save_security_config(cfg)
+
+# Rate Limiting & Anti-Brute-Force
+FAILED_LOGIN_ATTEMPTS = {}
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_SECONDS = 900  # 15 minutes lockout
+
+def get_client_ip(req):
+    forwarded = req.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return req.remote_addr or "127.0.0.1"
+
+def check_rate_limit(ip):
+    now = time.time()
+    attempts = FAILED_LOGIN_ATTEMPTS.get(ip, [])
+    attempts = [t for t in attempts if now - t < LOCKOUT_SECONDS]
+    FAILED_LOGIN_ATTEMPTS[ip] = attempts
+    if len(attempts) >= MAX_FAILED_ATTEMPTS:
+        remaining = int(LOCKOUT_SECONDS - (now - attempts[0]))
+        return False, remaining
+    return True, MAX_FAILED_ATTEMPTS - len(attempts)
+
+def record_failed_attempt(ip):
+    now = time.time()
+    attempts = FAILED_LOGIN_ATTEMPTS.get(ip, [])
+    attempts.append(now)
+    FAILED_LOGIN_ATTEMPTS[ip] = attempts
+
+def reset_failed_attempts(ip):
+    FAILED_LOGIN_ATTEMPTS.pop(ip, None)
+
+@app.after_request
+def add_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    return response
 
 ALLOWED_KEYS = {
     'Up', 'Down', 'Left', 'Right', 'Return', 'F1', 'F2', 'BackSpace', 'space', 'Escape', 'Tab'
@@ -41,16 +134,18 @@ KEY_MAP = {
 }
 
 def check_pin(req):
+    if session.get("authenticated") is True:
+        return True
     pin = req.headers.get("X-PIN")
     if not pin:
         pin = req.args.get("pin")
-    if not pin:
+    if not pin and req.is_json:
         data = req.get_json(silent=True)
         if isinstance(data, dict):
             pin = data.get("pin")
     if not pin:
         pin = req.form.get("pin")
-    return str(pin) == str(ADMIN_PIN)
+    return verify_pin(pin)
 
 def focus_game_window():
     try:
@@ -98,7 +193,76 @@ def health():
 
 @app.route('/', methods=['GET'])
 def index():
-    return render_template('index.html')
+    if session.get("authenticated") is True:
+        return render_template('index.html')
+    return render_template('login.html')
+
+@app.route('/api/auth/login', methods=['POST'])
+def auth_login():
+    ip = get_client_ip(request)
+    allowed, remaining = check_rate_limit(ip)
+    if not allowed:
+        return jsonify({
+            "error": f"Quá nhiều lần nhập sai. IP tạm thời bị khóa trong {remaining // 60 + 1} phút.",
+            "locked": True
+        }), 429
+
+    data = request.get_json(silent=True) or {}
+    pin = str(data.get("pin", "")).strip()
+
+    if not pin:
+        return jsonify({"error": "Vui lòng nhập mã khóa bảo vệ"}), 400
+
+    if verify_pin(pin):
+        reset_failed_attempts(ip)
+        session["authenticated"] = True
+        session.permanent = True
+        return jsonify({"status": "ok", "message": "Đăng nhập thành công"})
+    else:
+        record_failed_attempt(ip)
+        time.sleep(1.0)
+        allowed, remaining = check_rate_limit(ip)
+        return jsonify({
+            "error": "Mã khóa không chính xác. Vui lòng thử lại!",
+            "remaining": remaining
+        }), 401
+
+@app.route('/api/auth/logout', methods=['POST', 'GET'])
+def auth_logout():
+    session.clear()
+    if request.method == 'GET':
+        return redirect(url_for('index'))
+    return jsonify({"status": "ok", "message": "Đã đăng xuất an toàn"})
+
+@app.route('/api/auth/change_pin', methods=['POST'])
+def auth_change_pin():
+    if not check_pin(request):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    old_pin = str(data.get("old_pin", "")).strip()
+    new_pin = str(data.get("new_pin", "")).strip()
+
+    if not verify_pin(old_pin):
+        return jsonify({"error": "Mã khóa hiện tại không đúng!"}), 400
+
+    if len(new_pin) < 4:
+        return jsonify({"error": "Mã khóa mới phải có ít nhất 4 ký tự!"}), 400
+
+    update_pin(new_pin)
+    session["authenticated"] = True
+    session.permanent = True
+    return jsonify({"status": "ok", "message": "Đã đổi mã khóa bảo vệ thành công!"})
+
+@app.route('/api/auth/status', methods=['GET'])
+def auth_status():
+    is_auth = session.get("authenticated") is True
+    cfg = load_security_config()
+    is_default = ("hashed_pin" not in cfg) and (os.environ.get("ADMIN_PIN", "1234") == "1234")
+    return jsonify({
+        "authenticated": is_auth,
+        "is_default_pin": is_default
+    })
 
 @app.route('/api/screenshot', methods=['GET'])
 def screenshot():

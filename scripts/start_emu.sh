@@ -18,7 +18,7 @@ pkill -9 -f microemulator 2>/dev/null || true
 # Background watchdog: ensures window focus & auto-kills if stuck on Launcher
 (
     while true; do
-        sleep 3
+        sleep 1
         WID=$(xdotool search --onlyvisible --class "java" 2>/dev/null | head -n 1 || true)
         if [ -n "$WID" ]; then
             xdotool windowfocus "$WID" 2>/dev/null || true

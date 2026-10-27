@@ -161,11 +161,23 @@
 
             <!-- Header Controls -->
             <div class="flex items-center gap-1.5 sm:gap-2">
-                <!-- PIN -->
-                <div class="flex items-center bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-xs">
-                    <span class="text-[10px] text-slate-500 mr-1 font-mono">PIN</span>
-                    <input type="password" id="input-pin" placeholder="1234" value="1234" class="bg-transparent text-xs w-10 text-white focus:outline-none font-mono">
-                </div>
+                <input type="hidden" id="input-pin" value="">
+
+                <!-- Change PIN -->
+                <button id="btn-open-change-pin" class="h-7 px-2.5 rounded-lg bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 text-xs text-slate-300 flex items-center justify-center font-medium gap-1" title="Đổi mã khóa bảo vệ runner">
+                    <svg class="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                    </svg>
+                    <span>Đổi PIN</span>
+                </button>
+
+                <!-- Logout / Lock -->
+                <button id="btn-logout" class="h-7 px-2.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 active:scale-95 border border-rose-500/30 text-xs text-rose-300 flex items-center justify-center font-semibold gap-1" title="Khóa màn hình và đăng xuất an toàn">
+                    <svg class="w-3.5 h-3.5 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+                    </svg>
+                    <span>Khóa</span>
+                </button>
 
                 <!-- Stream Mode -->
                 <select id="select-fps" class="bg-slate-900 border border-white/10 rounded-lg text-xs px-2 py-1 text-slate-300 focus:outline-none">
@@ -196,6 +208,17 @@
     <!-- Main Workspace -->
     <main class="flex-1 max-w-5xl mx-auto w-full p-2 sm:p-4 flex flex-col items-center">
         
+        <!-- Default PIN Alert Banner -->
+        <div id="default-pin-warning" class="hidden w-full max-w-xl mb-3 p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/35 text-amber-300 text-xs flex items-center justify-between gap-3 shadow-lg backdrop-blur">
+            <div class="flex items-center gap-2">
+                <span class="text-base flex-shrink-0">⚠️</span>
+                <span><strong>Cảnh báo bảo mật:</strong> Bạn đang dùng mã PIN mặc định (<code class="font-mono text-amber-200">1234</code>). Hãy đổi PIN ngay để chống người lạ truy cập!</span>
+            </div>
+            <button id="btn-banner-change-pin" class="px-2.5 py-1 rounded-lg bg-amber-500/30 hover:bg-amber-500/40 text-amber-100 font-bold text-[11px] whitespace-nowrap border border-amber-500/40">
+                Đổi PIN Ngay
+            </button>
+        </div>
+
         <!-- Action Notification Banner -->
         <div id="server-alert" class="hidden w-full max-w-md mb-2 p-2 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs flex items-center justify-between">
             <span id="server-alert-text">Đang kiểm tra kết nối...</span>
@@ -543,6 +566,57 @@
                     Đóng
                 </button>
             </div>
+        </div>
+    </div>
+
+    <!-- Modal: Change PIN -->
+    <div id="modal-change-pin" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3">
+        <div class="bg-slate-900 border border-white/10 rounded-2xl max-w-sm w-full p-5 flex flex-col gap-4 shadow-2xl">
+            <div class="flex items-center justify-between border-b border-white/10 pb-2.5">
+                <div class="flex items-center gap-2">
+                    <div class="w-7 h-7 rounded-lg bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                        </svg>
+                    </div>
+                    <span class="font-bold text-sm text-slate-100">Đổi Mã Khóa Bảo Mật</span>
+                </div>
+                <button id="btn-close-change-pin" class="text-slate-400 hover:text-white text-xs font-mono px-2 py-0.5 rounded bg-white/5">
+                    Đóng
+                </button>
+            </div>
+
+            <p class="text-xs text-slate-400 leading-relaxed">
+                Mã khóa bảo vệ quyền truy cập web điều khiển game, chống người khác xem màn hình hoặc gửi phím.
+            </p>
+
+            <form id="form-change-pin" class="flex flex-col gap-3">
+                <div class="flex flex-col gap-1">
+                    <label class="text-xs font-medium text-slate-300">Mã PIN cũ (mặc định: 1234)</label>
+                    <input type="password" id="input-old-pin" required placeholder="Nhập mã cũ..." class="bg-slate-950 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 font-mono">
+                </div>
+
+                <div class="flex flex-col gap-1">
+                    <label class="text-xs font-medium text-slate-300">Mã PIN mới (ít nhất 4 ký tự)</label>
+                    <input type="password" id="input-new-pin" required placeholder="Nhập mã mới..." class="bg-slate-950 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 font-mono">
+                </div>
+
+                <div class="flex flex-col gap-1">
+                    <label class="text-xs font-medium text-slate-300">Xác nhận mã PIN mới</label>
+                    <input type="password" id="input-confirm-pin" required placeholder="Nhập lại mã mới..." class="bg-slate-950 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 font-mono">
+                </div>
+
+                <div id="pin-change-error" class="hidden text-[11px] text-rose-400 bg-rose-500/10 p-2 rounded-lg border border-rose-500/20"></div>
+
+                <div class="flex items-center justify-end gap-2 pt-2 border-t border-white/5">
+                    <button type="button" id="btn-cancel-change-pin" class="px-3 py-1.5 rounded-lg bg-slate-800 text-xs text-slate-300 font-semibold">
+                        Hủy
+                    </button>
+                    <button type="submit" id="btn-submit-change-pin" class="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-xs text-white font-bold transition">
+                        Lưu Mã Mới
+                    </button>
+                </div>
+            </form>
         </div>
     </div>
 
@@ -1061,6 +1135,112 @@
                     sendInput({ action: 'key', value: e.key });
                 }
             });
+
+            // Security & Authentication Handlers
+            const btnLogout = document.getElementById('btn-logout');
+            if (btnLogout) {
+                btnLogout.addEventListener('click', async () => {
+                    if (!confirm("Bạn có chắc chắn muốn khóa bảng điều khiển và đăng xuất?")) return;
+                    try {
+                        await fetch('/api/auth/logout', { method: 'POST' });
+                        window.location.reload();
+                    } catch (e) {
+                        window.location.href = '/';
+                    }
+                });
+            }
+
+            const modalChangePin = document.getElementById('modal-change-pin');
+            const btnOpenChangePin = document.getElementById('btn-open-change-pin');
+            const btnBannerChangePin = document.getElementById('btn-banner-change-pin');
+            const btnCloseChangePin = document.getElementById('btn-close-change-pin');
+            const btnCancelChangePin = document.getElementById('btn-cancel-change-pin');
+            const formChangePin = document.getElementById('form-change-pin');
+            const inputOldPin = document.getElementById('input-old-pin');
+            const inputNewPin = document.getElementById('input-new-pin');
+            const inputConfirmPin = document.getElementById('input-confirm-pin');
+            const pinChangeError = document.getElementById('pin-change-error');
+            const btnSubmitChangePin = document.getElementById('btn-submit-change-pin');
+
+            function openChangePinModal() {
+                if (pinChangeError) pinChangeError.classList.add('hidden');
+                if (inputOldPin) inputOldPin.value = '';
+                if (inputNewPin) inputNewPin.value = '';
+                if (inputConfirmPin) inputConfirmPin.value = '';
+                modalChangePin.classList.remove('hidden');
+                if (inputOldPin) inputOldPin.focus();
+            }
+
+            if (btnOpenChangePin) btnOpenChangePin.addEventListener('click', openChangePinModal);
+            if (btnBannerChangePin) btnBannerChangePin.addEventListener('click', openChangePinModal);
+            if (btnCloseChangePin) btnCloseChangePin.addEventListener('click', () => modalChangePin.classList.add('hidden'));
+            if (btnCancelChangePin) btnCancelChangePin.addEventListener('click', () => modalChangePin.classList.add('hidden'));
+
+            if (formChangePin) {
+                formChangePin.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    pinChangeError.classList.add('hidden');
+
+                    const oldPin = inputOldPin.value.trim();
+                    const newPin = inputNewPin.value.trim();
+                    const confirmPin = inputConfirmPin.value.trim();
+
+                    if (!oldPin) {
+                        pinChangeError.textContent = "Vui lòng nhập mã PIN hiện tại";
+                        pinChangeError.classList.remove('hidden');
+                        return;
+                    }
+                    if (newPin.length < 4) {
+                        pinChangeError.textContent = "Mã PIN mới phải có ít nhất 4 ký tự";
+                        pinChangeError.classList.remove('hidden');
+                        return;
+                    }
+                    if (newPin !== confirmPin) {
+                        pinChangeError.textContent = "Xác nhận mã PIN mới không trùng khớp!";
+                        pinChangeError.classList.remove('hidden');
+                        return;
+                    }
+
+                    btnSubmitChangePin.disabled = true;
+                    btnSubmitChangePin.textContent = "Đang lưu...";
+
+                    try {
+                        const res = await fetch('/api/auth/change_pin', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ old_pin: oldPin, new_pin: newPin })
+                        });
+                        const data = await res.json();
+                        if (res.ok && data.status === 'ok') {
+                            showToast("Đã đổi mã khóa bảo vệ thành công!", "emerald");
+                            modalChangePin.classList.add('hidden');
+                            // Hide default PIN warning if visible
+                            const defaultWarn = document.getElementById('default-pin-warning');
+                            if (defaultWarn) defaultWarn.classList.add('hidden');
+                        } else {
+                            pinChangeError.textContent = data.error || "Không thể đổi mã PIN";
+                            pinChangeError.classList.remove('hidden');
+                        }
+                    } catch (err) {
+                        pinChangeError.textContent = "Lỗi kết nối tới máy chủ!";
+                        pinChangeError.classList.remove('hidden');
+                    } finally {
+                        btnSubmitChangePin.disabled = false;
+                        btnSubmitChangePin.textContent = "Lưu Mã Mới";
+                    }
+                });
+            }
+
+            // Check Master Auth Status
+            fetch('/api/auth/status')
+                .then(r => r.json())
+                .then(d => {
+                    const defaultWarn = document.getElementById('default-pin-warning');
+                    if (defaultWarn && d.is_default_pin) {
+                        defaultWarn.classList.remove('hidden');
+                    }
+                })
+                .catch(() => {});
 
             // Auto-run on start
             restartTimer();
