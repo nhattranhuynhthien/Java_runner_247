@@ -40,8 +40,10 @@ def check_pin(req):
     pin = req.headers.get("X-PIN")
     if not pin:
         pin = req.args.get("pin")
-    if not pin and req.is_json:
-        pin = req.json.get("pin")
+    if not pin:
+        data = req.get_json(silent=True)
+        if isinstance(data, dict):
+            pin = data.get("pin")
     if not pin:
         pin = req.form.get("pin")
     return str(pin) == str(ADMIN_PIN)
@@ -96,7 +98,6 @@ def screenshot():
             im = im.convert('RGB')
 
         buf = io.BytesIO()
-        # Fast compression: quality=55 yields ~2.5KB image, instantaneous to transfer
         im.save(buf, format='JPEG', quality=55, optimize=True)
         jpeg_bytes = buf.getvalue()
 
@@ -244,8 +245,11 @@ def restart_game():
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
 
     try:
+        # Forcefully kill any running microemulator process
+        subprocess.run(["pkill", "-9", "-f", "microemulator"], timeout=5, check=False)
+        # Restart supervisor program to spawn fresh session
         subprocess.run(["supervisorctl", "restart", "emulator"], timeout=10, check=False)
-        return jsonify({"status": "ok", "message": "Đã gửi lệnh khởi động lại game!"})
+        return jsonify({"status": "ok", "message": "Đã khởi động lại game thành công!"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -285,7 +289,8 @@ def upload_rom():
     dest_path = "/app/roms/NRO.jar"
     f.save(dest_path)
 
-    # Restart emulator process via supervisor
+    # Forcefully kill and restart emulator
+    subprocess.run(["pkill", "-9", "-f", "microemulator"], check=False)
     subprocess.run(["supervisorctl", "restart", "emulator"], check=False)
 
     return jsonify({"status": "ok", "message": "Đã nạp file .jar thành công và đang khởi động lại game!"})
