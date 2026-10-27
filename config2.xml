@@ -1,0 +1,30 @@
+<config>
+    <files>
+        <recent MAXCAPACITY="50"/>
+    </files>
+    <system-properties>
+        <system-property NAME="microedition.platform" VALUE="MicroEmulator-2.0.4"/>
+        <system-property NAME="microedition.encoding" VALUE="UTF-8"/>
+    </system-properties>
+    <windows>
+        <main ONSTART="true">
+            <x>0</x>
+            <y>0</y>
+            <width>240</width>
+            <height>360</height>
+        </main>
+    </windows>
+    <devices>
+        <device DEFAULT="true">
+            <name>Resizable device</name>
+            <filename>resizable.jar</filename>
+            <descriptor>org/microemu/device/resizable/device.xml</descriptor>
+            <rectangle>
+                <x>0</x>
+                <y>0</y>
+                <width>240</width>
+                <height>360</height>
+            </rectangle>
+        </device>
+    </devices>
+</config>

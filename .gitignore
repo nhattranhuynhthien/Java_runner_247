@@ -1,8 +1,5 @@
-node_modules/
-workspace/app.log
-workspace/app.log.1
-workspace/*.class
-# rms/
-freej2me_system/*.log
+__pycache__/
+*.py[cod]
+*$py.class
 .DS_Store
 .env

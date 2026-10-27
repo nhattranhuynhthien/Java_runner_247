@@ -1,8 +1,4 @@
-node_modules
-npm-debug.log
-workspace/app.log
-workspace/app.log.1
-workspace/*.class
 .git
 .DS_Store
-
+__pycache__
+*.pyc

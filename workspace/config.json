@@ -1,6 +1,0 @@
-{
-  "activeFile": "Main.java",
-  "jvmArgs": "-Xms256m -Xmx4G",
-  "autoRestart": true,
-  "autoStart": true
-}

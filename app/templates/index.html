@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="vi" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>NRO Cloud 24/7 • Ultra-Light Controller</title>
+    <!-- Tailwind CSS & Font Awesome -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+        * { font-family: 'Plus Jakarta Sans', sans-serif; box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 0;
+            background: #080c14;
+            color: #f1f5f9;
+            touch-action: manipulation;
+            user-select: none;
+        }
+        .btn-action {
+            background: #182234;
+            color: #f8fafc;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.08s ease;
+            cursor: pointer;
+        }
+        .btn-action:active {
+            background: #4f46e5;
+            color: #ffffff;
+            transform: scale(0.94);
+            border-color: #818cf8;
+        }
+        .screen-container {
+            width: 240px;
+            height: 360px;
+            position: relative;
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.1);
+        }
+        #screen {
+            width: 240px;
+            height: 360px;
+            display: block;
+            image-rendering: pixelated;
+            cursor: crosshair;
+        }
+    </style>
+</head>
+<body class="flex flex-col min-h-screen">
+
+    <!-- Top Control Bar -->
+    <header class="bg-slate-950/90 backdrop-blur border-b border-white/5 px-3 py-2 sticky top-0 z-30 flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-2">
+            <span class="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center text-white text-xs font-bold shadow-md shadow-amber-500/20">
+                🐉
+            </span>
+            <span class="font-bold text-xs sm:text-sm text-slate-100 tracking-tight">NRO 24/7 Cloud</span>
+            <span id="badge-fps" class="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span id="fps-status">Live</span>
+            </span>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <!-- PIN Input -->
+            <div class="flex items-center bg-slate-900 border border-white/10 rounded-lg px-2 py-1">
+                <i class="fa-solid fa-key text-[10px] text-slate-400 mr-1.5"></i>
+                <input type="password" id="input-pin" placeholder="PIN" value="1234" class="bg-transparent text-xs w-14 text-white focus:outline-none">
+            </div>
+
+            <!-- FPS Mode Selector -->
+            <select id="select-fps" class="bg-slate-900 border border-white/10 rounded-lg text-xs px-2 py-1 text-slate-300 focus:outline-none">
+                <option value="1200" selected>⚡ Live (1.2s)</option>
+                <option value="3000">🐢 Chậm (3s)</option>
+                <option value="0">🍃 Eco / Dừng</option>
+            </select>
+
+            <!-- Refresh Button -->
+            <button id="btn-refresh" class="h-7 w-7 rounded-lg bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 text-xs text-slate-300 flex items-center justify-center" title="Làm mới ảnh">
+                <i class="fa-solid fa-rotate-right"></i>
+            </button>
+
+            <!-- Upload ROM Button -->
+            <button id="btn-open-upload" class="h-7 px-2 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold flex items-center gap-1" title="Đổi file game">
+                <i class="fa-solid fa-cloud-arrow-up text-[10px]"></i>
+                <span class="hidden sm:inline">Đổi Mod</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 flex flex-col md:flex-row items-center justify-center p-3 gap-4 max-w-4xl mx-auto w-full">
+        
+        <!-- Screen Viewport (240x360) -->
+        <div class="flex flex-col items-center">
+            <div class="screen-container relative">
+                <img id="screen" width="240" height="360" alt="Màn hình game NRO" src="/api/screenshot?pin=1234">
+                <div id="tap-indicator" class="absolute w-5 h-5 -ml-2.5 -mt-2.5 rounded-full border-2 border-amber-400 pointer-events-none opacity-0 transition-opacity duration-150"></div>
+            </div>
+            <p class="text-[11px] text-slate-400 mt-1.5 flex items-center gap-1">
+                <i class="fa-solid fa-arrow-pointer text-[10px] text-amber-400"></i>
+                <span>Chạm trực tiếp vào màn hình để thao tác</span>
+            </p>
+        </div>
+
+        <!-- Controls Section -->
+        <div class="flex flex-col gap-3 w-full max-w-[280px]">
+
+            <!-- 1. NRO Mod Quick Hotkeys (3x2 Grid) -->
+            <div class="bg-slate-950/70 border border-white/10 p-2.5 rounded-xl">
+                <div class="text-[11px] font-bold text-amber-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                    <i class="fa-solid fa-bolt"></i>
+                    <span>Phím Tắt Bản Mod</span>
+                </div>
+                <div class="grid grid-cols-3 gap-1.5 text-xs">
+                    <button class="btn-action h-9 text-[11px]" data-key="a">Tự Đánh (A)</button>
+                    <button class="btn-action h-9 text-[11px]" data-key="n">Tự Nhặt (N)</button>
+                    <button class="btn-action h-9 text-[11px] text-indigo-300 font-bold" data-key="x">Menu (X)</button>
+                    <button class="btn-action h-9 text-[11px]" data-key="e">Hồi Sinh (E)</button>
+                    <button class="btn-action h-9 text-[11px]" data-key="c">Capsule (C)</button>
+                    <button class="btn-action h-9 text-[11px]" data-key="m">Đổi Khu (M)</button>
+                </div>
+            </div>
+
+            <!-- 2. J2ME Keypad (3x3 Grid) -->
+            <div class="bg-slate-950/70 border border-white/10 p-2.5 rounded-xl">
+                <div class="text-[11px] font-bold text-sky-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                    <i class="fa-solid fa-gamepad"></i>
+                    <span>Bàn Phím J2ME</span>
+                </div>
+                <div class="grid grid-cols-3 gap-1.5 text-xs">
+                    <button class="btn-action h-9 text-[11px]" data-key="F1">Phím Trái</button>
+                    <button class="btn-action h-9 text-base" data-key="Up"><i class="fa-solid fa-arrow-up"></i></button>
+                    <button class="btn-action h-9 text-[11px]" data-key="F2">Phím Phải</button>
+
+                    <button class="btn-action h-9 text-base" data-key="Left"><i class="fa-solid fa-arrow-left"></i></button>
+                    <button class="btn-action h-9 bg-indigo-600 border-indigo-500 font-bold text-white text-sm" data-key="Return">OK</button>
+                    <button class="btn-action h-9 text-base" data-key="Right"><i class="fa-solid fa-arrow-right"></i></button>
+
+                    <button class="btn-action h-9 text-[11px]" data-key="g">Giao Dịch</button>
+                    <button class="btn-action h-9 text-base" data-key="Down"><i class="fa-solid fa-arrow-down"></i></button>
+                    <button class="btn-action h-9 text-[11px] text-rose-300" data-key="BackSpace">Xóa</button>
+                </div>
+            </div>
+
+            <!-- 3. Text & Chat Command Box -->
+            <div class="bg-slate-950/70 border border-white/10 p-2.5 rounded-xl">
+                <div class="text-[11px] font-bold text-emerald-400 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                    <i class="fa-solid fa-comment-dots"></i>
+                    <span>Nhập Chữ / Lệnh Chat</span>
+                </div>
+                <div class="flex flex-col gap-1.5">
+                    <input type="text" id="input-text" placeholder="Gõ tài khoản, mật khẩu, td, ak, k 5..." class="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500">
+                    <div class="grid grid-cols-2 gap-1.5">
+                        <button id="btn-send-text" class="btn-action h-8 text-xs font-semibold bg-slate-800 hover:bg-slate-700">
+                            Gửi Chữ
+                        </button>
+                        <button id="btn-send-enter" class="btn-action h-8 text-xs font-semibold bg-emerald-700/80 hover:bg-emerald-600 text-white border-emerald-500/30">
+                            Gửi + Enter
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- Modal: Tải Lên Bản Mod Mới (.JAR) -->
+    <div id="modal-upload" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-sm w-full p-4 space-y-3">
+            <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+                <div class="flex items-center gap-2 text-indigo-400 font-bold text-sm">
+                    <i class="fa-solid fa-cloud-arrow-up"></i>
+                    <span>Tải Lên Bản Mod NRO (.JAR)</span>
+                </div>
+                <button id="btn-close-upload" class="text-slate-400 hover:text-white">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="text-xs space-y-2">
+                <label class="block text-slate-300">Chọn file .jar từ điện thoại / máy tính:</label>
+                <input type="file" id="input-jar" accept=".jar" class="block w-full text-xs text-slate-400 file:mr-2 file:py-1 file:px-2.5 file:rounded-md file:border-0 file:bg-indigo-600 file:text-white bg-slate-950 border border-slate-800 rounded-lg p-1.5 cursor-pointer">
+                <div id="upload-status" class="hidden text-center py-1 font-medium"></div>
+            </div>
+            <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
+                <button id="btn-cancel-upload" class="px-3 py-1.5 rounded-lg bg-slate-800 text-xs">Hủy</button>
+                <button id="btn-submit-upload" class="px-3 py-1.5 rounded-lg bg-indigo-600 text-white font-semibold text-xs flex items-center gap-1">
+                    <i class="fa-solid fa-play text-[10px]"></i>
+                    <span>Nạp & Chạy Ngay</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Frontend Script -->
+    <script>
+        const screenImg = document.getElementById('screen');
+        const tapIndicator = document.getElementById('tap-indicator');
+        const inputPin = document.getElementById('input-pin');
+        const selectFps = document.getElementById('select-fps');
+        const fpsStatus = document.getElementById('fps-status');
+        const badgeFps = document.getElementById('badge-fps');
+        const btnRefresh = document.getElementById('btn-refresh');
+
+        // Restore PIN from localStorage
+        const savedPin = localStorage.getItem('nro_admin_pin');
+        if (savedPin) {
+            inputPin.value = savedPin;
+        }
+        inputPin.addEventListener('input', () => {
+            localStorage.setItem('nro_admin_pin', inputPin.value.trim());
+        });
+
+        function getPin() {
+            return inputPin.value.trim() || '1234';
+        }
+
+        // --- Screenshot Polling Logic ---
+        let pollTimer = null;
+        let isFetching = false;
+
+        function refreshScreenshot() {
+            if (isFetching) return;
+            isFetching = true;
+
+            const nextImg = new Image();
+            const timestamp = Date.now();
+            nextImg.src = `/api/screenshot?pin=${encodeURIComponent(getPin())}&t=${timestamp}`;
+
+            nextImg.onload = () => {
+                screenImg.src = nextImg.src;
+                isFetching = false;
+            };
+            nextImg.onerror = () => {
+                isFetching = false;
+            };
+        }
+
+        function setupPolling() {
+            if (pollTimer) clearInterval(pollTimer);
+            const interval = parseInt(selectFps.value, 10);
+
+            if (interval === 0 || document.hidden) {
+                fpsStatus.textContent = 'Tạm dừng';
+                badgeFps.className = 'text-[10px] px-1.5 py-0.5 rounded-full bg-slate-500/10 text-slate-400 border border-slate-500/20 flex items-center gap-1';
+                return;
+            }
+
+            fpsStatus.textContent = interval <= 1500 ? 'Live' : 'Chậm';
+            badgeFps.className = 'text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1';
+            pollTimer = setInterval(refreshScreenshot, interval);
+        }
+
+        selectFps.addEventListener('change', setupPolling);
+        btnRefresh.addEventListener('click', refreshScreenshot);
+
+        // Auto pause on tab hidden (0% CPU when tab is closed / minimized)
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                if (pollTimer) clearInterval(pollTimer);
+                fpsStatus.textContent = 'Nghỉ';
+            } else {
+                setupPolling();
+                refreshScreenshot();
+            }
+        });
+
+        // --- Direct Input Ingestion ---
+        async function sendInput(payload) {
+            payload.pin = getPin();
+            try {
+                await fetch('/api/input', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                setTimeout(refreshScreenshot, 150);
+            } catch (err) {
+                console.error('Lỗi gửi input:', err);
+            }
+        }
+
+        // 1. Screen Tap/Click handler (Mapped directly to 240x360)
+        screenImg.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            const rect = screenImg.getBoundingClientRect();
+            const x = Math.round(((e.clientX - rect.left) / rect.width) * 240);
+            const y = Math.round(((e.clientY - rect.top) / rect.height) * 360);
+
+            // Animate tap circle
+            tapIndicator.style.left = `${(x / 240) * 100}%`;
+            tapIndicator.style.top = `${(y / 360) * 100}%`;
+            tapIndicator.style.opacity = '1';
+            setTimeout(() => { tapIndicator.style.opacity = '0'; }, 200);
+
+            sendInput({ action: 'click', x, y });
+        });
+
+        // 2. Action buttons (Quick hotkeys & J2ME Keypad)
+        document.querySelectorAll('.btn-action[data-key]').forEach(btn => {
+            btn.addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                const key = btn.getAttribute('data-key');
+                sendInput({ action: 'key', value: key });
+            });
+        });
+
+        // 3. Text & Chat Command Box
+        const inputText = document.getElementById('input-text');
+        const btnSendText = document.getElementById('btn-send-text');
+        const btnSendEnter = document.getElementById('btn-send-enter');
+
+        btnSendText.addEventListener('click', () => {
+            const val = inputText.value;
+            if (!val) return;
+            sendInput({ action: 'text', value: val, enter: false });
+            inputText.value = '';
+        });
+
+        btnSendEnter.addEventListener('click', () => {
+            const val = inputText.value;
+            if (!val) return;
+            sendInput({ action: 'text', value: val, enter: true });
+            inputText.value = '';
+        });
+
+        inputText.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const val = inputText.value;
+                if (!val) return;
+                sendInput({ action: 'text', value: val, enter: true });
+                inputText.value = '';
+            }
+        });
+
+        // --- Modal Upload ROM ---
+        const btnOpenUpload = document.getElementById('btn-open-upload');
+        const modalUpload = document.getElementById('modal-upload');
+        const btnCloseUpload = document.getElementById('btn-close-upload');
+        const btnCancelUpload = document.getElementById('btn-cancel-upload');
+        const btnSubmitUpload = document.getElementById('btn-submit-upload');
+        const inputJar = document.getElementById('input-jar');
+        const uploadStatus = document.getElementById('upload-status');
+
+        btnOpenUpload.addEventListener('click', () => {
+            uploadStatus.classList.add('hidden');
+            inputJar.value = '';
+            modalUpload.classList.remove('hidden');
+        });
+        btnCloseUpload.addEventListener('click', () => modalUpload.classList.add('hidden'));
+        btnCancelUpload.addEventListener('click', () => modalUpload.classList.add('hidden'));
+
+        btnSubmitUpload.addEventListener('click', async () => {
+            if (!inputJar.files || inputJar.files.length === 0) {
+                uploadStatus.className = 'text-center py-1 text-xs text-rose-400';
+                uploadStatus.textContent = 'Vui lòng chọn 1 file .jar!';
+                uploadStatus.classList.remove('hidden');
+                return;
+            }
+
+            const file = inputJar.files[0];
+            uploadStatus.className = 'text-center py-1 text-xs text-amber-300 animate-pulse';
+            uploadStatus.textContent = 'Đang tải file lên và khởi chạy...';
+            uploadStatus.classList.remove('hidden');
+            btnSubmitUpload.disabled = true;
+
+            const fd = new FormData();
+            fd.append('file', file);
+
+            try {
+                const res = await fetch(`/api/upload_rom?pin=${encodeURIComponent(getPin())}`, {
+                    method: 'POST',
+                    body: fd
+                });
+                const data = await res.json();
+                if (res.ok && data.status === 'ok') {
+                    uploadStatus.className = 'text-center py-1 text-xs text-emerald-400 font-semibold';
+                    uploadStatus.textContent = 'Thành công! Game đang khởi động lại...';
+                    setTimeout(() => {
+                        modalUpload.classList.add('hidden');
+                        btnSubmitUpload.disabled = false;
+                        setTimeout(refreshScreenshot, 1500);
+                    }, 1200);
+                } else {
+                    uploadStatus.className = 'text-center py-1 text-xs text-rose-400';
+                    uploadStatus.textContent = data.error || 'Lỗi nạp file!';
+                    btnSubmitUpload.disabled = false;
+                }
+            } catch (err) {
+                uploadStatus.className = 'text-center py-1 text-xs text-rose-400';
+                uploadStatus.textContent = 'Lỗi kết nối khi tải file!';
+                btnSubmitUpload.disabled = false;
+            }
+        });
+
+        // Initialize polling
+        setupPolling();
+    </script>
+</body>
+</html>

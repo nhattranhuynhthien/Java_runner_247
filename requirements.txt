@@ -1,6 +1,3 @@
-fastapi
-uvicorn[standard]
-gradio>=4.44.0
-psutil
-python-multipart
-
+Flask==3.0.3
+gunicorn==22.0.0
+Pillow==10.3.0
