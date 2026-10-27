@@ -3,170 +3,346 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>NRO Cloud 24/7 • Ultra-Light Controller</title>
+    <title>UP NRO PRO • Private Cloud Edition</title>
     <!-- Tailwind CSS & Font Awesome -->
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
         * { font-family: 'Plus Jakarta Sans', sans-serif; box-sizing: border-box; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
         body {
             margin: 0;
             padding: 0;
-            background: #080c14;
+            background: #090d16;
             color: #f1f5f9;
             touch-action: manipulation;
             user-select: none;
+            -webkit-user-select: none;
         }
-        .btn-action {
-            background: #182234;
-            color: #f8fafc;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 10px;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.08s ease;
-            cursor: pointer;
-        }
-        .btn-action:active {
-            background: #4f46e5;
-            color: #ffffff;
-            transform: scale(0.94);
-            border-color: #818cf8;
-        }
-        .screen-container {
-            width: 240px;
-            height: 360px;
+
+        /* Screen Styling */
+        .screen-wrapper {
             position: relative;
-            background: #000;
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.1);
-        }
-        #screen {
             width: 240px;
             height: 360px;
+            background: #000;
+            border-radius: 14px;
+            overflow: hidden;
+            box-shadow: 0 12px 35px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.12);
+        }
+        @media (min-width: 640px) {
+            .screen-wrapper {
+                width: 288px;
+                height: 432px;
+            }
+        }
+        #screen-img {
+            width: 100%;
+            height: 100%;
             display: block;
             image-rendering: pixelated;
             cursor: crosshair;
         }
+
+        /* Keypad button styles */
+        .key-btn {
+            background: #141c2e;
+            color: #e2e8f0;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 10px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.06s ease;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        .key-btn:active {
+            background: #4f46e5 !important;
+            color: #ffffff !important;
+            transform: scale(0.92);
+            border-color: #818cf8 !important;
+            box-shadow: 0 0 12px rgba(99, 102, 241, 0.6);
+        }
+
+        .dpad-btn {
+            background: #1a233a;
+            color: #cbd5e1;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.06s ease;
+        }
+        .dpad-btn:active {
+            background: #6366f1 !important;
+            color: #fff !important;
+            transform: scale(0.9);
+        }
+
+        .mod-chip {
+            background: #111827;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-size: 11px;
+            font-weight: 600;
+            color: #cbd5e1;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+            transition: all 0.1s ease;
+        }
+        .mod-chip:hover {
+            border-color: #fbbf24;
+            color: #fbbf24;
+            background: #1f2937;
+        }
+        .mod-chip:active {
+            transform: scale(0.92);
+            background: #f59e0b;
+            color: #000;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: #0b0f19; }
+        ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
     </style>
 </head>
 <body class="flex flex-col min-h-screen">
 
-    <!-- Top Control Bar -->
-    <header class="bg-slate-950/90 backdrop-blur border-b border-white/5 px-3 py-2 sticky top-0 z-30 flex flex-wrap items-center justify-between gap-2">
-        <div class="flex items-center gap-2">
-            <span class="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center text-white text-xs font-bold shadow-md shadow-amber-500/20">
-                🐉
-            </span>
-            <span class="font-bold text-xs sm:text-sm text-slate-100 tracking-tight">NRO 24/7 Cloud</span>
-            <span id="badge-fps" class="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
-                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                <span id="fps-status">Live</span>
-            </span>
-        </div>
-
-        <div class="flex items-center gap-2">
-            <!-- PIN Input -->
-            <div class="flex items-center bg-slate-900 border border-white/10 rounded-lg px-2 py-1">
-                <i class="fa-solid fa-key text-[10px] text-slate-400 mr-1.5"></i>
-                <input type="password" id="input-pin" placeholder="PIN" value="1234" class="bg-transparent text-xs w-14 text-white focus:outline-none">
+    <!-- Header bar inspired by upnro.pro -->
+    <header class="bg-slate-950/95 backdrop-blur border-b border-white/10 px-3 py-2 sticky top-0 z-40">
+        <div class="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-2">
+            <!-- Brand & Status -->
+            <div class="flex items-center gap-2 sm:gap-3">
+                <div class="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-600 flex items-center justify-center text-white text-sm font-bold shadow-md shadow-amber-500/30">
+                    🐉
+                </div>
+                <div>
+                    <div class="flex items-center gap-1.5">
+                        <span class="font-bold text-xs sm:text-sm text-slate-100 tracking-tight">UP NRO PRO</span>
+                        <span class="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-400 font-semibold border border-amber-500/30 uppercase tracking-wider">Private</span>
+                    </div>
+                    <div class="flex items-center gap-2 text-[10px] text-slate-400">
+                        <span id="badge-running" class="flex items-center gap-1 text-emerald-400">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                            <span id="txt-status">Đang chạy 24/7</span>
+                        </span>
+                        <span>•</span>
+                        <span id="txt-uptime">0m</span>
+                        <span>•</span>
+                        <span id="txt-ram" class="text-slate-400">RAM: -- MB</span>
+                    </div>
+                </div>
             </div>
 
-            <!-- FPS Mode Selector -->
-            <select id="select-fps" class="bg-slate-900 border border-white/10 rounded-lg text-xs px-2 py-1 text-slate-300 focus:outline-none">
-                <option value="1200" selected>⚡ Live (1.2s)</option>
-                <option value="3000">🐢 Chậm (3s)</option>
-                <option value="0">🍃 Eco / Dừng</option>
-            </select>
+            <!-- Header Controls -->
+            <div class="flex items-center gap-1.5 sm:gap-2">
+                <!-- PIN -->
+                <div class="flex items-center bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-xs">
+                    <i class="fa-solid fa-lock text-[10px] text-slate-400 mr-1.5"></i>
+                    <input type="password" id="input-pin" placeholder="PIN" value="1234" class="bg-transparent text-xs w-12 text-white focus:outline-none font-mono">
+                </div>
 
-            <!-- Refresh Button -->
-            <button id="btn-refresh" class="h-7 w-7 rounded-lg bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 text-xs text-slate-300 flex items-center justify-center" title="Làm mới ảnh">
-                <i class="fa-solid fa-rotate-right"></i>
-            </button>
+                <!-- Stream Mode -->
+                <select id="select-fps" class="bg-slate-900 border border-white/10 rounded-lg text-xs px-2 py-1 text-slate-300 focus:outline-none">
+                    <option value="800">🚀 Nhanh (0.8s)</option>
+                    <option value="1200" selected>⚡ Live (1.2s)</option>
+                    <option value="3000">🐢 Chậm (3s)</option>
+                    <option value="0">🍃 Eco (Dừng)</option>
+                </select>
 
-            <!-- Upload ROM Button -->
-            <button id="btn-open-upload" class="h-7 px-2 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold flex items-center gap-1" title="Đổi file game">
-                <i class="fa-solid fa-cloud-arrow-up text-[10px]"></i>
-                <span class="hidden sm:inline">Đổi Mod</span>
-            </button>
+                <!-- Refresh frame -->
+                <button id="btn-refresh" class="h-7 w-7 rounded-lg bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 text-xs text-slate-300 flex items-center justify-center" title="Làm mới khung hình">
+                    <i class="fa-solid fa-rotate-right"></i>
+                </button>
+
+                <!-- Download Screen -->
+                <button id="btn-download-shot" class="h-7 w-7 rounded-lg bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 text-xs text-slate-300 flex items-center justify-center" title="Tải ảnh màn hình HD">
+                    <i class="fa-solid fa-camera"></i>
+                </button>
+
+                <!-- Upload ROM -->
+                <button id="btn-open-upload" class="h-7 px-2.5 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/40 text-xs font-semibold flex items-center gap-1" title="Đổi file mod JAR">
+                    <i class="fa-solid fa-cloud-arrow-up text-[10px]"></i>
+                    <span class="hidden sm:inline">Đổi Mod</span>
+                </button>
+            </div>
         </div>
     </header>
 
-    <!-- Main Content Area -->
-    <main class="flex-1 flex flex-col md:flex-row items-center justify-center p-3 gap-4 max-w-4xl mx-auto w-full">
+    <!-- Main Workspace -->
+    <main class="flex-1 max-w-5xl mx-auto w-full p-2 sm:p-4 flex flex-col items-center">
         
-        <!-- Screen Viewport (240x360) -->
-        <div class="flex flex-col items-center">
-            <div class="screen-container relative">
-                <img id="screen" width="240" height="360" alt="Màn hình game NRO" src="/api/screenshot?pin=1234">
-                <div id="tap-indicator" class="absolute w-5 h-5 -ml-2.5 -mt-2.5 rounded-full border-2 border-amber-400 pointer-events-none opacity-0 transition-opacity duration-150"></div>
-            </div>
-            <p class="text-[11px] text-slate-400 mt-1.5 flex items-center gap-1">
-                <i class="fa-solid fa-arrow-pointer text-[10px] text-amber-400"></i>
-                <span>Chạm trực tiếp vào màn hình để thao tác</span>
-            </p>
+        <!-- Action Notification Banner (e.g. anti-stuck / server socket offline) -->
+        <div id="server-alert" class="hidden w-full max-w-md mb-2 p-2 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs flex items-center justify-between">
+            <span class="flex items-center gap-1.5">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+                <span id="server-alert-text">Đang kiểm tra kết nối...</span>
+            </span>
+            <button id="btn-fix-stuck" class="px-2 py-0.5 rounded bg-amber-500/30 hover:bg-amber-500/40 text-amber-200 font-semibold text-[10px]">
+                Chống Kẹt
+            </button>
         </div>
 
-        <!-- Controls Section -->
-        <div class="flex flex-col gap-3 w-full max-w-[280px]">
+        <div class="w-full flex flex-col lg:flex-row items-center lg:items-start justify-center gap-4 sm:gap-6">
+            
+            <!-- LEFT: Screen & Immediate Quick Tools -->
+            <div class="flex flex-col items-center gap-3">
+                <!-- Screen Frame -->
+                <div class="screen-wrapper" id="screen-container">
+                    <img id="screen-img" src="" alt="DragonBoy Canvas" draggable="false">
+                    
+                    <!-- Loading / Disconnected Overlay -->
+                    <div id="screen-overlay" class="absolute inset-0 bg-slate-950/80 backdrop-blur flex flex-col items-center justify-center text-slate-400 gap-2 transition-opacity duration-300">
+                        <i class="fa-solid fa-spinner fa-spin text-2xl text-amber-400"></i>
+                        <span class="text-xs font-medium" id="overlay-text">Đang kết nối game...</span>
+                    </div>
 
-            <!-- 1. NRO Mod Quick Hotkeys (3x2 Grid) -->
-            <div class="bg-slate-950/70 border border-white/10 p-2.5 rounded-xl">
-                <div class="text-[11px] font-bold text-amber-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                    <i class="fa-solid fa-bolt"></i>
-                    <span>Phím Tắt Bản Mod</span>
+                    <!-- Touch ripple marker -->
+                    <div id="touch-marker" class="hidden absolute w-6 h-6 rounded-full border-2 border-amber-400 bg-amber-400/30 pointer-events-none transform -translate-x-1/2 -translate-y-1/2 transition-all duration-150"></div>
                 </div>
-                <div class="grid grid-cols-3 gap-1.5 text-xs">
-                    <button class="btn-action h-9 text-[11px]" data-key="a">Tự Đánh (A)</button>
-                    <button class="btn-action h-9 text-[11px]" data-key="n">Tự Nhặt (N)</button>
-                    <button class="btn-action h-9 text-[11px] text-indigo-300 font-bold" data-key="x">Menu (X)</button>
-                    <button class="btn-action h-9 text-[11px]" data-key="e">Hồi Sinh (E)</button>
-                    <button class="btn-action h-9 text-[11px]" data-key="c">Capsule (C)</button>
-                    <button class="btn-action h-9 text-[11px]" data-key="m">Đổi Khu (M)</button>
-                </div>
-            </div>
 
-            <!-- 2. J2ME Keypad (3x3 Grid) -->
-            <div class="bg-slate-950/70 border border-white/10 p-2.5 rounded-xl">
-                <div class="text-[11px] font-bold text-sky-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                    <i class="fa-solid fa-gamepad"></i>
-                    <span>Bàn Phím J2ME</span>
-                </div>
-                <div class="grid grid-cols-3 gap-1.5 text-xs">
-                    <button class="btn-action h-9 text-[11px]" data-key="F1">Phím Trái</button>
-                    <button class="btn-action h-9 text-base" data-key="Up"><i class="fa-solid fa-arrow-up"></i></button>
-                    <button class="btn-action h-9 text-[11px]" data-key="F2">Phím Phải</button>
+                <!-- Emergency / Quick Screen Bar -->
+                <div class="flex items-center gap-2 w-full max-w-[288px] justify-between">
+                    <button id="btn-anti-stuck" class="flex-1 py-1.5 px-2 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-semibold flex items-center justify-center gap-1.5" title="Tự động bấm OK để bỏ qua thông báo mất sóng / kẹt">
+                        <i class="fa-solid fa-shield-halved text-[11px]"></i>
+                        <span>Chống Kẹt</span>
+                    </button>
 
-                    <button class="btn-action h-9 text-base" data-key="Left"><i class="fa-solid fa-arrow-left"></i></button>
-                    <button class="btn-action h-9 bg-indigo-600 border-indigo-500 font-bold text-white text-sm" data-key="Return">OK</button>
-                    <button class="btn-action h-9 text-base" data-key="Right"><i class="fa-solid fa-arrow-right"></i></button>
+                    <button id="btn-restart" class="flex-1 py-1.5 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 border border-white/10 text-xs font-semibold flex items-center justify-center gap-1.5" title="Khởi động lại emulator">
+                        <i class="fa-solid fa-arrows-rotate text-[11px]"></i>
+                        <span>Restart</span>
+                    </button>
 
-                    <button class="btn-action h-9 text-[11px]" data-key="g">Giao Dịch</button>
-                    <button class="btn-action h-9 text-base" data-key="Down"><i class="fa-solid fa-arrow-down"></i></button>
-                    <button class="btn-action h-9 text-[11px] text-rose-300" data-key="BackSpace">Xóa</button>
+                    <button id="btn-open-logs" class="py-1.5 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 border border-white/10 text-xs font-semibold flex items-center justify-center" title="Xem nhật ký console game">
+                        <i class="fa-solid fa-terminal text-[11px]"></i>
+                    </button>
                 </div>
-            </div>
 
-            <!-- 3. Text & Chat Command Box -->
-            <div class="bg-slate-950/70 border border-white/10 p-2.5 rounded-xl">
-                <div class="text-[11px] font-bold text-emerald-400 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-                    <i class="fa-solid fa-comment-dots"></i>
-                    <span>Nhập Chữ / Lệnh Chat</span>
-                </div>
-                <div class="flex flex-col gap-1.5">
-                    <input type="text" id="input-text" placeholder="Gõ tài khoản, mật khẩu, td, ak, k 5..." class="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500">
-                    <div class="grid grid-cols-2 gap-1.5">
-                        <button id="btn-send-text" class="btn-action h-8 text-xs font-semibold bg-slate-800 hover:bg-slate-700">
-                            Gửi Chữ
+                <!-- NRO Mod Quick Actions (Inspired by upnro.pro) -->
+                <div class="w-full max-w-[288px] sm:max-w-[340px] bg-slate-900/80 border border-white/10 rounded-xl p-2.5 flex flex-col gap-2">
+                    <div class="flex items-center justify-between text-[11px] font-semibold text-slate-300">
+                        <span class="flex items-center gap-1">
+                            <i class="fa-solid fa-wand-magic-sparkles text-amber-400 text-[10px]"></i>
+                            <span>Lệnh Mod NRO (1 Chạm)</span>
+                        </span>
+                        <span class="text-[9px] text-slate-500">Auto Chat</span>
+                    </div>
+
+                    <div class="flex flex-wrap gap-1.5">
+                        <button class="mod-chip" data-cmd="ak" title="Tự động đánh quái">
+                            <span>⚔️</span> <span>ak (Tự đánh)</span>
                         </button>
-                        <button id="btn-send-enter" class="btn-action h-8 text-xs font-semibold bg-emerald-700/80 hover:bg-emerald-600 text-white border-emerald-500/30">
-                            Gửi + Enter
+                        <button class="mod-chip" data-cmd="anhat" title="Tự động nhặt đồ rơi">
+                            <span>🎁</span> <span>anhat (Nhặt)</span>
+                        </button>
+                        <button class="mod-chip" data-cmd="td" title="Tàn sát cả khu vực">
+                            <span>🔥</span> <span>td (Tàn sát)</span>
+                        </button>
+                        <button class="mod-chip" data-cmd="cs" title="Sử dụng Capsule">
+                            <span>💊</span> <span>cs (Capsule)</span>
+                        </button>
+                        <button class="mod-chip" data-cmd="hs" title="Tự hồi sinh khi chết">
+                            <span>❤️</span> <span>hs (Hồi sinh)</span>
+                        </button>
+                        <button class="mod-chip" data-cmd="k" title="Đổi sang khu khác">
+                            <span>🗺️</span> <span>k (Đổi khu)</span>
+                        </button>
+                        <button class="mod-chip" data-cmd="abf" title="Auto dùng bông băng / đậu">
+                            <span>🩹</span> <span>abf (Buff)</span>
                         </button>
                     </div>
+
+                    <!-- Custom Chat / Command Input -->
+                    <div class="flex items-center gap-1.5 mt-1">
+                        <input type="text" id="input-cmd" placeholder="Lệnh mod khác (vd: c, s10, xd)..." class="flex-1 bg-slate-950 border border-white/10 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50">
+                        <button id="btn-send-cmd" class="px-3 py-1 bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-bold text-xs rounded-lg flex items-center justify-center">
+                            Gửi
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- RIGHT: Ergonomic J2ME Keypad -->
+            <div class="w-full max-w-[288px] sm:max-w-[320px] bg-slate-900/60 border border-white/10 rounded-2xl p-3 flex flex-col gap-3">
+                <div class="flex items-center justify-between border-b border-white/5 pb-2">
+                    <span class="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                        <i class="fa-solid fa-gamepad text-indigo-400"></i>
+                        <span>Bàn phím J2ME</span>
+                    </span>
+                    <span class="text-[10px] text-slate-500 font-mono">240x360 Layout</span>
+                </div>
+
+                <!-- Soft Keys (F1, F2) -->
+                <div class="grid grid-cols-2 gap-2">
+                    <button class="key-btn py-2 text-xs text-indigo-300" data-key="f1">
+                        <i class="fa-solid fa-caret-left mr-1"></i> Chọn Trái (F1)
+                    </button>
+                    <button class="key-btn py-2 text-xs text-indigo-300" data-key="f2">
+                        Chọn Phải (F2) <i class="fa-solid fa-caret-right ml-1"></i>
+                    </button>
+                </div>
+
+                <!-- D-Pad (Up, Down, Left, Right, OK) -->
+                <div class="grid grid-cols-3 gap-2 w-44 mx-auto my-1">
+                    <div></div>
+                    <button class="dpad-btn h-11 text-base" data-key="up" title="Lên">
+                        <i class="fa-solid fa-arrow-up"></i>
+                    </button>
+                    <div></div>
+
+                    <button class="dpad-btn h-11 text-base" data-key="left" title="Trái">
+                        <i class="fa-solid fa-arrow-left"></i>
+                    </button>
+                    <button class="key-btn h-11 bg-indigo-600 text-white font-extrabold text-xs shadow-md shadow-indigo-600/30 border-indigo-400/40" data-key="ok" title="OK / Enter">
+                        OK
+                    </button>
+                    <button class="dpad-btn h-11 text-base" data-key="right" title="Phải">
+                        <i class="fa-solid fa-arrow-right"></i>
+                    </button>
+
+                    <div></div>
+                    <button class="dpad-btn h-11 text-base" data-key="down" title="Xuống">
+                        <i class="fa-solid fa-arrow-down"></i>
+                    </button>
+                    <div></div>
+                </div>
+
+                <!-- Numpad 12-keys (0-9, *, #) -->
+                <div class="grid grid-cols-3 gap-1.5 pt-1 border-t border-white/5">
+                    <button class="key-btn h-9 text-xs" data-key="1">1</button>
+                    <button class="key-btn h-9 text-xs" data-key="2">2 <span class="text-[8px] text-slate-500 block -mt-1 font-normal">▲</span></button>
+                    <button class="key-btn h-9 text-xs" data-key="3">3</button>
+
+                    <button class="key-btn h-9 text-xs" data-key="4">4 <span class="text-[8px] text-slate-500 block -mt-1 font-normal">◀</span></button>
+                    <button class="key-btn h-9 text-xs text-amber-300 font-bold" data-key="5">5 <span class="text-[8px] text-amber-500 block -mt-1 font-normal">OK</span></button>
+                    <button class="key-btn h-9 text-xs" data-key="6">6 <span class="text-[8px] text-slate-500 block -mt-1 font-normal">▶</span></button>
+
+                    <button class="key-btn h-9 text-xs" data-key="7">7</button>
+                    <button class="key-btn h-9 text-xs" data-key="8">8 <span class="text-[8px] text-slate-500 block -mt-1 font-normal">▼</span></button>
+                    <button class="key-btn h-9 text-xs" data-key="9">9</button>
+
+                    <button class="key-btn h-9 text-xs text-slate-400" data-key="star">*</button>
+                    <button class="key-btn h-9 text-xs" data-key="0">0</button>
+                    <button class="key-btn h-9 text-xs text-slate-400" data-key="hash">#</button>
+                </div>
+
+                <!-- Keypad footer -->
+                <div class="flex items-center justify-between text-[10px] text-slate-500 px-1 pt-1">
+                    <span>Hỗ trợ chạm trực tiếp trên màn hình</span>
+                    <button class="hover:text-rose-400 transition" data-key="backspace" title="Xóa ký tự">
+                        <i class="fa-solid fa-delete-left"></i> Xóa
+                    </button>
                 </div>
             </div>
 
@@ -174,236 +350,404 @@
 
     </main>
 
-    <!-- Modal: Tải Lên Bản Mod Mới (.JAR) -->
-    <div id="modal-upload" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
-        <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-sm w-full p-4 space-y-3">
-            <div class="flex items-center justify-between pb-2 border-b border-slate-800">
-                <div class="flex items-center gap-2 text-indigo-400 font-bold text-sm">
-                    <i class="fa-solid fa-cloud-arrow-up"></i>
+    <!-- Modal: Upload ROM -->
+    <div id="modal-upload" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3">
+        <div class="bg-slate-900 border border-white/10 rounded-2xl max-w-sm w-full p-4 flex flex-col gap-3 shadow-2xl">
+            <div class="flex items-center justify-between">
+                <span class="font-bold text-sm text-slate-100 flex items-center gap-2">
+                    <i class="fa-solid fa-cloud-arrow-up text-indigo-400"></i>
                     <span>Tải Lên Bản Mod NRO (.JAR)</span>
-                </div>
-                <button id="btn-close-upload" class="text-slate-400 hover:text-white">
+                </span>
+                <button id="btn-close-upload" class="text-slate-400 hover:text-white text-sm">
                     <i class="fa-solid fa-xmark"></i>
                 </button>
             </div>
-            <div class="text-xs space-y-2">
-                <label class="block text-slate-300">Chọn file .jar từ điện thoại / máy tính:</label>
-                <input type="file" id="input-jar" accept=".jar" class="block w-full text-xs text-slate-400 file:mr-2 file:py-1 file:px-2.5 file:rounded-md file:border-0 file:bg-indigo-600 file:text-white bg-slate-950 border border-slate-800 rounded-lg p-1.5 cursor-pointer">
-                <div id="upload-status" class="hidden text-center py-1 font-medium"></div>
+            
+            <p class="text-xs text-slate-400">
+                Tải lên bản mod Java (.jar) riêng của bạn (DragonBoy mod pro, v250, v251...). Hệ thống sẽ tự động thay thế và khởi động lại game tức thì.
+            </p>
+
+            <form id="form-upload" class="flex flex-col gap-3">
+                <div class="border-2 border-dashed border-white/15 rounded-xl p-4 text-center cursor-pointer hover:border-indigo-400/50 transition bg-slate-950/40" id="drop-zone">
+                    <i class="fa-solid fa-file-zipper text-2xl text-indigo-400 mb-1"></i>
+                    <p class="text-xs text-slate-300 font-medium" id="file-label">Chọn hoặc kéo thả file .jar vào đây</p>
+                    <input type="file" id="file-input" name="file" accept=".jar" class="hidden">
+                </div>
+
+                <div class="flex items-center justify-end gap-2 pt-1">
+                    <button type="button" id="btn-cancel-upload" class="px-3 py-1.5 rounded-lg bg-slate-800 text-xs text-slate-300 font-semibold">
+                        Hủy
+                    </button>
+                    <button type="submit" id="btn-submit-upload" class="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs text-white font-semibold flex items-center gap-1.5">
+                        <i class="fa-solid fa-upload"></i>
+                        <span>Bắt đầu nạp</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: Console Logs -->
+    <div id="modal-logs" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3">
+        <div class="bg-slate-900 border border-white/10 rounded-2xl max-w-lg w-full p-4 flex flex-col gap-3 shadow-2xl h-[70vh]">
+            <div class="flex items-center justify-between border-b border-white/10 pb-2">
+                <span class="font-bold text-sm text-slate-100 flex items-center gap-2">
+                    <i class="fa-solid fa-terminal text-amber-400"></i>
+                    <span>Nhật ký Console Game 24/7</span>
+                </span>
+                <button id="btn-close-logs" class="text-slate-400 hover:text-white text-sm">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
             </div>
-            <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
-                <button id="btn-cancel-upload" class="px-3 py-1.5 rounded-lg bg-slate-800 text-xs">Hủy</button>
-                <button id="btn-submit-upload" class="px-3 py-1.5 rounded-lg bg-indigo-600 text-white font-semibold text-xs flex items-center gap-1">
-                    <i class="fa-solid fa-play text-[10px]"></i>
-                    <span>Nạp & Chạy Ngay</span>
+
+            <div id="logs-content" class="flex-1 bg-slate-950 rounded-xl p-3 font-mono text-[11px] text-slate-300 overflow-y-auto whitespace-pre-wrap leading-relaxed border border-white/5">
+                Đang tải logs...
+            </div>
+
+            <div class="flex items-center justify-between pt-1">
+                <button id="btn-reload-logs" class="px-3 py-1.5 rounded-lg bg-slate-800 text-xs text-slate-300 font-semibold flex items-center gap-1">
+                    <i class="fa-solid fa-rotate-right"></i> Làm mới
+                </button>
+                <button id="btn-close-logs-2" class="px-4 py-1.5 rounded-lg bg-indigo-600 text-xs text-white font-semibold">
+                    Đóng
                 </button>
             </div>
         </div>
     </div>
 
-    <!-- Frontend Script -->
+    <!-- JavaScript Controller -->
     <script>
-        const screenImg = document.getElementById('screen');
-        const tapIndicator = document.getElementById('tap-indicator');
-        const inputPin = document.getElementById('input-pin');
-        const selectFps = document.getElementById('select-fps');
-        const fpsStatus = document.getElementById('fps-status');
-        const badgeFps = document.getElementById('badge-fps');
-        const btnRefresh = document.getElementById('btn-refresh');
-
-        // Restore PIN from localStorage
-        const savedPin = localStorage.getItem('nro_admin_pin');
-        if (savedPin) {
-            inputPin.value = savedPin;
-        }
-        inputPin.addEventListener('input', () => {
-            localStorage.setItem('nro_admin_pin', inputPin.value.trim());
-        });
-
-        function getPin() {
-            return inputPin.value.trim() || '1234';
-        }
-
-        // --- Screenshot Polling Logic ---
-        let pollTimer = null;
-        let isFetching = false;
-
-        function refreshScreenshot() {
-            if (isFetching) return;
-            isFetching = true;
-
-            const nextImg = new Image();
-            const timestamp = Date.now();
-            nextImg.src = `/api/screenshot?pin=${encodeURIComponent(getPin())}&t=${timestamp}`;
-
-            nextImg.onload = () => {
-                screenImg.src = nextImg.src;
-                isFetching = false;
+        (function() {
+            // State
+            const state = {
+                pin: localStorage.getItem('nro_pin') || '1234',
+                fpsInterval: parseInt(localStorage.getItem('nro_interval') || '1200'),
+                timer: null,
+                isFetching: false,
+                failCount: 0
             };
-            nextImg.onerror = () => {
-                isFetching = false;
-            };
-        }
 
-        function setupPolling() {
-            if (pollTimer) clearInterval(pollTimer);
-            const interval = parseInt(selectFps.value, 10);
+            // DOM Elements
+            const pinInput = document.getElementById('input-pin');
+            const fpsSelect = document.getElementById('select-fps');
+            const screenImg = document.getElementById('screen-img');
+            const screenWrapper = document.getElementById('screen-container');
+            const screenOverlay = document.getElementById('screen-overlay');
+            const overlayText = document.getElementById('overlay-text');
+            const touchMarker = document.getElementById('touch-marker');
+            const txtUptime = document.getElementById('txt-uptime');
+            const txtRam = document.getElementById('txt-ram');
+            const txtStatus = document.getElementById('txt-status');
+            const serverAlert = document.getElementById('server-alert');
+            const serverAlertText = document.getElementById('server-alert-text');
 
-            if (interval === 0 || document.hidden) {
-                fpsStatus.textContent = 'Tạm dừng';
-                badgeFps.className = 'text-[10px] px-1.5 py-0.5 rounded-full bg-slate-500/10 text-slate-400 border border-slate-500/20 flex items-center gap-1';
-                return;
+            // Initialize Controls
+            pinInput.value = state.pin;
+            fpsSelect.value = state.fpsInterval.toString();
+
+            pinInput.addEventListener('change', (e) => {
+                state.pin = e.target.value.trim();
+                localStorage.setItem('nro_pin', state.pin);
+                fetchScreenshot();
+                fetchStatus();
+            });
+
+            fpsSelect.addEventListener('change', (e) => {
+                state.fpsInterval = parseInt(e.target.value);
+                localStorage.setItem('nro_interval', state.fpsInterval.toString());
+                restartTimer();
+            });
+
+            // Stream Screenshot Fetcher
+            function fetchScreenshot() {
+                if (state.isFetching) return;
+                state.isFetching = true;
+
+                const url = `/api/screenshot?pin=${encodeURIComponent(state.pin)}&t=${Date.now()}`;
+                const preloader = new Image();
+                
+                preloader.onload = function() {
+                    screenImg.src = preloader.src;
+                    screenOverlay.classList.add('opacity-0', 'pointer-events-none');
+                    state.failCount = 0;
+                    state.isFetching = false;
+                };
+
+                preloader.onerror = function() {
+                    state.failCount++;
+                    if (state.failCount >= 3) {
+                        screenOverlay.classList.remove('opacity-0', 'pointer-events-none');
+                        overlayText.textContent = "Mất kết nối hoặc sai mã PIN!";
+                    }
+                    state.isFetching = false;
+                };
+
+                preloader.src = url;
             }
 
-            fpsStatus.textContent = interval <= 1500 ? 'Live' : 'Chậm';
-            badgeFps.className = 'text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1';
-            pollTimer = setInterval(refreshScreenshot, interval);
-        }
-
-        selectFps.addEventListener('change', setupPolling);
-        btnRefresh.addEventListener('click', refreshScreenshot);
-
-        // Auto pause on tab hidden (0% CPU when tab is closed / minimized)
-        document.addEventListener('visibilitychange', () => {
-            if (document.hidden) {
-                if (pollTimer) clearInterval(pollTimer);
-                fpsStatus.textContent = 'Nghỉ';
-            } else {
-                setupPolling();
-                refreshScreenshot();
+            function restartTimer() {
+                if (state.timer) clearInterval(state.timer);
+                if (state.fpsInterval > 0) {
+                    state.timer = setInterval(fetchScreenshot, state.fpsInterval);
+                    fetchScreenshot();
+                } else {
+                    // Eco Mode: fetch once
+                    fetchScreenshot();
+                }
             }
-        });
 
-        // --- Direct Input Ingestion ---
-        async function sendInput(payload) {
-            payload.pin = getPin();
-            try {
-                await fetch('/api/input', {
+            // Fetch System Status (every 10s)
+            function fetchStatus() {
+                fetch(`/api/status?pin=${encodeURIComponent(state.pin)}`)
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.status === 'online') {
+                            txtUptime.textContent = data.uptime || '--';
+                            if (data.ram) {
+                                txtRam.textContent = `RAM: ${data.ram.used_mb}/${data.ram.total_mb}MB (${data.ram.percent}%)`;
+                            }
+                            if (data.emulator_running) {
+                                txtStatus.textContent = "Đang chạy 24/7";
+                            } else {
+                                txtStatus.textContent = "Game chưa bật";
+                            }
+
+                            // Check TeaMobi Server Socket
+                            if (!data.server_socket_online) {
+                                serverAlert.classList.remove('hidden');
+                                serverAlertText.textContent = "Máy chủ TeaMobi NRO hiện đang bảo trì hoặc mất sóng kết nối!";
+                            } else {
+                                serverAlert.classList.add('hidden');
+                            }
+                        }
+                    })
+                    .catch(() => {});
+            }
+
+            // API Input Sender
+            function sendInput(payload) {
+                payload.pin = state.pin;
+                return fetch('/api/input', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
-                });
-                setTimeout(refreshScreenshot, 150);
-            } catch (err) {
-                console.error('Lỗi gửi input:', err);
+                }).then(() => {
+                    // Trigger fast frame capture after action
+                    setTimeout(fetchScreenshot, 150);
+                }).catch(err => console.error(err));
             }
-        }
 
-        // 1. Screen Tap/Click handler (Mapped directly to 240x360)
-        screenImg.addEventListener('pointerdown', (e) => {
-            e.preventDefault();
-            const rect = screenImg.getBoundingClientRect();
-            const x = Math.round(((e.clientX - rect.left) / rect.width) * 240);
-            const y = Math.round(((e.clientY - rect.top) / rect.height) * 360);
+            // Touch / Click on Screen Canvas
+            screenWrapper.addEventListener('click', (e) => {
+                const rect = screenWrapper.getBoundingClientRect();
+                const clickX = e.clientX - rect.left;
+                const clickY = e.clientY - rect.top;
 
-            // Animate tap circle
-            tapIndicator.style.left = `${(x / 240) * 100}%`;
-            tapIndicator.style.top = `${(y / 360) * 100}%`;
-            tapIndicator.style.opacity = '1';
-            setTimeout(() => { tapIndicator.style.opacity = '0'; }, 200);
+                // Scale to 240x360 virtual resolution
+                const normX = (clickX / rect.width) * 240;
+                const normY = (clickY / rect.height) * 360;
 
-            sendInput({ action: 'click', x, y });
-        });
+                // Show ripple marker
+                touchMarker.style.left = `${clickX}px`;
+                touchMarker.style.top = `${clickY}px`;
+                touchMarker.classList.remove('hidden');
+                setTimeout(() => touchMarker.classList.add('hidden'), 250);
 
-        // 2. Action buttons (Quick hotkeys & J2ME Keypad)
-        document.querySelectorAll('.btn-action[data-key]').forEach(btn => {
-            btn.addEventListener('pointerdown', (e) => {
-                e.preventDefault();
-                const key = btn.getAttribute('data-key');
-                sendInput({ action: 'key', value: key });
+                sendInput({ action: 'click', x: normX, y: normY });
             });
-        });
 
-        // 3. Text & Chat Command Box
-        const inputText = document.getElementById('input-text');
-        const btnSendText = document.getElementById('btn-send-text');
-        const btnSendEnter = document.getElementById('btn-send-enter');
+            // Keypad Event Handlers
+            document.querySelectorAll('[data-key]').forEach(btn => {
+                const key = btn.getAttribute('data-key');
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    sendInput({ action: 'key', value: key });
+                });
+            });
 
-        btnSendText.addEventListener('click', () => {
-            const val = inputText.value;
-            if (!val) return;
-            sendInput({ action: 'text', value: val, enter: false });
-            inputText.value = '';
-        });
+            // Quick Mod Chips
+            document.querySelectorAll('[data-cmd]').forEach(btn => {
+                const cmd = btn.getAttribute('data-cmd');
+                btn.addEventListener('click', () => {
+                    fetch('/api/quick_cmd', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ pin: state.pin, cmd: cmd })
+                    }).then(() => {
+                        setTimeout(fetchScreenshot, 300);
+                    });
+                });
+            });
 
-        btnSendEnter.addEventListener('click', () => {
-            const val = inputText.value;
-            if (!val) return;
-            sendInput({ action: 'text', value: val, enter: true });
-            inputText.value = '';
-        });
-
-        inputText.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                const val = inputText.value;
-                if (!val) return;
-                sendInput({ action: 'text', value: val, enter: true });
-                inputText.value = '';
+            // Custom Command Sender
+            const inputCmd = document.getElementById('input-cmd');
+            const btnSendCmd = document.getElementById('btn-send-cmd');
+            function handleSendCmd() {
+                const text = inputCmd.value.trim();
+                if (!text) return;
+                fetch('/api/quick_cmd', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pin: state.pin, cmd: text })
+                }).then(() => {
+                    inputCmd.value = '';
+                    setTimeout(fetchScreenshot, 300);
+                });
             }
-        });
+            btnSendCmd.addEventListener('click', handleSendCmd);
+            inputCmd.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') handleSendCmd();
+            });
 
-        // --- Modal Upload ROM ---
-        const btnOpenUpload = document.getElementById('btn-open-upload');
-        const modalUpload = document.getElementById('modal-upload');
-        const btnCloseUpload = document.getElementById('btn-close-upload');
-        const btnCancelUpload = document.getElementById('btn-cancel-upload');
-        const btnSubmitUpload = document.getElementById('btn-submit-upload');
-        const inputJar = document.getElementById('input-jar');
-        const uploadStatus = document.getElementById('upload-status');
-
-        btnOpenUpload.addEventListener('click', () => {
-            uploadStatus.classList.add('hidden');
-            inputJar.value = '';
-            modalUpload.classList.remove('hidden');
-        });
-        btnCloseUpload.addEventListener('click', () => modalUpload.classList.add('hidden'));
-        btnCancelUpload.addEventListener('click', () => modalUpload.classList.add('hidden'));
-
-        btnSubmitUpload.addEventListener('click', async () => {
-            if (!inputJar.files || inputJar.files.length === 0) {
-                uploadStatus.className = 'text-center py-1 text-xs text-rose-400';
-                uploadStatus.textContent = 'Vui lòng chọn 1 file .jar!';
-                uploadStatus.classList.remove('hidden');
-                return;
+            // Anti-Stuck Button
+            function triggerAntiStuck() {
+                sendInput({ action: 'anti_stuck' });
             }
+            document.getElementById('btn-anti-stuck').addEventListener('click', triggerAntiStuck);
+            document.getElementById('btn-fix-stuck').addEventListener('click', triggerAntiStuck);
 
-            const file = inputJar.files[0];
-            uploadStatus.className = 'text-center py-1 text-xs text-amber-300 animate-pulse';
-            uploadStatus.textContent = 'Đang tải file lên và khởi chạy...';
-            uploadStatus.classList.remove('hidden');
-            btnSubmitUpload.disabled = true;
+            // Restart Button
+            document.getElementById('btn-restart').addEventListener('click', () => {
+                if (!confirm("Bạn có chắc chắn muốn khởi động lại game không?")) return;
+                fetch('/api/restart', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pin: state.pin })
+                }).then(() => {
+                    screenOverlay.classList.remove('opacity-0', 'pointer-events-none');
+                    overlayText.textContent = "Đang khởi động lại game...";
+                    setTimeout(fetchScreenshot, 3000);
+                });
+            });
 
-            const fd = new FormData();
-            fd.append('file', file);
+            // Refresh Screen Button
+            document.getElementById('btn-refresh').addEventListener('click', fetchScreenshot);
 
-            try {
-                const res = await fetch(`/api/upload_rom?pin=${encodeURIComponent(getPin())}`, {
+            // Download Screenshot
+            document.getElementById('btn-download-shot').addEventListener('click', () => {
+                const a = document.createElement('a');
+                a.href = `/api/screenshot?pin=${encodeURIComponent(state.pin)}&download=1`;
+                a.download = `NRO_Capture_${Date.now()}.jpg`;
+                a.click();
+            });
+
+            // Modal: Upload ROM
+            const modalUpload = document.getElementById('modal-upload');
+            const btnOpenUpload = document.getElementById('btn-open-upload');
+            const btnCloseUpload = document.getElementById('btn-close-upload');
+            const btnCancelUpload = document.getElementById('btn-cancel-upload');
+            const fileInput = document.getElementById('file-input');
+            const dropZone = document.getElementById('drop-zone');
+            const fileLabel = document.getElementById('file-label');
+            const formUpload = document.getElementById('form-upload');
+
+            btnOpenUpload.addEventListener('click', () => modalUpload.classList.remove('hidden'));
+            [btnCloseUpload, btnCancelUpload].forEach(btn => {
+                btn.addEventListener('click', () => modalUpload.classList.add('hidden'));
+            });
+
+            dropZone.addEventListener('click', () => fileInput.click());
+            fileInput.addEventListener('change', () => {
+                if (fileInput.files.length > 0) {
+                    fileLabel.textContent = fileInput.files[0].name;
+                }
+            });
+
+            formUpload.addEventListener('submit', (e) => {
+                e.preventDefault();
+                if (!fileInput.files.length) {
+                    alert("Vui lòng chọn file .jar!");
+                    return;
+                }
+                const fd = new FormData();
+                fd.append('file', fileInput.files[0]);
+                fd.append('pin', state.pin);
+
+                const btnSubmit = document.getElementById('btn-submit-upload');
+                btnSubmit.disabled = true;
+                btnSubmit.textContent = "Đang nạp...";
+
+                fetch('/api/upload_rom', {
                     method: 'POST',
                     body: fd
-                });
-                const data = await res.json();
-                if (res.ok && data.status === 'ok') {
-                    uploadStatus.className = 'text-center py-1 text-xs text-emerald-400 font-semibold';
-                    uploadStatus.textContent = 'Thành công! Game đang khởi động lại...';
-                    setTimeout(() => {
+                })
+                .then(res => res.json())
+                .then(data => {
+                    btnSubmit.disabled = false;
+                    btnSubmit.innerHTML = '<i class="fa-solid fa-upload"></i><span>Bắt đầu nạp</span>';
+                    if (data.status === 'ok') {
+                        alert(data.message);
                         modalUpload.classList.add('hidden');
-                        btnSubmitUpload.disabled = false;
-                        setTimeout(refreshScreenshot, 1500);
-                    }, 1200);
-                } else {
-                    uploadStatus.className = 'text-center py-1 text-xs text-rose-400';
-                    uploadStatus.textContent = data.error || 'Lỗi nạp file!';
-                    btnSubmitUpload.disabled = false;
-                }
-            } catch (err) {
-                uploadStatus.className = 'text-center py-1 text-xs text-rose-400';
-                uploadStatus.textContent = 'Lỗi kết nối khi tải file!';
-                btnSubmitUpload.disabled = false;
-            }
-        });
+                        setTimeout(fetchScreenshot, 3000);
+                    } else {
+                        alert("Lỗi: " + (data.error || "Không thể tải lên"));
+                    }
+                })
+                .catch(err => {
+                    btnSubmit.disabled = false;
+                    alert("Lỗi khi tải file: " + err);
+                });
+            });
 
-        // Initialize polling
-        setupPolling();
+            // Modal: Console Logs
+            const modalLogs = document.getElementById('modal-logs');
+            const btnOpenLogs = document.getElementById('btn-open-logs');
+            const btnCloseLogs = document.getElementById('btn-close-logs');
+            const btnCloseLogs2 = document.getElementById('btn-close-logs-2');
+            const logsContent = document.getElementById('logs-content');
+            const btnReloadLogs = document.getElementById('btn-reload-logs');
+
+            function loadLogs() {
+                logsContent.textContent = "Đang lấy log từ máy chủ...";
+                fetch(`/api/logs?pin=${encodeURIComponent(state.pin)}`)
+                    .then(res => res.json())
+                    .then(data => {
+                        logsContent.textContent = data.logs || "Chưa có log.";
+                        logsContent.scrollTop = logsContent.scrollHeight;
+                    })
+                    .catch(() => {
+                        logsContent.textContent = "Không thể tải nhật ký log.";
+                    });
+            }
+
+            btnOpenLogs.addEventListener('click', () => {
+                modalLogs.classList.remove('hidden');
+                loadLogs();
+            });
+            [btnCloseLogs, btnCloseLogs2].forEach(btn => {
+                btn.addEventListener('click', () => modalLogs.classList.add('hidden'));
+            });
+            btnReloadLogs.addEventListener('click', loadLogs);
+
+            // Keyboard Pass-through (Desktop users)
+            window.addEventListener('keydown', (e) => {
+                if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+                
+                const keyMap = {
+                    'ArrowUp': 'up',
+                    'ArrowDown': 'down',
+                    'ArrowLeft': 'left',
+                    'ArrowRight': 'right',
+                    'Enter': 'ok',
+                    'F1': 'f1',
+                    'F2': 'f2',
+                    'Backspace': 'backspace',
+                    ' ': 'ok'
+                };
+
+                if (keyMap[e.key]) {
+                    e.preventDefault();
+                    sendInput({ action: 'key', value: keyMap[e.key] });
+                } else if (/^[0-9]$/.test(e.key)) {
+                    sendInput({ action: 'key', value: e.key });
+                }
+            });
+
+            // Auto-run on start
+            restartTimer();
+            fetchStatus();
+            setInterval(fetchStatus, 10000);
+        })();
     </script>
 </body>
 </html>

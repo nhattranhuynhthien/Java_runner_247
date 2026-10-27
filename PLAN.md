@@ -152,3 +152,4 @@ Write a clear Vietnamese guide explaining:
 1. How to drop `NRO.jar` into `roms/NRO.jar`.
 2. How to build and test locally with Docker (`docker build -t nro-cloud . && docker run -p 8080:8080 nro-cloud`).
 3. How to deploy to Render.com or Hugging Face Spaces (change `PORT=7860` if using HF Spaces) and set up UptimeRobot on `/health`.
+
