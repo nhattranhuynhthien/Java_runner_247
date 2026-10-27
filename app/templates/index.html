@@ -644,7 +644,7 @@
         (function() {
             // State
             const state = {
-                pin: localStorage.getItem('nro_pin') || '1234',
+                pin: '',
                 fpsInterval: parseInt(localStorage.getItem('nro_interval') || '700'),
                 timer: null,
                 isFetching: false,
@@ -983,6 +983,24 @@
             const btnTextEnter = document.getElementById('btn-text-enter');
             const btnTextCancel = document.getElementById('btn-text-cancel');
 
+            // Safe Credential Masking (Prevents Plaintext Exposure in F12 Local Storage)
+            function maskSecret(str) {
+                if (!str) return '';
+                try {
+                    return btoa(encodeURIComponent(str).split('').reverse().join(''));
+                } catch (e) {
+                    return str;
+                }
+            }
+            function unmaskSecret(encoded) {
+                if (!encoded) return '';
+                try {
+                    return decodeURIComponent(atob(encoded).split('').reverse().join(''));
+                } catch (e) {
+                    return encoded;
+                }
+            }
+
             // Restore saved credentials from localStorage
             try {
                 const savedRemember = localStorage.getItem('nro_remember_login');
@@ -993,7 +1011,7 @@
                     const savedU = localStorage.getItem('nro_saved_user');
                     const savedP = localStorage.getItem('nro_saved_pass');
                     if (savedU) loginUser.value = savedU;
-                    if (savedP) loginPass.value = savedP;
+                    if (savedP) loginPass.value = unmaskSecret(savedP);
                 }
             } catch (e) {}
 
@@ -1021,11 +1039,11 @@
                     return;
                 }
 
-                // Save or clear remembered credentials
+                // Save or clear remembered credentials (Masked)
                 try {
                     if (remember) {
                         localStorage.setItem('nro_saved_user', username);
-                        localStorage.setItem('nro_saved_pass', password);
+                        localStorage.setItem('nro_saved_pass', maskSecret(password));
                         localStorage.setItem('nro_remember_login', '1');
                     } else {
                         localStorage.removeItem('nro_saved_user');
@@ -1328,6 +1346,21 @@
             restartTimer();
             fetchStatus();
             setInterval(fetchStatus, 10000);
+
+            // Anti-Inspection & DevTools Protection (Blocks F12, Right-Click, Ctrl+Shift+I/J/C, Ctrl+U)
+            document.addEventListener('contextmenu', e => e.preventDefault());
+            window.addEventListener('keydown', e => {
+                if (
+                    e.key === 'F12' ||
+                    (e.ctrlKey && e.shiftKey && ['I', 'i', 'J', 'j', 'C', 'c'].includes(e.key)) ||
+                    (e.ctrlKey && ['U', 'u', 'S', 's'].includes(e.key))
+                ) {
+                    e.preventDefault();
+                    return false;
+                }
+            });
+            console.clear();
+            console.log = console.info = console.warn = console.debug = () => {};
         })();
     </script>
 </body>

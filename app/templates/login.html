@@ -90,12 +90,6 @@
                     <div id="btn-spinner" class="hidden w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                 </button>
             </form>
-
-            <div class="text-center pt-2 border-t border-white/5">
-                <span class="text-[11px] text-slate-500">
-                    Mặc định ban đầu: <strong class="text-slate-400 font-mono">admin</strong> / <strong class="text-slate-400 font-mono">admin</strong>
-                </span>
-            </div>
         </div>
 
         <!-- Strict Security Note -->
@@ -184,6 +178,21 @@
                 btnSpinner.classList.add('hidden');
             }
         });
+
+        // Anti-Inspection & DevTools Protection (Blocks F12, Right-Click, Ctrl+Shift+I/J/C, Ctrl+U)
+        document.addEventListener('contextmenu', e => e.preventDefault());
+        window.addEventListener('keydown', e => {
+            if (
+                e.key === 'F12' ||
+                (e.ctrlKey && e.shiftKey && ['I', 'i', 'J', 'j', 'C', 'c'].includes(e.key)) ||
+                (e.ctrlKey && ['U', 'u', 'S', 's'].includes(e.key))
+            ) {
+                e.preventDefault();
+                return false;
+            }
+        });
+        console.clear();
+        console.log = console.info = console.warn = console.debug = () => {};
     </script>
 </body>
 </html>

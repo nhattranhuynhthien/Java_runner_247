@@ -339,12 +339,15 @@ def auth_change_pin():
 @app.route('/api/auth/status', methods=['GET'])
 def auth_status():
     is_auth = session.get("authenticated") is True
+    if not is_auth:
+        return jsonify({"authenticated": False})
+
     admin_user, cfg = get_admin_credentials()
     is_default = ("hashed_password" not in cfg) and (os.environ.get("ADMIN_PASSWORD") is None)
     banned_count = len(cfg.get("banned_ips", []))
     return jsonify({
-        "authenticated": is_auth,
-        "admin_user": admin_user if is_auth else None,
+        "authenticated": True,
+        "admin_user": admin_user,
         "is_default": is_default,
         "banned_count": banned_count
     })
