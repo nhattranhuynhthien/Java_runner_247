@@ -163,12 +163,12 @@
             <div class="flex items-center gap-1.5 sm:gap-2">
                 <input type="hidden" id="input-pin" value="">
 
-                <!-- Change PIN -->
-                <button id="btn-open-change-pin" class="h-7 px-2.5 rounded-lg bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 text-xs text-slate-300 flex items-center justify-center font-medium gap-1" title="Đổi mã khóa bảo vệ runner">
+                <!-- Security / Change Credentials -->
+                <button id="btn-open-change-auth" class="h-7 px-2.5 rounded-lg bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 text-xs text-slate-300 flex items-center justify-center font-medium gap-1" title="Quản lý tài khoản & mật khẩu đăng nhập">
                     <svg class="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                     </svg>
-                    <span>Đổi PIN</span>
+                    <span>Bảo Mật</span>
                 </button>
 
                 <!-- Logout / Lock -->
@@ -208,14 +208,14 @@
     <!-- Main Workspace -->
     <main class="flex-1 max-w-5xl mx-auto w-full p-2 sm:p-4 flex flex-col items-center">
         
-        <!-- Default PIN Alert Banner -->
-        <div id="default-pin-warning" class="hidden w-full max-w-xl mb-3 p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/35 text-amber-300 text-xs flex items-center justify-between gap-3 shadow-lg backdrop-blur">
+        <!-- Default Credentials Alert Banner -->
+        <div id="default-pin-warning" class="hidden w-full max-w-xl mb-3 p-3 rounded-xl bg-amber-500/15 border border-amber-500/35 text-amber-300 text-xs flex items-center justify-between gap-3 shadow-lg backdrop-blur">
             <div class="flex items-center gap-2">
                 <span class="text-base flex-shrink-0">⚠️</span>
-                <span><strong>Cảnh báo bảo mật:</strong> Bạn đang dùng mã PIN mặc định (<code class="font-mono text-amber-200">1234</code>). Hãy đổi PIN ngay để chống người lạ truy cập!</span>
+                <span><strong>Cảnh báo bảo mật:</strong> Hệ thống đang dùng tài khoản/mật khẩu mặc định (<code class="font-mono text-amber-200">admin</code> / <code class="font-mono text-amber-200">admin</code>). Hãy đổi ngay!</span>
             </div>
-            <button id="btn-banner-change-pin" class="px-2.5 py-1 rounded-lg bg-amber-500/30 hover:bg-amber-500/40 text-amber-100 font-bold text-[11px] whitespace-nowrap border border-amber-500/40">
-                Đổi PIN Ngay
+            <button id="btn-banner-change-pin" class="px-2.5 py-1.5 rounded-lg bg-amber-500/30 hover:bg-amber-500/40 text-amber-100 font-bold text-[11px] whitespace-nowrap border border-amber-500/40 transition active:scale-95">
+                Đổi Mật Khẩu
             </button>
         </div>
 
@@ -569,8 +569,8 @@
         </div>
     </div>
 
-    <!-- Modal: Change PIN -->
-    <div id="modal-change-pin" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3">
+    <!-- Modal: Quản Trị Bảo Mật (Tài khoản & Mật khẩu & IP Blacklist) -->
+    <div id="modal-change-auth" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3">
         <div class="bg-slate-900 border border-white/10 rounded-2xl max-w-sm w-full p-5 flex flex-col gap-4 shadow-2xl">
             <div class="flex items-center justify-between border-b border-white/10 pb-2.5">
                 <div class="flex items-center gap-2">
@@ -579,44 +579,63 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
                         </svg>
                     </div>
-                    <span class="font-bold text-sm text-slate-100">Đổi Mã Khóa Bảo Mật</span>
+                    <span class="font-bold text-sm text-slate-100">Bảo Mật Máy Chủ</span>
                 </div>
-                <button id="btn-close-change-pin" class="text-slate-400 hover:text-white text-xs font-mono px-2 py-0.5 rounded bg-white/5">
+                <button id="btn-close-change-auth" class="text-slate-400 hover:text-white text-xs font-mono px-2 py-0.5 rounded bg-white/5">
                     Đóng
                 </button>
             </div>
 
             <p class="text-xs text-slate-400 leading-relaxed">
-                Mã khóa bảo vệ quyền truy cập web điều khiển game, chống người khác xem màn hình hoặc gửi phím.
+                Đổi tài khoản và mật khẩu đăng nhập cổng bảo vệ web. Người không có thông tin sẽ không thể thấy hay điều khiển game.
             </p>
 
-            <form id="form-change-pin" class="flex flex-col gap-3">
-                <div class="flex flex-col gap-1">
-                    <label class="text-xs font-medium text-slate-300">Mã PIN cũ (mặc định: 1234)</label>
-                    <input type="password" id="input-old-pin" required placeholder="Nhập mã cũ..." class="bg-slate-950 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 font-mono">
+            <form id="form-change-auth" class="flex flex-col gap-2.5">
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="flex flex-col gap-1">
+                        <label class="text-[11px] font-medium text-slate-300">Tài khoản cũ</label>
+                        <input type="text" id="input-old-user" required placeholder="admin" class="bg-slate-950 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 font-mono">
+                    </div>
+                    <div class="flex flex-col gap-1">
+                        <label class="text-[11px] font-medium text-slate-300">Mật khẩu cũ</label>
+                        <input type="password" id="input-old-pass" required placeholder="••••" class="bg-slate-950 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 font-mono">
+                    </div>
+                </div>
+
+                <div class="flex flex-col gap-1 pt-1 border-t border-white/5">
+                    <label class="text-[11px] font-medium text-slate-300">Tài khoản quản trị mới</label>
+                    <input type="text" id="input-new-user" required placeholder="Nhập tài khoản mới..." class="bg-slate-950 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 font-mono">
                 </div>
 
                 <div class="flex flex-col gap-1">
-                    <label class="text-xs font-medium text-slate-300">Mã PIN mới (ít nhất 4 ký tự)</label>
-                    <input type="password" id="input-new-pin" required placeholder="Nhập mã mới..." class="bg-slate-950 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 font-mono">
+                    <label class="text-[11px] font-medium text-slate-300">Mật khẩu mới (&ge; 4 ký tự)</label>
+                    <input type="password" id="input-new-pass" required placeholder="Nhập mật khẩu mới..." class="bg-slate-950 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 font-mono">
                 </div>
 
                 <div class="flex flex-col gap-1">
-                    <label class="text-xs font-medium text-slate-300">Xác nhận mã PIN mới</label>
-                    <input type="password" id="input-confirm-pin" required placeholder="Nhập lại mã mới..." class="bg-slate-950 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 font-mono">
+                    <label class="text-[11px] font-medium text-slate-300">Xác nhận mật khẩu mới</label>
+                    <input type="password" id="input-confirm-pass" required placeholder="Nhập lại mật khẩu mới..." class="bg-slate-950 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 font-mono">
                 </div>
 
-                <div id="pin-change-error" class="hidden text-[11px] text-rose-400 bg-rose-500/10 p-2 rounded-lg border border-rose-500/20"></div>
+                <div id="auth-change-error" class="hidden text-[11px] text-rose-400 bg-rose-500/10 p-2 rounded-lg border border-rose-500/20"></div>
 
                 <div class="flex items-center justify-end gap-2 pt-2 border-t border-white/5">
-                    <button type="button" id="btn-cancel-change-pin" class="px-3 py-1.5 rounded-lg bg-slate-800 text-xs text-slate-300 font-semibold">
+                    <button type="button" id="btn-cancel-change-auth" class="px-3 py-1.5 rounded-lg bg-slate-800 text-xs text-slate-300 font-semibold">
                         Hủy
                     </button>
-                    <button type="submit" id="btn-submit-change-pin" class="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-xs text-white font-bold transition">
-                        Lưu Mã Mới
+                    <button type="submit" id="btn-submit-change-auth" class="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-xs text-white font-bold transition">
+                        Lưu Cấu Hình Mới
                     </button>
                 </div>
             </form>
+
+            <!-- Banned IP Section -->
+            <div class="pt-2 border-t border-white/10 flex items-center justify-between text-[11px] text-slate-400">
+                <span>Đang khóa: <strong id="txt-banned-count" class="text-rose-400 font-mono">0</strong> IP vi phạm</span>
+                <button type="button" id="btn-unban-all" class="px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition font-mono">
+                    Gỡ khóa tất cả IP
+                </button>
+            </div>
         </div>
     </div>
 
@@ -1163,97 +1182,147 @@
                 });
             }
 
-            const modalChangePin = document.getElementById('modal-change-pin');
-            const btnOpenChangePin = document.getElementById('btn-open-change-pin');
+            // Modal: Change Auth (Tài khoản & Mật khẩu & IP Blacklist)
+            const modalChangeAuth = document.getElementById('modal-change-auth');
+            const btnOpenChangeAuth = document.getElementById('btn-open-change-auth');
             const btnBannerChangePin = document.getElementById('btn-banner-change-pin');
-            const btnCloseChangePin = document.getElementById('btn-close-change-pin');
-            const btnCancelChangePin = document.getElementById('btn-cancel-change-pin');
-            const formChangePin = document.getElementById('form-change-pin');
-            const inputOldPin = document.getElementById('input-old-pin');
-            const inputNewPin = document.getElementById('input-new-pin');
-            const inputConfirmPin = document.getElementById('input-confirm-pin');
-            const pinChangeError = document.getElementById('pin-change-error');
-            const btnSubmitChangePin = document.getElementById('btn-submit-change-pin');
+            const btnCloseChangeAuth = document.getElementById('btn-close-change-auth');
+            const btnCancelChangeAuth = document.getElementById('btn-cancel-change-auth');
+            const formChangeAuth = document.getElementById('form-change-auth');
+            const inputOldUser = document.getElementById('input-old-user');
+            const inputOldPass = document.getElementById('input-old-pass');
+            const inputNewUser = document.getElementById('input-new-user');
+            const inputNewPass = document.getElementById('input-new-pass');
+            const inputConfirmPass = document.getElementById('input-confirm-pass');
+            const authChangeError = document.getElementById('auth-change-error');
+            const btnSubmitChangeAuth = document.getElementById('btn-submit-change-auth');
+            const txtBannedCount = document.getElementById('txt-banned-count');
+            const btnUnbanAll = document.getElementById('btn-unban-all');
 
-            function openChangePinModal() {
-                if (pinChangeError) pinChangeError.classList.add('hidden');
-                if (inputOldPin) inputOldPin.value = '';
-                if (inputNewPin) inputNewPin.value = '';
-                if (inputConfirmPin) inputConfirmPin.value = '';
-                modalChangePin.classList.remove('hidden');
-                if (inputOldPin) inputOldPin.focus();
+            let currentAdminUser = 'admin';
+
+            function openChangeAuthModal() {
+                if (authChangeError) authChangeError.classList.add('hidden');
+                if (inputOldUser) inputOldUser.value = currentAdminUser;
+                if (inputOldPass) inputOldPass.value = '';
+                if (inputNewUser) inputNewUser.value = currentAdminUser;
+                if (inputNewPass) inputNewPass.value = '';
+                if (inputConfirmPass) inputConfirmPass.value = '';
+                modalChangeAuth.classList.remove('hidden');
+                if (inputOldPass) inputOldPass.focus();
             }
 
-            if (btnOpenChangePin) btnOpenChangePin.addEventListener('click', openChangePinModal);
-            if (btnBannerChangePin) btnBannerChangePin.addEventListener('click', openChangePinModal);
-            if (btnCloseChangePin) btnCloseChangePin.addEventListener('click', () => modalChangePin.classList.add('hidden'));
-            if (btnCancelChangePin) btnCancelChangePin.addEventListener('click', () => modalChangePin.classList.add('hidden'));
+            if (btnOpenChangeAuth) btnOpenChangeAuth.addEventListener('click', openChangeAuthModal);
+            if (btnBannerChangePin) btnBannerChangePin.addEventListener('click', openChangeAuthModal);
+            if (btnCloseChangeAuth) btnCloseChangeAuth.addEventListener('click', () => modalChangeAuth.classList.add('hidden'));
+            if (btnCancelChangeAuth) btnCancelChangeAuth.addEventListener('click', () => modalChangeAuth.classList.add('hidden'));
 
-            if (formChangePin) {
-                formChangePin.addEventListener('submit', async (e) => {
+            if (formChangeAuth) {
+                formChangeAuth.addEventListener('submit', async (e) => {
                     e.preventDefault();
-                    pinChangeError.classList.add('hidden');
+                    authChangeError.classList.add('hidden');
 
-                    const oldPin = inputOldPin.value.trim();
-                    const newPin = inputNewPin.value.trim();
-                    const confirmPin = inputConfirmPin.value.trim();
+                    const oldUser = inputOldUser.value.trim();
+                    const oldPass = inputOldPass.value;
+                    const newUser = inputNewUser.value.trim();
+                    const newPass = inputNewPass.value;
+                    const confirmPass = inputConfirmPass.value;
 
-                    if (!oldPin) {
-                        pinChangeError.textContent = "Vui lòng nhập mã PIN hiện tại";
-                        pinChangeError.classList.remove('hidden');
+                    if (!oldPass) {
+                        authChangeError.textContent = "Vui lòng nhập mật khẩu hiện tại";
+                        authChangeError.classList.remove('hidden');
                         return;
                     }
-                    if (newPin.length < 4) {
-                        pinChangeError.textContent = "Mã PIN mới phải có ít nhất 4 ký tự";
-                        pinChangeError.classList.remove('hidden');
+                    if (!newUser) {
+                        authChangeError.textContent = "Tài khoản mới không được để trống";
+                        authChangeError.classList.remove('hidden');
                         return;
                     }
-                    if (newPin !== confirmPin) {
-                        pinChangeError.textContent = "Xác nhận mã PIN mới không trùng khớp!";
-                        pinChangeError.classList.remove('hidden');
+                    if (newPass.length < 4) {
+                        authChangeError.textContent = "Mật khẩu mới phải có ít nhất 4 ký tự";
+                        authChangeError.classList.remove('hidden');
+                        return;
+                    }
+                    if (newPass !== confirmPass) {
+                        authChangeError.textContent = "Xác nhận mật khẩu mới không trùng khớp!";
+                        authChangeError.classList.remove('hidden');
                         return;
                     }
 
-                    btnSubmitChangePin.disabled = true;
-                    btnSubmitChangePin.textContent = "Đang lưu...";
+                    btnSubmitChangeAuth.disabled = true;
+                    btnSubmitChangeAuth.textContent = "Đang lưu...";
 
                     try {
-                        const res = await fetch('/api/auth/change_pin', {
+                        const res = await fetch('/api/auth/change_credentials', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ old_pin: oldPin, new_pin: newPin })
+                            body: JSON.stringify({
+                                old_user: oldUser,
+                                old_pass: oldPass,
+                                new_user: newUser,
+                                new_pass: newPass
+                            })
                         });
                         const data = await res.json();
                         if (res.ok && data.status === 'ok') {
-                            showToast("Đã đổi mã khóa bảo vệ thành công!", "emerald");
-                            modalChangePin.classList.add('hidden');
-                            // Hide default PIN warning if visible
+                            showToast("Đã đổi tài khoản và mật khẩu thành công!", "emerald");
+                            currentAdminUser = newUser;
+                            modalChangeAuth.classList.add('hidden');
                             const defaultWarn = document.getElementById('default-pin-warning');
                             if (defaultWarn) defaultWarn.classList.add('hidden');
                         } else {
-                            pinChangeError.textContent = data.error || "Không thể đổi mã PIN";
-                            pinChangeError.classList.remove('hidden');
+                            authChangeError.textContent = data.error || "Không thể đổi thông tin";
+                            authChangeError.classList.remove('hidden');
                         }
                     } catch (err) {
-                        pinChangeError.textContent = "Lỗi kết nối tới máy chủ!";
-                        pinChangeError.classList.remove('hidden');
+                        authChangeError.textContent = "Lỗi kết nối tới máy chủ!";
+                        authChangeError.classList.remove('hidden');
                     } finally {
-                        btnSubmitChangePin.disabled = false;
-                        btnSubmitChangePin.textContent = "Lưu Mã Mới";
+                        btnSubmitChangeAuth.disabled = false;
+                        btnSubmitChangeAuth.textContent = "Lưu Cấu Hình Mới";
+                    }
+                });
+            }
+
+            // Unban All IPs Button
+            if (btnUnbanAll) {
+                btnUnbanAll.addEventListener('click', async () => {
+                    if (!confirm("Bạn có chắc chắn muốn gỡ khóa cho tất cả các địa chỉ IP bị cấm?")) return;
+                    try {
+                        const res = await fetch('/api/auth/unban', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ all: true })
+                        });
+                        const data = await res.json();
+                        if (res.ok && data.status === 'ok') {
+                            showToast(data.message, "emerald");
+                            if (txtBannedCount) txtBannedCount.textContent = '0';
+                        }
+                    } catch (e) {
+                        showToast("Lỗi khi mở khóa IP", "rose");
                     }
                 });
             }
 
             // Check Master Auth Status
-            fetch('/api/auth/status')
-                .then(r => r.json())
-                .then(d => {
-                    const defaultWarn = document.getElementById('default-pin-warning');
-                    if (defaultWarn && d.is_default_pin) {
-                        defaultWarn.classList.remove('hidden');
-                    }
-                })
-                .catch(() => {});
+            function checkAuthStatus() {
+                fetch('/api/auth/status')
+                    .then(r => r.json())
+                    .then(d => {
+                        if (d.admin_user) currentAdminUser = d.admin_user;
+                        const defaultWarn = document.getElementById('default-pin-warning');
+                        if (defaultWarn) {
+                            if (d.is_default) defaultWarn.classList.remove('hidden');
+                            else defaultWarn.classList.add('hidden');
+                        }
+                        if (txtBannedCount && d.banned_count !== undefined) {
+                            txtBannedCount.textContent = d.banned_count.toString();
+                        }
+                    })
+                    .catch(() => {});
+            }
+            checkAuthStatus();
 
             // Auto-run on start
             restartTimer();

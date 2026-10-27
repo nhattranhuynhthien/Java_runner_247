@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="vi" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>403 Bị Khóa Truy Cập • UP NRO PRO</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #07090e;
+            background-image: radial-gradient(circle at 50% 20%, rgba(239, 68, 68, 0.15) 0%, rgba(7, 9, 14, 1) 80%);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            min-height: 100vh;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center p-4">
+
+    <div class="w-full max-w-md flex flex-col items-center">
+        <!-- Shield Warning Icon -->
+        <div class="w-16 h-16 rounded-2xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400 mb-6 shadow-2xl shadow-rose-950/80">
+            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+            </svg>
+        </div>
+
+        <!-- Blocked Card -->
+        <div class="w-full bg-slate-900/90 border border-rose-500/30 rounded-2xl p-6 shadow-2xl backdrop-blur-xl flex flex-col items-center text-center gap-4">
+            <span class="text-[11px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                403 Forbidden • Access Denied
+            </span>
+
+            <h1 class="text-xl font-extrabold text-white tracking-tight">
+                TRUY CẬP ĐÃ BỊ KHÓA
+            </h1>
+
+            <p class="text-xs text-slate-300 leading-relaxed max-w-sm">
+                Địa chỉ IP của bạn (<code class="text-rose-300 font-mono font-bold">{{ ip }}</code>) đã bị đưa vào danh sách đen và khóa vĩnh viễn do <strong class="text-rose-400">nhập sai thông tin đăng nhập quá 3 lần</strong>.
+            </p>
+
+            <div class="w-full bg-slate-950/80 rounded-xl p-3 border border-white/5 text-left text-[11px] text-slate-400 flex flex-col gap-1.5 font-mono">
+                <div class="flex items-center justify-between">
+                    <span>Trạng thái:</span>
+                    <span class="text-rose-400 font-bold">BỊ CHẶN VĨNH VIỄN</span>
+                </div>
+                <div class="flex items-center justify-between">
+                    <span>Giao diện treo game:</span>
+                    <span class="text-slate-500 font-bold">ẨN HOÀN TOÀN</span>
+                </div>
+                <div class="flex items-center justify-between">
+                    <span>Quyền truy cập API:</span>
+                    <span class="text-rose-400 font-bold">BỊ TỪ CHỐI (403)</span>
+                </div>
+            </div>
+
+            <div class="pt-2 border-t border-white/5 w-full text-[11px] text-slate-500 leading-relaxed">
+                Nếu bạn là chủ sở hữu máy chủ và vô tình bị khóa, hãy truy cập <strong class="text-slate-400">Render Dashboard &rarr; Environment</strong>, thêm biến <code class="text-amber-300 font-mono">RESET_BAN=true</code> và Restart lại service để gỡ khóa.
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>

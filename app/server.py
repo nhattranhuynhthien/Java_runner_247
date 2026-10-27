@@ -28,7 +28,7 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 x11_lock = threading.Lock()
 
-# Persistent Security Configuration
+# Persistent Security Configuration & Ban System
 SECURITY_CONFIG_FILE = os.path.join(os.path.dirname(__file__), "security_config.json")
 
 def load_security_config():
@@ -47,37 +47,54 @@ def save_security_config(cfg):
     except Exception as e:
         print(f"[SECURITY] Lỗi lưu cấu hình: {e}")
 
-def hash_pin(pin_str, salt=None):
+# Emergency Unban via Environment Variable
+if os.environ.get("RESET_BAN", "").lower() in ("true", "1") or os.environ.get("RESET_SECURITY", "").lower() in ("true", "1"):
+    _cfg = load_security_config()
+    _cfg["banned_ips"] = []
+    save_security_config(_cfg)
+    print("[SECURITY] Đã tự động xóa danh sách IP bị cấm theo biến môi trường RESET_BAN.")
+
+def hash_secret(secret_str, salt=None):
     if not salt:
         salt = secrets.token_hex(16)
-    hashed = hashlib.pbkdf2_hmac("sha256", str(pin_str).encode("utf-8"), salt.encode("utf-8"), 100000).hex()
+    hashed = hashlib.pbkdf2_hmac("sha256", str(secret_str).encode("utf-8"), salt.encode("utf-8"), 100000).hex()
     return hashed, salt
 
-def verify_pin(candidate_pin):
-    if not candidate_pin:
-        return False
-    candidate_str = str(candidate_pin).strip()
+def get_admin_credentials():
     cfg = load_security_config()
-    if "hashed_pin" in cfg and "salt" in cfg:
-        calc_hash, _ = hash_pin(candidate_str, cfg["salt"])
-        return hmac.compare_digest(calc_hash, cfg["hashed_pin"])
-    
-    # Fallback to environment variable or default 1234
-    env_pin = os.environ.get("ADMIN_PIN", "1234").strip()
-    return hmac.compare_digest(candidate_str, env_pin)
+    user = cfg.get("admin_user", os.environ.get("ADMIN_USER", "admin")).strip()
+    return user, cfg
 
-def update_pin(new_pin_str):
-    hashed, salt = hash_pin(str(new_pin_str).strip())
+def verify_credentials(candidate_user, candidate_pass):
+    if not candidate_user or not candidate_pass:
+        return False
+    cand_user = str(candidate_user).strip()
+    cand_pass = str(candidate_pass).strip()
+
+    admin_user, cfg = get_admin_credentials()
+    if not hmac.compare_digest(cand_user, admin_user):
+        return False
+
+    if "hashed_password" in cfg and "salt" in cfg:
+        calc_hash, _ = hash_secret(cand_pass, cfg["salt"])
+        return hmac.compare_digest(calc_hash, cfg["hashed_password"])
+
+    # Fallback to initial default from ENV or "admin"
+    env_pass = os.environ.get("ADMIN_PASSWORD", os.environ.get("ADMIN_PIN", "admin")).strip()
+    return hmac.compare_digest(cand_pass, env_pass)
+
+def update_credentials(new_user, new_pass):
+    hashed, salt = hash_secret(str(new_pass).strip())
     cfg = load_security_config()
-    cfg["hashed_pin"] = hashed
+    cfg["admin_user"] = str(new_user).strip()
+    cfg["hashed_password"] = hashed
     cfg["salt"] = salt
     cfg["updated_at"] = time.time()
     save_security_config(cfg)
 
-# Rate Limiting & Anti-Brute-Force
-FAILED_LOGIN_ATTEMPTS = {}
-MAX_FAILED_ATTEMPTS = 5
-LOCKOUT_SECONDS = 900  # 15 minutes lockout
+# IP Blacklist & Anti-Brute-Force: Exactly 3 failed attempts -> Permanent Lockout
+MAX_FAILED_ATTEMPTS = 3
+FAILED_LOGIN_ATTEMPTS = {}  # { ip: count }
 
 def get_client_ip(req):
     forwarded = req.headers.get("X-Forwarded-For")
@@ -85,24 +102,44 @@ def get_client_ip(req):
         return forwarded.split(",")[0].strip()
     return req.remote_addr or "127.0.0.1"
 
-def check_rate_limit(ip):
-    now = time.time()
-    attempts = FAILED_LOGIN_ATTEMPTS.get(ip, [])
-    attempts = [t for t in attempts if now - t < LOCKOUT_SECONDS]
-    FAILED_LOGIN_ATTEMPTS[ip] = attempts
-    if len(attempts) >= MAX_FAILED_ATTEMPTS:
-        remaining = int(LOCKOUT_SECONDS - (now - attempts[0]))
-        return False, remaining
-    return True, MAX_FAILED_ATTEMPTS - len(attempts)
+def is_ip_banned(ip):
+    cfg = load_security_config()
+    banned = cfg.get("banned_ips", [])
+    return ip in banned
+
+def ban_ip(ip, reason="Nhập sai thông tin đăng nhập quá 3 lần"):
+    cfg = load_security_config()
+    banned = set(cfg.get("banned_ips", []))
+    banned.add(ip)
+    cfg["banned_ips"] = list(banned)
+    save_security_config(cfg)
+    print(f"[SECURITY] ĐÃ KHÓA VĨNH VIỄN IP: {ip} ({reason})")
 
 def record_failed_attempt(ip):
-    now = time.time()
-    attempts = FAILED_LOGIN_ATTEMPTS.get(ip, [])
-    attempts.append(now)
-    FAILED_LOGIN_ATTEMPTS[ip] = attempts
+    count = FAILED_LOGIN_ATTEMPTS.get(ip, 0) + 1
+    FAILED_LOGIN_ATTEMPTS[ip] = count
+    if count >= MAX_FAILED_ATTEMPTS:
+        ban_ip(ip)
+        return True, 0
+    return False, MAX_FAILED_ATTEMPTS - count
 
 def reset_failed_attempts(ip):
     FAILED_LOGIN_ATTEMPTS.pop(ip, None)
+
+@app.before_request
+def security_gate():
+    # Always allow health check
+    if request.path == '/health':
+        return None
+
+    ip = get_client_ip(request)
+    if is_ip_banned(ip):
+        if request.path.startswith('/api/'):
+            return jsonify({
+                "error": "Truy cập bị từ chối: Địa chỉ IP của bạn đã bị khóa vĩnh viễn do nhập sai quá 3 lần.",
+                "banned": True
+            }), 403
+        return render_template('blocked.html', ip=ip), 403
 
 @app.after_request
 def add_security_headers(response):
@@ -136,16 +173,19 @@ KEY_MAP = {
 def check_pin(req):
     if session.get("authenticated") is True:
         return True
-    pin = req.headers.get("X-PIN")
+    pin = req.headers.get("X-PIN") or req.headers.get("X-Auth-Token")
     if not pin:
         pin = req.args.get("pin")
     if not pin and req.is_json:
         data = req.get_json(silent=True)
         if isinstance(data, dict):
-            pin = data.get("pin")
+            pin = data.get("pin") or data.get("password")
     if not pin:
-        pin = req.form.get("pin")
-    return verify_pin(pin)
+        pin = req.form.get("pin") or req.form.get("password")
+    if not pin:
+        return False
+    user, _ = get_admin_credentials()
+    return verify_credentials(user, pin)
 
 def get_game_window():
     try:
@@ -206,30 +246,42 @@ def index():
 @app.route('/api/auth/login', methods=['POST'])
 def auth_login():
     ip = get_client_ip(request)
-    allowed, remaining = check_rate_limit(ip)
-    if not allowed:
+    if is_ip_banned(ip):
         return jsonify({
-            "error": f"Quá nhiều lần nhập sai. IP tạm thời bị khóa trong {remaining // 60 + 1} phút.",
-            "locked": True
-        }), 429
+            "error": "Truy cập bị từ chối: Địa chỉ IP đã bị khóa vĩnh viễn do nhập sai quá 3 lần.",
+            "banned": True
+        }), 403
 
     data = request.get_json(silent=True) or {}
-    pin = str(data.get("pin", "")).strip()
+    username = str(data.get("username", "")).strip()
+    password = str(data.get("password", "")).strip()
 
-    if not pin:
-        return jsonify({"error": "Vui lòng nhập mã khóa bảo vệ"}), 400
+    # Also support single pin field for fallback
+    if not password and data.get("pin"):
+        password = str(data.get("pin")).strip()
+    if not username:
+        admin_u, _ = get_admin_credentials()
+        username = admin_u
 
-    if verify_pin(pin):
+    if not password:
+        return jsonify({"error": "Vui lòng nhập tài khoản và mật khẩu quản trị!"}), 400
+
+    if verify_credentials(username, password):
         reset_failed_attempts(ip)
         session["authenticated"] = True
+        session["admin_user"] = username
         session.permanent = True
         return jsonify({"status": "ok", "message": "Đăng nhập thành công"})
     else:
-        record_failed_attempt(ip)
+        is_banned, remaining = record_failed_attempt(ip)
         time.sleep(1.0)
-        allowed, remaining = check_rate_limit(ip)
+        if is_banned:
+            return jsonify({
+                "error": "Bạn đã nhập sai thông tin 3 lần. Địa chỉ IP của bạn đã bị KHÓA TRUY CẬP VĨNH VIỄN!",
+                "banned": True
+            }), 403
         return jsonify({
-            "error": "Mã khóa không chính xác. Vui lòng thử lại!",
+            "error": "Tài khoản hoặc mật khẩu không chính xác!",
             "remaining": remaining
         }), 401
 
@@ -240,35 +292,71 @@ def auth_logout():
         return redirect(url_for('index'))
     return jsonify({"status": "ok", "message": "Đã đăng xuất an toàn"})
 
-@app.route('/api/auth/change_pin', methods=['POST'])
-def auth_change_pin():
-    if not check_pin(request):
+@app.route('/api/auth/change_credentials', methods=['POST'])
+def auth_change_credentials():
+    if not session.get("authenticated") and not check_pin(request):
         return jsonify({"error": "Unauthorized"}), 401
 
     data = request.get_json(silent=True) or {}
-    old_pin = str(data.get("old_pin", "")).strip()
-    new_pin = str(data.get("new_pin", "")).strip()
+    old_user = str(data.get("old_user", "")).strip()
+    old_pass = str(data.get("old_pass", "")).strip()
+    new_user = str(data.get("new_user", "")).strip()
+    new_pass = str(data.get("new_pass", "")).strip()
 
-    if not verify_pin(old_pin):
-        return jsonify({"error": "Mã khóa hiện tại không đúng!"}), 400
+    if not old_user:
+        curr_u, _ = get_admin_credentials()
+        old_user = curr_u
 
-    if len(new_pin) < 4:
-        return jsonify({"error": "Mã khóa mới phải có ít nhất 4 ký tự!"}), 400
+    if not verify_credentials(old_user, old_pass):
+        return jsonify({"error": "Tài khoản hoặc mật khẩu hiện tại không đúng!"}), 400
 
-    update_pin(new_pin)
+    if not new_user:
+        return jsonify({"error": "Tài khoản mới không được để trống!"}), 400
+
+    if len(new_pass) < 4:
+        return jsonify({"error": "Mật khẩu mới phải có ít nhất 4 ký tự!"}), 400
+
+    update_credentials(new_user, new_pass)
     session["authenticated"] = True
+    session["admin_user"] = new_user
     session.permanent = True
-    return jsonify({"status": "ok", "message": "Đã đổi mã khóa bảo vệ thành công!"})
+    return jsonify({"status": "ok", "message": "Đã đổi tài khoản và mật khẩu thành công!"})
+
+# Backward compatibility alias
+@app.route('/api/auth/change_pin', methods=['POST'])
+def auth_change_pin():
+    data = request.get_json(silent=True) or {}
+    old_pin = data.get("old_pin", "")
+    new_pin = data.get("new_pin", "")
+    curr_u, _ = get_admin_credentials()
+    data["old_user"] = curr_u
+    data["old_pass"] = old_pin
+    data["new_user"] = curr_u
+    data["new_pass"] = new_pin
+    request._cached_json = (data, data)
+    return auth_change_credentials()
 
 @app.route('/api/auth/status', methods=['GET'])
 def auth_status():
     is_auth = session.get("authenticated") is True
-    cfg = load_security_config()
-    is_default = ("hashed_pin" not in cfg) and (os.environ.get("ADMIN_PIN", "1234") == "1234")
+    admin_user, cfg = get_admin_credentials()
+    is_default = ("hashed_password" not in cfg) and (os.environ.get("ADMIN_PASSWORD") is None)
+    banned_count = len(cfg.get("banned_ips", []))
     return jsonify({
         "authenticated": is_auth,
-        "is_default_pin": is_default
+        "admin_user": admin_user if is_auth else None,
+        "is_default": is_default,
+        "banned_count": banned_count
     })
+
+@app.route('/api/auth/unban', methods=['POST'])
+def auth_unban():
+    if not session.get("authenticated") and not check_pin(request):
+        return jsonify({"error": "Unauthorized"}), 401
+    cfg = load_security_config()
+    cfg["banned_ips"] = []
+    save_security_config(cfg)
+    return jsonify({"status": "ok", "message": "Đã gỡ lệnh cấm toàn bộ IP!"})
 
 @app.route('/api/screenshot', methods=['GET'])
 def screenshot():
