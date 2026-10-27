@@ -11,6 +11,11 @@ os.environ["DISPLAY"] = ":1"
 ADMIN_PIN = os.environ.get("ADMIN_PIN", "1234")
 SERVER_START_TIME = time.time()
 
+# Y offset for cropping out the MicroEmulator window menu bar
+MENU_BAR_OFFSET = 24
+SCREEN_WIDTH = 240
+SCREEN_HEIGHT = 360
+
 app = Flask(__name__)
 x11_lock = threading.Lock()
 
@@ -18,7 +23,6 @@ ALLOWED_KEYS = {
     'Up', 'Down', 'Left', 'Right', 'Return', 'F1', 'F2', 'BackSpace', 'space', 'Escape'
 } | {chr(c) for c in range(ord('a'), ord('z') + 1)} | {chr(c) for c in range(ord('0'), ord('9') + 1)} | {'*', '#'}
 
-# Key mappings for J2ME standard buttons
 KEY_MAP = {
     'up': 'Up',
     'down': 'Down',
@@ -61,7 +65,6 @@ def get_ram_info():
     return {"used_mb": 0, "total_mb": 512, "percent": 0}
 
 def check_nro_socket():
-    # Test connection to TeaMobi NRO standard port
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(1.0)
     try:
@@ -85,25 +88,25 @@ def screenshot():
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
 
     try:
-        with x11_lock:
-            # Capture the X11 virtual display :1 at 240x360
-            im = ImageGrab.grab(bbox=(0, 0, 240, 360))
-            if im is None:
-                im = Image.new('RGB', (240, 360), color=(10, 15, 25))
-            else:
-                im = im.convert('RGB')
+        # Crop exactly 240x360 game canvas, skipping top menu bar (y=24..384)
+        im = ImageGrab.grab(bbox=(0, MENU_BAR_OFFSET, SCREEN_WIDTH, MENU_BAR_OFFSET + SCREEN_HEIGHT))
+        if im is None:
+            im = Image.new('RGB', (SCREEN_WIDTH, SCREEN_HEIGHT), color=(10, 15, 25))
+        else:
+            im = im.convert('RGB')
 
         buf = io.BytesIO()
-        im.save(buf, format='JPEG', quality=70)
+        # Fast compression: quality=55 yields ~2.5KB image, instantaneous to transfer
+        im.save(buf, format='JPEG', quality=55, optimize=True)
         jpeg_bytes = buf.getvalue()
 
         response = Response(jpeg_bytes, mimetype='image/jpeg')
         response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
         return response
 
-    except Exception as e:
+    except Exception:
         buf = io.BytesIO()
-        blank = Image.new('RGB', (240, 360), color=(15, 20, 30))
+        blank = Image.new('RGB', (SCREEN_WIDTH, SCREEN_HEIGHT), color=(15, 20, 30))
         blank.save(buf, format='JPEG', quality=50)
         response = Response(buf.getvalue(), mimetype='image/jpeg')
         response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
@@ -125,7 +128,6 @@ def server_status():
     else:
         uptime_human = f"{minutes}m {uptime_sec % 60}s"
 
-    # Check emulator process
     emu_running = False
     try:
         p = subprocess.run(["pgrep", "-f", "microemulator"], capture_output=True, text=True)
@@ -172,8 +174,9 @@ def handle_input():
                 try:
                     raw_x = float(data.get("x", 0))
                     raw_y = float(data.get("y", 0))
-                    x = max(0, min(240, int(round(raw_x))))
-                    y = max(0, min(360, int(round(raw_y))))
+                    x = max(0, min(SCREEN_WIDTH, int(round(raw_x))))
+                    # Add MENU_BAR_OFFSET so click reaches the exact game canvas coordinate
+                    y = max(0, min(SCREEN_HEIGHT, int(round(raw_y)))) + MENU_BAR_OFFSET
                     subprocess.run(
                         ["xdotool", "mousemove", "--sync", str(x), str(y), "click", "1"],
                         timeout=2,
@@ -186,7 +189,7 @@ def handle_input():
                 value = str(data.get("value", ""))
                 if value:
                     subprocess.run(
-                        ["xdotool", "type", "--delay", "40", value],
+                        ["xdotool", "type", "--delay", "30", value],
                         timeout=5,
                         check=False
                     )
@@ -194,10 +197,11 @@ def handle_input():
                     subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
 
             elif action == "anti_stuck":
-                # Click center of OK button on modal dialogs & send Return/F2
-                subprocess.run(["xdotool", "mousemove", "--sync", "120", "245", "click", "1"], timeout=2, check=False)
+                # Click center of OK button on modal dialogs & send Return/space (NO F2 to avoid exit)
+                ok_y = 245 + MENU_BAR_OFFSET
+                subprocess.run(["xdotool", "mousemove", "--sync", "120", str(ok_y), "click", "1"], timeout=2, check=False)
                 subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
-                subprocess.run(["xdotool", "key", "F2"], timeout=2, check=False)
+                subprocess.run(["xdotool", "key", "space"], timeout=2, check=False)
 
             else:
                 return jsonify({"error": "Invalid action"}), 400
@@ -221,11 +225,11 @@ def handle_quick_cmd():
 
     try:
         with x11_lock:
-            # 1. Open chat box in NRO (Press Return)
+            # 1. Open chat in NRO (Press Return)
             subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
             time.sleep(0.12)
             # 2. Type command
-            subprocess.run(["xdotool", "type", "--delay", "30", cmd], timeout=3, check=False)
+            subprocess.run(["xdotool", "type", "--delay", "25", cmd], timeout=3, check=False)
             time.sleep(0.12)
             # 3. Submit command (Press Return)
             subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)

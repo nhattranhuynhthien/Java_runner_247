@@ -154,9 +154,9 @@
 
                 <!-- Stream Mode -->
                 <select id="select-fps" class="bg-slate-900 border border-white/10 rounded-lg text-xs px-2 py-1 text-slate-300 focus:outline-none">
-                    <option value="800">🚀 Nhanh (0.8s)</option>
-                    <option value="1200" selected>⚡ Live (1.2s)</option>
-                    <option value="3000">🐢 Chậm (3s)</option>
+                    <option value="350">⚡ Cực Nhanh (0.35s)</option>
+                    <option value="700" selected>🚀 Nhanh (0.7s)</option>
+                    <option value="1500">🐢 Tiết Kiệm (1.5s)</option>
                     <option value="0">🍃 Eco (Dừng)</option>
                 </select>
 
@@ -421,7 +421,7 @@
             // State
             const state = {
                 pin: localStorage.getItem('nro_pin') || '1234',
-                fpsInterval: parseInt(localStorage.getItem('nro_interval') || '1200'),
+                fpsInterval: parseInt(localStorage.getItem('nro_interval') || '700'),
                 timer: null,
                 isFetching: false,
                 failCount: 0
@@ -458,7 +458,7 @@
                 restartTimer();
             });
 
-            // Stream Screenshot Fetcher
+            // Chained Adaptive Screenshot Fetcher (Zero-stutter)
             function fetchScreenshot() {
                 if (state.isFetching) return;
                 state.isFetching = true;
@@ -471,6 +471,12 @@
                     screenOverlay.classList.add('opacity-0', 'pointer-events-none');
                     state.failCount = 0;
                     state.isFetching = false;
+                    
+                    // Schedule next frame seamlessly if mode > 0
+                    if (state.fpsInterval > 0) {
+                        if (state.timer) clearTimeout(state.timer);
+                        state.timer = setTimeout(fetchScreenshot, state.fpsInterval);
+                    }
                 };
 
                 preloader.onerror = function() {
@@ -480,20 +486,19 @@
                         overlayText.textContent = "Mất kết nối hoặc sai mã PIN!";
                     }
                     state.isFetching = false;
+                    if (state.fpsInterval > 0) {
+                        if (state.timer) clearTimeout(state.timer);
+                        state.timer = setTimeout(fetchScreenshot, 1000);
+                    }
                 };
 
                 preloader.src = url;
             }
 
             function restartTimer() {
-                if (state.timer) clearInterval(state.timer);
-                if (state.fpsInterval > 0) {
-                    state.timer = setInterval(fetchScreenshot, state.fpsInterval);
-                    fetchScreenshot();
-                } else {
-                    // Eco Mode: fetch once
-                    fetchScreenshot();
-                }
+                if (state.timer) clearTimeout(state.timer);
+                state.isFetching = false;
+                fetchScreenshot();
             }
 
             // Fetch System Status (every 10s)
@@ -515,7 +520,7 @@
                             // Check TeaMobi Server Socket
                             if (!data.server_socket_online) {
                                 serverAlert.classList.remove('hidden');
-                                serverAlertText.textContent = "Máy chủ TeaMobi NRO hiện đang bảo trì hoặc mất sóng kết nối!";
+                                serverAlertText.textContent = "Máy chủ TeaMobi NRO hiện đang bảo trì hoặc mất sóng!";
                             } else {
                                 serverAlert.classList.add('hidden');
                             }
@@ -524,7 +529,7 @@
                     .catch(() => {});
             }
 
-            // API Input Sender
+            // Fast API Input Sender (Immediate response)
             function sendInput(payload) {
                 payload.pin = state.pin;
                 return fetch('/api/input', {
@@ -532,8 +537,10 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 }).then(() => {
-                    // Trigger fast frame capture after action
-                    setTimeout(fetchScreenshot, 150);
+                    // Trigger fast frame capture after action (60ms and 220ms)
+                    state.isFetching = false;
+                    setTimeout(fetchScreenshot, 60);
+                    setTimeout(fetchScreenshot, 220);
                 }).catch(err => console.error(err));
             }
 

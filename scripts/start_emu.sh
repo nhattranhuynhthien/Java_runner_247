@@ -43,13 +43,18 @@ except Exception:
     pass
 " 2>/dev/null)
 
-    if [ -n "$MIDLET_CLASS" ]; then
-        echo "[EMU] Khởi chạy trực tiếp MIDlet: $MIDLET_CLASS"
-        exec java -Xmx220m -Xms128m -Dsun.java2d.opengl=false -jar /app/microemulator.jar --appclasspath "$JAR_FILE" "$MIDLET_CLASS"
-    else
-        echo "[EMU] Khởi chạy file JAR mặc định..."
-        exec java -Xmx220m -Xms128m -Dsun.java2d.opengl=false -jar /app/microemulator.jar "$JAR_FILE"
-    fi
+    # Vòng lặp giữ game chạy 24/7 (tự hồi sinh nếu game ngắt kết nối hoặc văng)
+    while true; do
+        if [ -n "$MIDLET_CLASS" ]; then
+            echo "[EMU] Khởi chạy trực tiếp MIDlet: $MIDLET_CLASS"
+            java -Xmx220m -Xms128m -Dsun.java2d.opengl=false -jar /app/microemulator.jar --appclasspath "$JAR_FILE" "$MIDLET_CLASS" || true
+        else
+            echo "[EMU] Khởi chạy file JAR mặc định..."
+            java -Xmx220m -Xms128m -Dsun.java2d.opengl=false -jar /app/microemulator.jar "$JAR_FILE" || true
+        fi
+        echo "[EMU] Game đã dừng. Tự động khởi động lại sau 2 giây..."
+        sleep 2
+    done
 else
     echo "[EMU] Chưa có file NRO.jar trong /app/roms. Chạy ở chế độ chờ..."
     exec java -Xmx220m -Xms128m -Dsun.java2d.opengl=false -jar /app/microemulator.jar
