@@ -20,8 +20,8 @@ app = Flask(__name__)
 x11_lock = threading.Lock()
 
 ALLOWED_KEYS = {
-    'Up', 'Down', 'Left', 'Right', 'Return', 'F1', 'F2', 'BackSpace', 'space', 'Escape'
-} | {chr(c) for c in range(ord('a'), ord('z') + 1)} | {chr(c) for c in range(ord('0'), ord('9') + 1)} | {'*', '#'}
+    'Up', 'Down', 'Left', 'Right', 'Return', 'F1', 'F2', 'BackSpace', 'space', 'Escape', 'Tab'
+} | {chr(c) for c in range(ord('a'), ord('z') + 1)} | {chr(c) for c in range(ord('A'), ord('Z') + 1)} | {chr(c) for c in range(ord('0'), ord('9') + 1)} | {'*', '#', '@', '.', '_', '-', '+', '/', ':', '!', '?', '$', '%', '&'}
 
 KEY_MAP = {
     'up': 'Up',
@@ -29,11 +29,15 @@ KEY_MAP = {
     'left': 'Left',
     'right': 'Right',
     'ok': 'Return',
+    'return': 'Return',
+    'enter': 'Return',
+    'escape': 'Escape',
     'f1': 'F1',
     'f2': 'F2',
     'backspace': 'BackSpace',
     'star': 'asterisk',
     'hash': 'numbersign',
+    ' ': 'space',
 }
 
 def check_pin(req):
@@ -47,6 +51,18 @@ def check_pin(req):
     if not pin:
         pin = req.form.get("pin")
     return str(pin) == str(ADMIN_PIN)
+
+def focus_game_window():
+    try:
+        p = subprocess.run(["xdotool", "search", "--onlyvisible", "--class", "java"], capture_output=True, text=True, timeout=1)
+        wids = p.stdout.strip().split()
+        if not wids:
+            p = subprocess.run(["xdotool", "search", "--onlyvisible", ""], capture_output=True, text=True, timeout=1)
+            wids = p.stdout.strip().split()
+        if wids:
+            subprocess.run(["xdotool", "windowfocus", "--sync", wids[0]], timeout=1)
+    except Exception:
+        pass
 
 def get_ram_info():
     try:
@@ -90,7 +106,6 @@ def screenshot():
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
 
     try:
-        # Crop exactly 240x360 game canvas, skipping top menu bar (y=24..384)
         im = ImageGrab.grab(bbox=(0, MENU_BAR_OFFSET, SCREEN_WIDTH, MENU_BAR_OFFSET + SCREEN_HEIGHT))
         if im is None:
             im = Image.new('RGB', (SCREEN_WIDTH, SCREEN_HEIGHT), color=(10, 15, 25))
@@ -164,19 +179,24 @@ def handle_input():
 
     try:
         with x11_lock:
+            focus_game_window()
+
             if action == "key":
                 raw_val = str(data.get("value", ""))
                 key_to_send = KEY_MAP.get(raw_val.lower(), raw_val)
-                if key_to_send not in ALLOWED_KEYS and key_to_send not in KEY_MAP.values():
-                    return jsonify({"error": f"Invalid key: {raw_val}"}), 400
-                subprocess.run(["xdotool", "key", key_to_send], timeout=2, check=False)
+                # If single character, type it directly with xdotool type to preserve casing & symbols
+                if len(key_to_send) == 1:
+                    subprocess.run(["xdotool", "type", "--delay", "20", "--", key_to_send], timeout=2, check=False)
+                else:
+                    if key_to_send not in ALLOWED_KEYS and key_to_send not in KEY_MAP.values():
+                        return jsonify({"error": f"Invalid key: {raw_val}"}), 400
+                    subprocess.run(["xdotool", "key", key_to_send], timeout=2, check=False)
 
             elif action == "click":
                 try:
                     raw_x = float(data.get("x", 0))
                     raw_y = float(data.get("y", 0))
                     x = max(0, min(SCREEN_WIDTH, int(round(raw_x))))
-                    # Add MENU_BAR_OFFSET so click reaches the exact game canvas coordinate
                     y = max(0, min(SCREEN_HEIGHT, int(round(raw_y)))) + MENU_BAR_OFFSET
                     subprocess.run(
                         ["xdotool", "mousemove", "--sync", str(x), str(y), "click", "1"],
@@ -190,15 +210,26 @@ def handle_input():
                 value = str(data.get("value", ""))
                 if value:
                     subprocess.run(
-                        ["xdotool", "type", "--delay", "30", value],
-                        timeout=5,
+                        ["xdotool", "type", "--delay", "25", "--", value],
+                        timeout=8,
                         check=False
                     )
-                if data.get("enter") is True:
+                time.sleep(0.08)
+                submit = data.get("submit")
+                if submit == "f2" or data.get("f2") is True:
+                    subprocess.run(["xdotool", "key", "F2"], timeout=2, check=False)
+                elif submit == "enter" or data.get("enter") is True:
                     subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
 
+            elif action == "clear_text":
+                # Clear all characters in the active text box
+                subprocess.run(
+                    ["xdotool", "key", "--repeat", "35", "--delay", "10", "BackSpace"],
+                    timeout=3,
+                    check=False
+                )
+
             elif action == "anti_stuck":
-                # Click center of OK button on modal dialogs & send Return/space (NO F2 to avoid exit)
                 ok_y = 245 + MENU_BAR_OFFSET
                 subprocess.run(["xdotool", "mousemove", "--sync", "120", str(ok_y), "click", "1"], timeout=2, check=False)
                 subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
@@ -226,11 +257,12 @@ def handle_quick_cmd():
 
     try:
         with x11_lock:
+            focus_game_window()
             # 1. Open chat in NRO (Press Return)
             subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
             time.sleep(0.12)
             # 2. Type command
-            subprocess.run(["xdotool", "type", "--delay", "25", cmd], timeout=3, check=False)
+            subprocess.run(["xdotool", "type", "--delay", "25", "--", cmd], timeout=3, check=False)
             time.sleep(0.12)
             # 3. Submit command (Press Return)
             subprocess.run(["xdotool", "key", "Return"], timeout=2, check=False)
@@ -245,9 +277,7 @@ def restart_game():
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
 
     try:
-        # Forcefully kill any running microemulator process
         subprocess.run(["pkill", "-9", "-f", "microemulator"], timeout=5, check=False)
-        # Restart supervisor program to spawn fresh session
         subprocess.run(["supervisorctl", "restart", "emulator"], timeout=10, check=False)
         return jsonify({"status": "ok", "message": "Đã khởi động lại game thành công!"})
     except Exception as e:
@@ -289,7 +319,6 @@ def upload_rom():
     dest_path = "/app/roms/NRO.jar"
     f.save(dest_path)
 
-    # Forcefully kill and restart emulator
     subprocess.run(["pkill", "-9", "-f", "microemulator"], check=False)
     subprocess.run(["supervisorctl", "restart", "emulator"], check=False)
 

@@ -228,6 +228,48 @@
                     </button>
                 </div>
 
+                <!-- Dedicated Game Text / Account / Password Input -->
+                <div class="w-full max-w-[288px] sm:max-w-[340px] bg-slate-900/90 border border-indigo-500/30 rounded-xl p-2.5 flex flex-col gap-2 shadow-lg">
+                    <div class="flex items-center justify-between text-[11px] font-bold text-indigo-300">
+                        <span class="flex items-center gap-1.5">
+                            <i class="fa-solid fa-keyboard text-indigo-400"></i>
+                            <span>Gõ Tài Khoản / Mật Khẩu</span>
+                        </span>
+                        <span class="text-[9px] text-slate-400">Nhập trực tiếp vào game</span>
+                    </div>
+
+                    <!-- Input field with eye mask & Send button -->
+                    <div class="flex items-center gap-1.5">
+                        <div class="relative flex-1">
+                            <input type="text" id="input-game-text" placeholder="Gõ tài khoản, mật khẩu, email..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+                                class="w-full bg-slate-950 border border-white/15 rounded-lg pl-2.5 pr-8 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 font-mono">
+                            <button type="button" id="btn-toggle-mask" class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs" title="Ẩn / Hiện mật khẩu">
+                                <i class="fa-solid fa-eye" id="icon-mask"></i>
+                            </button>
+                        </div>
+                        <button id="btn-send-text" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-bold text-xs rounded-lg flex items-center gap-1 shadow-md shadow-indigo-600/30 whitespace-nowrap" title="Gõ nội dung này vào ô nhập trong game">
+                            <i class="fa-solid fa-paper-plane text-[10px]"></i>
+                            <span>Gõ</span>
+                        </button>
+                    </div>
+
+                    <!-- Action controls for TextBox dialog -->
+                    <div class="grid grid-cols-4 gap-1.5 text-[11px]">
+                        <button id="btn-text-paste" class="py-1 px-1 rounded bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 font-medium flex items-center justify-center gap-1 border border-white/5" title="Dán nội dung từ Clipboard">
+                            <i class="fa-solid fa-paste text-[10px] text-amber-400"></i> <span>Dán</span>
+                        </button>
+                        <button id="btn-text-ok" class="py-1 px-1 rounded bg-emerald-600/30 hover:bg-emerald-600/50 active:scale-95 text-emerald-300 font-bold flex items-center justify-center gap-1 border border-emerald-500/30" title="Bấm OK (Phím F2) để xác nhận">
+                            <i class="fa-solid fa-check text-[10px]"></i> <span>Xong (OK)</span>
+                        </button>
+                        <button id="btn-text-clear" class="py-1 px-1 rounded bg-rose-500/20 hover:bg-rose-500/40 active:scale-95 text-rose-300 font-medium flex items-center justify-center gap-1 border border-rose-500/30" title="Xóa toàn bộ ký tự trong ô">
+                            <i class="fa-solid fa-eraser text-[10px]"></i> <span>Xóa hết</span>
+                        </button>
+                        <button id="btn-text-cancel" class="py-1 px-1 rounded bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-400 font-medium flex items-center justify-center gap-1 border border-white/5" title="Hủy bỏ (Phím F1)">
+                            <i class="fa-solid fa-xmark text-[10px]"></i> <span>Hủy</span>
+                        </button>
+                    </div>
+                </div>
+
                 <!-- NRO Mod Quick Actions (Inspired by upnro.pro) -->
                 <div class="w-full max-w-[288px] sm:max-w-[340px] bg-slate-900/80 border border-white/10 rounded-xl p-2.5 flex flex-col gap-2">
                     <div class="flex items-center justify-between text-[11px] font-semibold text-slate-300">
@@ -285,11 +327,11 @@
 
                 <!-- Soft Keys (F1, F2) -->
                 <div class="grid grid-cols-2 gap-2">
-                    <button class="key-btn py-2 text-xs text-indigo-300" data-key="f1">
-                        <i class="fa-solid fa-caret-left mr-1"></i> Chọn Trái (F1)
+                    <button class="key-btn py-2 text-xs text-indigo-300" data-key="f1" title="Phím Chọn Trái (Hủy / Menu)">
+                        <i class="fa-solid fa-caret-left mr-1"></i> Trái (F1 / Hủy)
                     </button>
-                    <button class="key-btn py-2 text-xs text-indigo-300" data-key="f2">
-                        Chọn Phải (F2) <i class="fa-solid fa-caret-right ml-1"></i>
+                    <button class="key-btn py-2 text-xs text-indigo-300" data-key="f2" title="Phím Chọn Phải (OK / Đóng)">
+                        Phải (F2 / OK) <i class="fa-solid fa-caret-right ml-1"></i>
                     </button>
                 </div>
 
@@ -726,6 +768,73 @@
             });
             btnReloadLogs.addEventListener('click', loadLogs);
 
+            // Dedicated Game Text / Account / Password Handler
+            const inputGameText = document.getElementById('input-game-text');
+            const btnSendText = document.getElementById('btn-send-text');
+            const btnToggleMask = document.getElementById('btn-toggle-mask');
+            const iconMask = document.getElementById('icon-mask');
+            const btnTextPaste = document.getElementById('btn-text-paste');
+            const btnTextOk = document.getElementById('btn-text-ok');
+            const btnTextClear = document.getElementById('btn-text-clear');
+            const btnTextCancel = document.getElementById('btn-text-cancel');
+
+            // Toggle password mask
+            btnToggleMask.addEventListener('click', () => {
+                if (inputGameText.type === 'text') {
+                    inputGameText.type = 'password';
+                    iconMask.className = 'fa-solid fa-eye-slash';
+                } else {
+                    inputGameText.type = 'text';
+                    iconMask.className = 'fa-solid fa-eye';
+                }
+            });
+
+            // Send text to game
+            function handleSendGameText() {
+                const text = inputGameText.value;
+                if (!text) return;
+                sendInput({ action: 'text', value: text }).then(() => {
+                    inputGameText.value = '';
+                });
+            }
+            btnSendText.addEventListener('click', handleSendGameText);
+            inputGameText.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleSendGameText();
+                }
+            });
+
+            // Paste from clipboard
+            btnTextPaste.addEventListener('click', () => {
+                if (navigator.clipboard && navigator.clipboard.readText) {
+                    navigator.clipboard.readText().then(clip => {
+                        if (clip) inputGameText.value = clip;
+                    }).catch(() => {
+                        const manual = prompt("Dán tài khoản / mật khẩu vào đây:");
+                        if (manual) inputGameText.value = manual;
+                    });
+                } else {
+                    const manual = prompt("Dán tài khoản / mật khẩu vào đây:");
+                    if (manual) inputGameText.value = manual;
+                }
+            });
+
+            // TextBox OK (F2 in J2ME LCDUI)
+            btnTextOk.addEventListener('click', () => {
+                sendInput({ action: 'key', value: 'f2' });
+            });
+
+            // Clear text in active game text box
+            btnTextClear.addEventListener('click', () => {
+                sendInput({ action: 'clear_text' });
+            });
+
+            // Cancel / Hủy (F1 in J2ME LCDUI)
+            btnTextCancel.addEventListener('click', () => {
+                sendInput({ action: 'key', value: 'f1' });
+            });
+
             // Keyboard Pass-through (Desktop users)
             window.addEventListener('keydown', (e) => {
                 if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
@@ -738,14 +847,20 @@
                     'Enter': 'ok',
                     'F1': 'f1',
                     'F2': 'f2',
+                    'Escape': 'f1',
                     'Backspace': 'backspace',
-                    ' ': 'ok'
+                    'Tab': 'Tab'
                 };
 
                 if (keyMap[e.key]) {
                     e.preventDefault();
                     sendInput({ action: 'key', value: keyMap[e.key] });
-                } else if (/^[0-9]$/.test(e.key)) {
+                    return;
+                }
+
+                // Any printable single character (letters a-z, A-Z, numbers 0-9, space, symbols @ . _ - etc.)
+                if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                    e.preventDefault();
                     sendInput({ action: 'key', value: e.key });
                 }
             });
