@@ -522,10 +522,14 @@ def handle_input():
                 safe_run(cmd, timeout=3)
 
             elif action == "anti_stuck":
-                ok_y = 245 + MENU_BAR_OFFSET
-                safe_run(["xdotool", "mousemove", "120", str(ok_y), "click", "1"], timeout=2)
-                safe_run(["xdotool", "key", "Return"], timeout=2)
-                safe_run(["xdotool", "key", "space"], timeout=2)
+                # Đóng mọi hộp thoại đang mở: hộp thoại chat (80, 274), thông báo giữa (120, 245), thông báo dưới (120, 285)
+                safe_run(["xdotool", "mousemove", "80", str(274 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                safe_run(["xdotool", "mousemove", "120", str(245 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                safe_run(["xdotool", "mousemove", "120", str(285 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                safe_run(["xdotool", "key", "Return"], timeout=1)
+                safe_run(["xdotool", "key", "space"], timeout=1)
+                safe_run(["xdotool", "key", "F1"], timeout=1)
+                safe_run(["xdotool", "key", "Escape"], timeout=1)
 
             else:
                 return jsonify({"error": "Invalid action"}), 400
@@ -536,6 +540,20 @@ def handle_input():
         return jsonify({"error": "Action timed out"}), 504
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+def is_chat_box_open():
+    """Kiểm tra xem hộp thoại Chat có đang mở trên màn hình game hay không."""
+    try:
+        im = ImageGrab.grab(bbox=(0, MENU_BAR_OFFSET, SCREEN_WIDTH, MENU_BAR_OFFSET + SCREEN_HEIGHT))
+        if im is not None:
+            im = im.convert('RGB')
+            # Nút OK tại (80, 274) có màu cam đặc trưng (r > 190, 100 < g < 185, b < 100)
+            r, g, b = im.getpixel((80, 274))[:3]
+            if r > 190 and 100 < g < 185 and b < 100:
+                return True
+    except Exception:
+        pass
+    return False
 
 @app.route('/api/quick_cmd', methods=['POST'])
 def handle_quick_cmd():
@@ -553,34 +571,50 @@ def handle_quick_cmd():
         with x11_lock:
             wid = focus_game_window()
             for c in cmds:
-                # 1. Mở khung chat trong game bằng phím Return
-                cmd_open = ["xdotool", "key", "Return"]
-                if wid:
-                    cmd_open = ["xdotool", "key", "--window", wid, "Return"]
-                safe_run(cmd_open, timeout=2)
-                time.sleep(0.28)
+                # 1. Đảm bảo mở khung chat
+                chat_open = is_chat_box_open()
+                if not chat_open:
+                    cmd_open = ["xdotool", "key", "Return"]
+                    if wid:
+                        cmd_open = ["xdotool", "key", "--window", wid, "Return"]
+                    safe_run(cmd_open, timeout=2)
+                    time.sleep(0.25)
 
-                # 2. Xóa sạch chữ cũ còn sót trong ô chat
+                # 2. Xóa sạch mọi ký tự cũ còn tồn trong ô chat
+                # Click nút đỏ (X) tại (211, 246) và gửi BackSpace
+                cmd_click_clear = ["xdotool", "mousemove", "211", str(246 + MENU_BAR_OFFSET), "click", "1"]
+                safe_run(cmd_click_clear, timeout=1)
+                time.sleep(0.08)
+
                 cmd_clear = ["xdotool", "key", "--repeat", "30", "--delay", "6", "BackSpace"]
                 if wid:
                     cmd_clear = ["xdotool", "key", "--window", wid, "--repeat", "30", "--delay", "6", "BackSpace"]
-                safe_run(cmd_clear, timeout=2)
+                safe_run(cmd_clear, timeout=1)
                 time.sleep(0.08)
 
-                # 3. Gõ lệnh mod
+                # 3. Gõ lệnh mod chính xác
                 cmd_type = ["xdotool", "type", "--delay", "25", "--", c]
                 if wid:
                     cmd_type = ["xdotool", "type", "--window", wid, "--delay", "25", "--", c]
                 safe_run(cmd_type, timeout=3)
                 time.sleep(0.18)
 
-                # 4. Xác nhận gửi lệnh: Click nút OK màu cam trên hộp thoại Chat (x=81, y=337)
-                cmd_click_ok = ["xdotool", "mousemove", "81", str(337 + MENU_BAR_OFFSET), "click", "1"]
+                # 4. Xác nhận gửi lệnh: Click nút [ OK ] màu cam chuẩn xác tại (80, 274)
+                # Tọa độ thực trên X11: x = 80, y = 274 + MENU_BAR_OFFSET (298)
+                cmd_click_ok = ["xdotool", "mousemove", "80", str(274 + MENU_BAR_OFFSET), "click", "1"]
                 safe_run(cmd_click_ok, timeout=2)
                 time.sleep(0.1)
+
+                # Gửi thêm Return và F2 để đảm bảo mọi chế độ input đều kích hoạt OK
                 safe_run(["xdotool", "key", "Return"], timeout=1)
-                # Chờ khung chat đóng hẳn trước khi gõ lệnh tiếp theo
-                time.sleep(0.4)
+                safe_run(["xdotool", "key", "F2"], timeout=1)
+
+                # 5. Chờ khung chat đóng hẳn trước khi gõ lệnh tiếp theo
+                time.sleep(0.35)
+                # Nếu khung chat vẫn chưa đóng (do game lag), click lại OK
+                if is_chat_box_open():
+                    safe_run(cmd_click_ok, timeout=1)
+                    time.sleep(0.2)
 
         return jsonify({"status": "ok", "sent_cmd": raw_cmd, "executed": cmds})
     except Exception as e:
@@ -626,24 +660,41 @@ def dismiss_error_popup_if_any():
 # J2ME Record Management System (RMS) - Quản lý Tài khoản & Máy chủ Tự Động
 # =========================================================================
 
+def get_all_suite_dirs():
+    """
+    Trả về danh sách tất cả các thư mục suite RMS của MicroEmulator để đảm bảo ghi đúng 100%.
+    Bao gồm suite-Dragonboy250 v3.0, suite-null, và tất cả thư mục suite-* hiện có.
+    """
+    base_dirs = ["/root/.microemulator", os.path.expanduser("~/.microemulator")]
+    home = os.environ.get("HOME")
+    if home:
+        base_dirs.append(os.path.join(home, ".microemulator"))
+
+    suite_dirs = set()
+    for base in base_dirs:
+        try:
+            if os.path.exists(base):
+                for name in os.listdir(base):
+                    if name.startswith("suite-"):
+                        suite_dirs.add(os.path.join(base, name))
+            suite_dirs.add(os.path.join(base, "suite-Dragonboy250 v3.0"))
+            suite_dirs.add(os.path.join(base, "suite-null"))
+        except Exception:
+            pass
+
+    if not suite_dirs:
+        suite_dirs.add("/root/.microemulator/suite-Dragonboy250 v3.0")
+
+    for d in suite_dirs:
+        try:
+            os.makedirs(d, exist_ok=True)
+        except Exception:
+            pass
+    return list(suite_dirs)
+
 def get_rms_suite_dir():
-    """
-    Trả về thư mục lưu trữ file .rs nhị phân của MicroEmulator cho suite 'Dragonboy250 v3.0'.
-    Hỗ trợ container Render (/root/.microemulator) và môi trường cục bộ.
-    """
-    home = os.environ.get("HOME", "/root")
-    candidates = [
-        "/root/.microemulator/suite-Dragonboy250 v3.0",
-        os.path.join(home, ".microemulator", "suite-Dragonboy250 v3.0"),
-        os.path.join(os.path.expanduser("~"), ".microemulator", "suite-Dragonboy250 v3.0"),
-    ]
-    for c in candidates:
-        parent = os.path.dirname(c)
-        if os.path.exists(parent):
-            os.makedirs(c, exist_ok=True)
-            return c
-    os.makedirs(candidates[0], exist_ok=True)
-    return candidates[0]
+    dirs = get_all_suite_dirs()
+    return dirs[0] if dirs else "/root/.microemulator/suite-Dragonboy250 v3.0"
 
 def make_rs_bytes(store_name, records):
     """
@@ -715,57 +766,65 @@ def write_rms_account(username, password="", server_num=0):
     - vjpass.rs: mật khẩu (password)
     - vjcheck.rs: ghi nhớ tài khoản (1)
     - vjsvselect.rs: máy chủ đã chọn (server_num - 1)
+    Ghi đồng bộ vào tất cả các thư mục suite RMS để đảm bảo emulator luôn nhận diện 100%.
     """
-    suite_dir = get_rms_suite_dir()
-    os.makedirs(suite_dir, exist_ok=True)
-
     clean_user = username.strip().lower()
     clean_pass = password.strip()
 
-    # 1. Ghi vjacc.rs (Tài khoản)
-    acc_path = os.path.join(suite_dir, "vjacc.rs")
-    with open(acc_path, "wb") as f:
-        f.write(make_rs_bytes("vjacc", {1: clean_user}))
-
-    # 2. Ghi vjpass.rs (Mật khẩu)
-    if clean_pass:
-        pass_path = os.path.join(suite_dir, "vjpass.rs")
-        with open(pass_path, "wb") as f:
-            f.write(make_rs_bytes("vjpass", {1: clean_pass}))
-
-    # 3. Ghi vjcheck.rs (Ghi nhớ: 1)
-    check_path = os.path.join(suite_dir, "vjcheck.rs")
-    with open(check_path, "wb") as f:
-        f.write(make_rs_bytes("vjcheck", {1: 1}))
-
-    # 4. Ghi vjsvselect.rs (Máy chủ: 0 = Vũ trụ 1 ... 6 = Vũ trụ 7)
+    bytes_acc = make_rs_bytes("vjacc", {1: clean_user})
+    bytes_pass = make_rs_bytes("vjpass", {1: clean_pass}) if clean_pass else None
+    bytes_check = make_rs_bytes("vjcheck", {1: 1})
+    bytes_sv = None
     if server_num and int(server_num) > 0:
         sv_idx = max(0, min(13, int(server_num) - 1))
-        sv_path = os.path.join(suite_dir, "vjsvselect.rs")
-        with open(sv_path, "wb") as f:
-            f.write(make_rs_bytes("vjsvselect", {1: sv_idx}))
+        bytes_sv = make_rs_bytes("vjsvselect", {1: sv_idx})
 
-    print(f"[RMS] Đã ghi cấu hình thành công: user='{clean_user}', server={server_num} tại {suite_dir}")
+    suite_dirs = get_all_suite_dirs()
+    for sdir in suite_dirs:
+        try:
+            os.makedirs(sdir, exist_ok=True)
+            # 1. Ghi vjacc.rs
+            with open(os.path.join(sdir, "vjacc.rs"), "wb") as f:
+                f.write(bytes_acc)
+            # 2. Ghi vjpass.rs (nếu có pass)
+            if bytes_pass:
+                with open(os.path.join(sdir, "vjpass.rs"), "wb") as f:
+                    f.write(bytes_pass)
+            # 3. Ghi vjcheck.rs (luôn là 1)
+            with open(os.path.join(sdir, "vjcheck.rs"), "wb") as f:
+                f.write(bytes_check)
+            # 4. Ghi vjsvselect.rs (nếu có chọn server)
+            if bytes_sv:
+                with open(os.path.join(sdir, "vjsvselect.rs"), "wb") as f:
+                    f.write(bytes_sv)
+            print(f"[RMS] Đã ghi cấu hình thành công tại: {sdir}")
+        except Exception as e:
+            print(f"[RMS] Lỗi ghi cấu hình tại {sdir}: {e}")
+
     return True
 
 def read_rms_saved_info():
     """Đọc thông tin tài khoản và máy chủ hiện được lưu trong RMS của game."""
     try:
-        suite_dir = get_rms_suite_dir()
-        acc_path = os.path.join(suite_dir, "vjacc.rs")
-        sv_path = os.path.join(suite_dir, "vjsvselect.rs")
-
+        suite_dirs = get_all_suite_dirs()
         user = ""
         server = 7
-        if os.path.exists(acc_path):
-            _, recs = read_rs_records(acc_path)
-            if 1 in recs:
-                user = recs[1].decode('utf-8', errors='ignore')
+        for sdir in suite_dirs:
+            acc_path = os.path.join(sdir, "vjacc.rs")
+            sv_path = os.path.join(sdir, "vjsvselect.rs")
 
-        if os.path.exists(sv_path):
-            _, recs = read_rs_records(sv_path)
-            if 1 in recs and len(recs[1]) > 0:
-                server = int(recs[1][0]) + 1
+            if not user and os.path.exists(acc_path):
+                _, recs = read_rs_records(acc_path)
+                if 1 in recs:
+                    user = recs[1].decode('utf-8', errors='ignore')
+
+            if os.path.exists(sv_path):
+                _, recs = read_rs_records(sv_path)
+                if 1 in recs and len(recs[1]) > 0:
+                    server = int(recs[1][0]) + 1
+
+            if user:
+                break
 
         return {"username": user, "server": server, "has_saved": bool(user)}
     except Exception as e:

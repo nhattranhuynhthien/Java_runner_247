@@ -55,13 +55,8 @@ except Exception:
     # Vòng lặp giữ game chạy 24/7 (tự hồi sinh game nếu thoát ra đổi cấu hình hoặc mất mạng)
     while true; do
         echo "[EMU] Bắt đầu phiên chạy game (Tối ưu Java2D siêu mượt)..."
-        if [ -n "$MIDLET_CLASS" ]; then
-            echo "[EMU] Khởi chạy trực tiếp MIDlet: $MIDLET_CLASS (--quit mode)"
-            java -Xmx220m -Xms96m -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Dsun.java2d.opengl=false -Dsun.java2d.pmoffscreen=false -Dsun.java2d.xrender=false -jar /app/microemulator.jar --quit --appclasspath "$JAR_FILE" "$MIDLET_CLASS" || true
-        else
-            echo "[EMU] Khởi chạy file JAR mặc định (--quit mode)..."
-            java -Xmx220m -Xms96m -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Dsun.java2d.opengl=false -Dsun.java2d.pmoffscreen=false -Dsun.java2d.xrender=false -jar /app/microemulator.jar --quit "$JAR_FILE" || true
-        fi
+        echo "[EMU] Khởi chạy game từ file JAR: $JAR_FILE (--quit mode)..."
+        java -Xmx220m -Xms96m -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Dsun.java2d.opengl=false -Dsun.java2d.pmoffscreen=false -Dsun.java2d.xrender=false -jar /app/microemulator.jar --quit "$JAR_FILE" || true
         echo "[EMU] Game đã thoát (do đổi cấu hình hoặc tắt). Tự động khởi động lại sau 1 giây..."
         sleep 1
     done
