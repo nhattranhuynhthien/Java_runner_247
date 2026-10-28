@@ -52,6 +52,9 @@ except Exception:
     pass
 " 2>/dev/null)
 
+    # Cấu hình bàn phím chuẩn US cho Xvfb để hỗ trợ đầy đủ các ký tự đặc biệt (@, ., ...)
+    setxkbmap -display :1 -layout us 2>/dev/null || true
+
     # Vòng lặp giữ game chạy 24/7 (tự hồi sinh game nếu thoát ra đổi cấu hình hoặc mất mạng)
     while true; do
         echo "[EMU] Bắt đầu phiên chạy game (Tối ưu Java2D siêu mượt)..."

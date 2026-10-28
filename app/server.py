@@ -452,6 +452,58 @@ def server_status():
         "saved_account": read_rms_saved_info()
     })
 
+def type_text_reliably(value, wid=None):
+    """
+    Nhập văn bản vào game một cách tin cậy 100%:
+    - Ưu tiên dán trực tiếp qua X11 Clipboard (Ctrl+V) để giữ nguyên vẹn ký tự @, số, ký tự đặc biệt.
+    - Fallback: tách ký tự @ thành tổ hợp phím shift+2 để tránh lỗi xdotool nuốt mất @ trong Xvfb.
+    """
+    if not value:
+        return
+
+    # Cách 1: Clipboard paste (Ctrl+V) - MicroEmulator hỗ trợ native trong TextBox
+    pasted = False
+    for tool in [["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]]:
+        try:
+            p = subprocess.Popen(tool, stdin=subprocess.PIPE, env=dict(os.environ, DISPLAY=":1"))
+            p.communicate(input=value.encode('utf-8'), timeout=2)
+            if p.returncode == 0:
+                pasted = True
+                break
+        except Exception:
+            pass
+
+    if pasted:
+        time.sleep(0.06)
+        cmd_paste = ["xdotool", "key", "ctrl+v"]
+        if wid:
+            cmd_paste = ["xdotool", "key", "--window", wid, "ctrl+v"]
+        safe_run(cmd_paste, timeout=2)
+        return
+
+    # Cách 2: Gõ bằng xdotool (xử lý riêng ký tự @ bằng phím shift+2)
+    if "@" in value:
+        parts = value.split("@")
+        for i, part in enumerate(parts):
+            if part:
+                cmd = ["xdotool", "type", "--delay", "20", "--", part]
+                if wid:
+                    cmd = ["xdotool", "type", "--window", wid, "--delay", "20", "--", part]
+                safe_run(cmd, timeout=5)
+                time.sleep(0.04)
+            if i < len(parts) - 1:
+                # Gõ phím @ chuẩn xác bằng Shift + 2
+                cmd_at = ["xdotool", "key", "shift+2"]
+                if wid:
+                    cmd_at = ["xdotool", "key", "--window", wid, "shift+2"]
+                safe_run(cmd_at, timeout=2)
+                time.sleep(0.04)
+    else:
+        cmd = ["xdotool", "type", "--delay", "20", "--", value]
+        if wid:
+            cmd = ["xdotool", "type", "--window", wid, "--delay", "20", "--", value]
+        safe_run(cmd, timeout=8)
+
 @app.route('/api/input', methods=['POST'])
 def handle_input():
     if not check_pin(request):
@@ -497,10 +549,7 @@ def handle_input():
             elif action == "text":
                 value = str(data.get("value", ""))
                 if value:
-                    cmd = ["xdotool", "type", "--delay", "20", "--", value]
-                    if wid:
-                        cmd = ["xdotool", "type", "--window", wid, "--delay", "20", "--", value]
-                    safe_run(cmd, timeout=8)
+                    type_text_reliably(value, wid=wid)
                 time.sleep(0.08)
                 submit = data.get("submit")
                 if submit == "f2" or data.get("f2") is True:

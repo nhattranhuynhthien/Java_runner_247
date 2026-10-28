@@ -12,11 +12,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     ADMIN_PIN=1234 \
     DISPLAY=:1
 
-# Install OpenJDK 8, Xvfb, xdotool, Python3, Supervisor, and X11 graphics libs
+# Install OpenJDK 8, Xvfb, xdotool, xclip, xsel, Python3, Supervisor, and X11 graphics libs
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openjdk-8-jre \
     xvfb \
     xdotool \
+    xclip \
+    xsel \
+    x11-xkb-utils \
     python3 \
     python3-pip \
     python3-pil \
