@@ -522,8 +522,9 @@ def handle_input():
                 safe_run(cmd, timeout=3)
 
             elif action == "anti_stuck":
-                # Đóng mọi hộp thoại đang mở: hộp thoại chat (80, 274), thông báo giữa (120, 245), thông báo dưới (120, 285)
+                # Đóng mọi hộp thoại đang mở: hộp thoại chat (80, 274), thông báo giữa (120, 245/255), thông báo dưới (120, 285)
                 safe_run(["xdotool", "mousemove", "80", str(274 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                safe_run(["xdotool", "mousemove", "120", str(255 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
                 safe_run(["xdotool", "mousemove", "120", str(245 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
                 safe_run(["xdotool", "mousemove", "120", str(285 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
                 safe_run(["xdotool", "key", "Return"], timeout=1)
@@ -641,20 +642,31 @@ def get_menu_layout():
     return 4
 
 def dismiss_error_popup_if_any():
-    """Tự động phát hiện và đóng hộp thoại thông báo (nền giấy vàng) nếu đang xuất hiện."""
+    """Tự động phát hiện và đóng hộp thoại thông báo nếu đang xuất hiện."""
     try:
         im = ImageGrab.grab(bbox=(0, MENU_BAR_OFFSET, SCREEN_WIDTH, MENU_BAR_OFFSET + SCREEN_HEIGHT))
         if im is not None:
             im = im.convert('RGB')
-            # Pixel ở vùng thân hộp thoại (120, 220)
-            r, g, b = im.getpixel((120, 220))[:3]
-            if r > 200 and g > 200 and b > 170:
-                # Bấm nút OK của thông báo tại (120, 285)
+            # Kiểm tra nút Đóng/OK màu cam tại (120, 255)
+            r, g, b = im.getpixel((120, 255))[:3]
+            if r > 180 and 100 < g < 185 and b < 100:
+                cmd = ["xdotool", "mousemove", "120", str(255 + MENU_BAR_OFFSET), "click", "1"]
+                safe_run(cmd, timeout=1)
+                safe_run(["xdotool", "key", "Return"], timeout=1)
+                time.sleep(0.3)
+                return True
+
+            # Thân hộp thoại nền giấy vàng tại (120, 220)
+            r2, g2, b2 = im.getpixel((120, 220))[:3]
+            if r2 > 200 and g2 > 200 and b2 > 170:
                 cmd = ["xdotool", "mousemove", "120", str(285 + MENU_BAR_OFFSET), "click", "1"]
-                safe_run(cmd, timeout=2)
-                time.sleep(0.35)
+                safe_run(cmd, timeout=1)
+                safe_run(["xdotool", "key", "Return"], timeout=1)
+                time.sleep(0.3)
+                return True
     except Exception as e:
         print(f"[POPUP] Lỗi kiểm tra popup: {e}")
+    return False
 
 # =========================================================================
 # J2ME Record Management System (RMS) - Quản lý Tài khoản & Máy chủ Tự Động
