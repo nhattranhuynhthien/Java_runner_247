@@ -8,6 +8,7 @@ import json
 import hmac
 import hashlib
 import secrets
+import struct
 from datetime import timedelta
 from flask import Flask, render_template, request, Response, jsonify, session, redirect, url_for
 from PIL import Image, ImageGrab
@@ -447,7 +448,8 @@ def server_status():
         "emulator_running": emu_running,
         "server_socket_online": check_nro_socket(),
         "ram": get_ram_info(),
-        "rom": rom_info
+        "rom": rom_info,
+        "saved_account": read_rms_saved_info()
     })
 
 @app.route('/api/input', methods=['POST'])
@@ -620,49 +622,193 @@ def dismiss_error_popup_if_any():
     except Exception as e:
         print(f"[POPUP] Lỗi kiểm tra popup: {e}")
 
-def execute_server_selection(server_num, wid=None):
+# =========================================================================
+# J2ME Record Management System (RMS) - Quản lý Tài khoản & Máy chủ Tự Động
+# =========================================================================
+
+def get_rms_suite_dir():
     """
-    Thực hiện chọn Máy chủ trong Ngọc Rồng Online theo đúng luồng UI game:
-    1. Đóng thông báo lỗi nếu có
-    2. Click nút 'Máy chủ' trên Menu chính
-    3. Click xác nhận 'VIỆT NAM' (nút OK tại 120, 240 hoặc nút VIỆT NAM tại 70, 172)
-    4. Click chọn server mục tiêu trong danh sách
+    Trả về thư mục lưu trữ file .rs nhị phân của MicroEmulator cho suite 'Dragonboy250 v3.0'.
+    Hỗ trợ container Render (/root/.microemulator) và môi trường cục bộ.
     """
-    def do_click(x, y):
-        cmd = ["xdotool", "mousemove", str(x), str(y + MENU_BAR_OFFSET), "click", "1"]
-        safe_run(cmd, timeout=2)
+    home = os.environ.get("HOME", "/root")
+    candidates = [
+        "/root/.microemulator/suite-Dragonboy250 v3.0",
+        os.path.join(home, ".microemulator", "suite-Dragonboy250 v3.0"),
+        os.path.join(os.path.expanduser("~"), ".microemulator", "suite-Dragonboy250 v3.0"),
+    ]
+    for c in candidates:
+        parent = os.path.dirname(c)
+        if os.path.exists(parent):
+            os.makedirs(c, exist_ok=True)
+            return c
+    os.makedirs(candidates[0], exist_ok=True)
+    return candidates[0]
 
-    # 1. Đóng thông báo nếu có
-    dismiss_error_popup_if_any()
+def make_rs_bytes(store_name, records):
+    """
+    Tạo nội dung file .rs nhị phân MicroEmulator 2.0.4 tương thích 100%:
+    - 2 bytes unsigned short (big-endian): độ dài tên store
+    - tên store UTF-8 bytes
+    - 4 bytes int (big-endian): version (1)
+    - 8 bytes long (big-endian): lastModified (epoch ms)
+    - 4 bytes int (big-endian): nextRecordID
+    - Lặp từng record:
+        - 4 bytes int: recordId
+        - 4 bytes int: length
+        - raw data bytes
+    """
+    name_bytes = store_name.encode('utf-8')
+    buf = bytearray()
+    buf += struct.pack('>H', len(name_bytes))
+    buf += name_bytes
+    version = 1
+    last_modified = int(time.time() * 1000)
+    next_rec_id = max(records.keys(), default=0) + 1
+    buf += struct.pack('>i', version)
+    buf += struct.pack('>q', last_modified)
+    buf += struct.pack('>i', next_rec_id)
+    for rec_id, rec_data in records.items():
+        if isinstance(rec_data, str):
+            rec_data = rec_data.encode('utf-8')
+        elif isinstance(rec_data, int):
+            rec_data = bytes([rec_data])
+        buf += struct.pack('>i', rec_id)
+        buf += struct.pack('>i', len(rec_data))
+        buf += rec_data
+    return bytes(buf)
 
-    # 2. Bấm nút 'Máy chủ' trên menu chính
-    layout = get_menu_layout()
-    y_maychu = 232 if layout == 5 else 217
-    do_click(120, y_maychu)
-    time.sleep(0.6)
+def read_rs_records(filepath):
+    """Đọc cấu trúc file .rs của MicroEmulator trả về (store_name, {id: bytes})."""
+    if not os.path.exists(filepath):
+        return None, {}
+    try:
+        with open(filepath, 'rb') as f:
+            data = f.read()
+        if len(data) < 18:
+            return None, {}
+        offset = 0
+        name_len = struct.unpack_from('>H', data, offset)[0]
+        offset += 2
+        store_name = data[offset:offset+name_len].decode('utf-8', errors='ignore')
+        offset += name_len
+        version, last_mod, next_id = struct.unpack_from('>iqi', data, offset)
+        offset += 16
+        records = {}
+        while offset + 8 <= len(data):
+            rec_id, rec_len = struct.unpack_from('>ii', data, offset)
+            offset += 8
+            if offset + rec_len <= len(data):
+                records[rec_id] = data[offset:offset+rec_len]
+                offset += rec_len
+            else:
+                break
+        return store_name, records
+    except Exception as e:
+        print(f"[RMS] Lỗi đọc file {filepath}: {e}")
+        return None, {}
 
-    # 3. Xác nhận chọn 'VIỆT NAM' để mở bảng danh sách server:
-    # Trên màn hình chọn khu vực: Nút OK nằm ở tâm (120, 240)
-    do_click(120, 240)
-    safe_run(["xdotool", "key", "Return"], timeout=1)
-    safe_run(["xdotool", "key", "space"], timeout=1)
-    # Hỗ trợ trường hợp giao diện 2 nút ngang (VIỆT NAM / GLOBAL)
-    do_click(70, 172)
-    time.sleep(0.7)
+def write_rms_account(username, password="", server_num=0):
+    """
+    Ghi trực tiếp tài khoản, mật khẩu và máy chủ vào RecordStore RMS của game NRO:
+    - vjacc.rs: tài khoản (username lowercase trim)
+    - vjpass.rs: mật khẩu (password)
+    - vjcheck.rs: ghi nhớ tài khoản (1)
+    - vjsvselect.rs: máy chủ đã chọn (server_num - 1)
+    """
+    suite_dir = get_rms_suite_dir()
+    os.makedirs(suite_dir, exist_ok=True)
 
-    # 4. Click chọn Server trong danh sách:
-    # Server 1: y = 93
-    # Server 2: y = 131, Server 3: 162, Server 4: 193, Server 5: 224, Server 6: 255, Server 7: 286, Server 8: 317, Server 9+: min(343, ...)
-    s_idx = max(1, min(13, int(server_num)))
-    if s_idx == 1:
-        y_srv = 93
-    elif s_idx <= 8:
-        y_srv = 131 + (s_idx - 2) * 31
-    else:
-        y_srv = min(343, 131 + (s_idx - 2) * 31)
+    clean_user = username.strip().lower()
+    clean_pass = password.strip()
 
-    do_click(164, y_srv)
-    time.sleep(0.8)
+    # 1. Ghi vjacc.rs (Tài khoản)
+    acc_path = os.path.join(suite_dir, "vjacc.rs")
+    with open(acc_path, "wb") as f:
+        f.write(make_rs_bytes("vjacc", {1: clean_user}))
+
+    # 2. Ghi vjpass.rs (Mật khẩu)
+    if clean_pass:
+        pass_path = os.path.join(suite_dir, "vjpass.rs")
+        with open(pass_path, "wb") as f:
+            f.write(make_rs_bytes("vjpass", {1: clean_pass}))
+
+    # 3. Ghi vjcheck.rs (Ghi nhớ: 1)
+    check_path = os.path.join(suite_dir, "vjcheck.rs")
+    with open(check_path, "wb") as f:
+        f.write(make_rs_bytes("vjcheck", {1: 1}))
+
+    # 4. Ghi vjsvselect.rs (Máy chủ: 0 = Vũ trụ 1 ... 6 = Vũ trụ 7)
+    if server_num and int(server_num) > 0:
+        sv_idx = max(0, min(13, int(server_num) - 1))
+        sv_path = os.path.join(suite_dir, "vjsvselect.rs")
+        with open(sv_path, "wb") as f:
+            f.write(make_rs_bytes("vjsvselect", {1: sv_idx}))
+
+    print(f"[RMS] Đã ghi cấu hình thành công: user='{clean_user}', server={server_num} tại {suite_dir}")
+    return True
+
+def read_rms_saved_info():
+    """Đọc thông tin tài khoản và máy chủ hiện được lưu trong RMS của game."""
+    try:
+        suite_dir = get_rms_suite_dir()
+        acc_path = os.path.join(suite_dir, "vjacc.rs")
+        sv_path = os.path.join(suite_dir, "vjsvselect.rs")
+
+        user = ""
+        server = 7
+        if os.path.exists(acc_path):
+            _, recs = read_rs_records(acc_path)
+            if 1 in recs:
+                user = recs[1].decode('utf-8', errors='ignore')
+
+        if os.path.exists(sv_path):
+            _, recs = read_rs_records(sv_path)
+            if 1 in recs and len(recs[1]) > 0:
+                server = int(recs[1][0]) + 1
+
+        return {"username": user, "server": server, "has_saved": bool(user)}
+    except Exception as e:
+        print(f"[RMS] Lỗi đọc thông tin đã lưu: {e}")
+        return {"username": "", "server": 7, "has_saved": False}
+
+def auto_enter_game_worker():
+    """
+    Background worker:
+    Sau khi nạp RMS và khởi động lại game:
+    Theo dõi màn hình và phát hiện ngay khi Menu chính 5 nút (Đã có tài khoản) xuất hiện,
+    tự động click nút 1 'Chơi TK' để vào game ngay lập tức!
+    """
+    print("[AUTO_LOGIN] Bắt đầu theo dõi màn hình để tự động vào game...")
+    time.sleep(1.2)
+    start_t = time.time()
+    entered = False
+
+    while time.time() - start_t < 16:
+        try:
+            dismiss_error_popup_if_any()
+            layout = get_menu_layout()
+            if layout == 5:
+                elapsed = round(time.time() - start_t, 1)
+                print(f"[AUTO_LOGIN] Phát hiện Menu 5 nút sau {elapsed}s. Tự động kích hoạt 'Chơi TK'...")
+                with x11_lock:
+                    wid = focus_game_window()
+                    cmd_click = ["xdotool", "mousemove", "120", str(144 + MENU_BAR_OFFSET), "click", "1"]
+                    if wid:
+                        cmd_click = ["xdotool", "mousemove", "--window", wid, "120", str(144 + MENU_BAR_OFFSET), "click", "1"]
+                    safe_run(cmd_click, timeout=2)
+                    time.sleep(0.12)
+                    safe_run(["xdotool", "key", "Return"], timeout=1)
+                    safe_run(["xdotool", "key", "space"], timeout=1)
+                print("[AUTO_LOGIN] Đã kích hoạt 'Chơi TK' thành công!")
+                entered = True
+                break
+        except Exception as e:
+            print(f"[AUTO_LOGIN] Lỗi theo dõi: {e}")
+        time.sleep(0.3)
+
+    if not entered:
+        print("[AUTO_LOGIN] Đã hết thời gian chờ menu (16s).")
 
 @app.route('/api/open_account_dialog', methods=['POST'])
 def handle_open_account_dialog():
@@ -698,9 +844,22 @@ def handle_select_server():
         return jsonify({"error": "Vui lòng chọn máy chủ hợp lệ (1 - 13)!"}), 400
 
     try:
-        with x11_lock:
-            focus_game_window()
-            execute_server_selection(server_num)
+        # Ghi trực tiếp máy chủ vào RMS (vjsvselect.rs)
+        suite_dir = get_rms_suite_dir()
+        sv_idx = server_num - 1
+        sv_path = os.path.join(suite_dir, "vjsvselect.rs")
+        with open(sv_path, "wb") as f:
+            f.write(make_rs_bytes("vjsvselect", {1: sv_idx}))
+        print(f"[RMS] Đã lưu máy chủ {server_num} (index {sv_idx}) vào {sv_path}")
+
+        # Khởi động lại game để nạp máy chủ mới
+        subprocess.run(["pkill", "-9", "-f", "microemulator"], timeout=5, check=False)
+        subprocess.run(["supervisorctl", "restart", "emulator"], timeout=10, check=False)
+
+        # Tự động vào game khi Menu chính sẵn sàng
+        t = threading.Thread(target=auto_enter_game_worker, daemon=True)
+        t.start()
+
         return jsonify({"status": "ok", "message": f"Đã chuyển sang Máy chủ: Vũ trụ {server_num} thành công!"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -717,84 +876,29 @@ def handle_quick_login():
         server_num = int(data.get("server", 0))
     except (ValueError, TypeError):
         server_num = 0
-    from_menu = bool(data.get("from_menu", True))
     auto_enter = bool(data.get("auto_enter", True))
 
     if not username:
         return jsonify({"error": "Vui lòng nhập tài khoản (hoặc SĐT/Email)"}), 400
 
     try:
-        with x11_lock:
-            focus_game_window()
+        # 1. Ghi trực tiếp thông tin vào RMS của game
+        # Hoàn toàn không phụ thuộc tọa độ, không click nhầm, không lag gõ phím!
+        write_rms_account(username, password, server_num)
 
-            def do_click(x, y):
-                cmd = ["xdotool", "mousemove", str(x), str(y + MENU_BAR_OFFSET), "click", "1"]
-                safe_run(cmd, timeout=2)
+        # 2. Khởi động lại game để áp dụng tài khoản & máy chủ mới ngay lập tức
+        subprocess.run(["pkill", "-9", "-f", "microemulator"], timeout=5, check=False)
+        subprocess.run(["supervisorctl", "restart", "emulator"], timeout=10, check=False)
 
-            def do_key(k):
-                cmd = ["xdotool", "key", k]
-                safe_run(cmd, timeout=2)
+        # 3. Kích hoạt worker tự động bấm 'Chơi TK' ngay khi màn hình chính 5 nút xuất hiện
+        if auto_enter:
+            t = threading.Thread(target=auto_enter_game_worker, daemon=True)
+            t.start()
 
-            def do_type(t):
-                cmd = ["xdotool", "type", "--delay", "25", "--", t]
-                safe_run(cmd, timeout=8)
-
-            def do_clear():
-                cmd = ["xdotool", "key", "--repeat", "45", "--delay", "8", "BackSpace"]
-                safe_run(cmd, timeout=3)
-
-            # 1. Đóng thông báo lỗi nếu có
-            dismiss_error_popup_if_any()
-
-            # 2. Nếu từ menu chính: Mở hộp thoại 'Đổi tài khoản'
-            if from_menu:
-                layout = get_menu_layout()
-                y_doi_tk = 202 if layout == 5 else 187
-                do_click(120, y_doi_tk)
-                time.sleep(0.6)
-
-            # 3. Điền Tài khoản: Chạm vào ô 1 (y=180) -> Mở native TextBox
-            do_click(117, 180)
-            time.sleep(0.4)
-            do_clear()
-            time.sleep(0.08)
-            do_type(username)
-            time.sleep(0.15)
-            # Submit TextBox bằng F2 (Right softkey OK)
-            do_key("F2")
-            time.sleep(0.5)
-
-            # 4. Điền Mật khẩu (nếu có): Chạm vào ô 2 (y=215) -> Mở native TextBox
-            if password:
-                do_click(117, 215)
-                time.sleep(0.4)
-                do_clear()
-                time.sleep(0.08)
-                do_type(password)
-                time.sleep(0.15)
-                # Submit TextBox bằng F2
-                do_key("F2")
-                time.sleep(0.5)
-
-            # 5. Xác nhận lưu tài khoản: Bấm nút OK trên hộp thoại Đổi tài khoản (x=70, y=269)
-            do_click(70, 269)
-            time.sleep(0.8)
-
-            # 6. Nếu có chọn Server: Đổi máy chủ
-            if server_num > 0:
-                execute_server_selection(server_num)
-                time.sleep(0.5)
-
-            # 7. Nếu auto_enter: Click nút 'Chơi tiếp' / 'Chơi TK' (Nút 1: y=145)
-            if auto_enter:
-                layout = get_menu_layout()
-                if layout == 5:
-                    do_click(120, 145)
-                    time.sleep(0.4)
-                else:
-                    print("[LOGIN] Menu vẫn ở layout 4 nút, không có nút 'Chơi tiếp'. Đã ngăn chặn kích hoạt 'Chơi mới'.")
-
-        return jsonify({"status": "ok", "message": "Đã thực hiện chuỗi đăng nhập tự động thành công!"})
+        return jsonify({
+            "status": "ok",
+            "message": "Đã lưu tài khoản & máy chủ vào hệ thống game! Đang tự động kết nối vào thế giới..."
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

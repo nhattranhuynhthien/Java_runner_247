@@ -780,6 +780,16 @@
                             } else {
                                 serverAlert.classList.add('hidden');
                             }
+
+                            // Auto-populate saved RMS credentials if empty
+                            if (data.saved_account && data.saved_account.has_saved) {
+                                if (loginUser && !loginUser.value && data.saved_account.username) {
+                                    loginUser.value = data.saved_account.username;
+                                }
+                                if (loginServer && (!loginServer.value || loginServer.value === "0") && data.saved_account.server) {
+                                    loginServer.value = data.saved_account.server.toString();
+                                }
+                            }
                         }
                     })
                     .catch(() => {});
@@ -1183,14 +1193,14 @@
                 } catch (e) {}
 
                 btnDoQuickLogin.disabled = true;
-                txtQuickLoginBtn.textContent = "Đang đăng nhập vào game...";
-                showToast("Đang thực hiện chuỗi đăng nhập tự động...", "indigo");
+                txtQuickLoginBtn.textContent = "Đang nạp RMS & kết nối...";
+                showToast("Đang ghi cấu hình RMS và tự động kết nối vào game...", "indigo");
 
                 // Live polling so screen updates in real time during login sequence
                 const loginPollTimer = setInterval(() => {
                     state.isFetching = false;
                     fetchScreenshot();
-                }, 450);
+                }, 400);
 
                 fetch('/api/quick_login', {
                     method: 'POST',
@@ -1200,14 +1210,13 @@
                         username: username,
                         password: password,
                         server: serverVal,
-                        from_menu: fromMenu,
                         auto_enter: true
                     })
                 })
                 .then(r => r.json())
                 .then(data => {
                     if (data.status === 'ok') {
-                        showToast("Đã gửi thông tin đăng nhập thành công!", "emerald");
+                        showToast(data.message || "Đã lưu RMS & đang tự động kết nối!", "emerald");
                     } else {
                         showToast(data.error || "Lỗi khi đăng nhập", "rose");
                     }
