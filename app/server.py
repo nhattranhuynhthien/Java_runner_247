@@ -9,12 +9,15 @@ import hmac
 import hashlib
 import secrets
 import struct
+import tempfile
+import zipfile
 from datetime import timedelta
 from flask import Flask, render_template, request, Response, jsonify, session, redirect, url_for
 from PIL import Image, ImageGrab
 
 os.environ["DISPLAY"] = ":1"
 SERVER_START_TIME = time.time()
+ROM_FILE = os.path.abspath(os.environ.get("ROM_FILE", "/data/roms/NRO.jar"))
 
 # Y offset for cropping out the MicroEmulator window menu bar
 MENU_BAR_OFFSET = 24
@@ -26,8 +29,11 @@ app.secret_key = os.environ.get("SESSION_SECRET", secrets.token_hex(32))
 app.permanent_session_lifetime = timedelta(days=14)
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get("SESSION_COOKIE_SECURE", "0").lower() in ("1", "true", "yes")
+app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 * 1024
 
 x11_lock = threading.Lock()
+login_attempts_lock = threading.Lock()
 
 def safe_run(cmd, timeout=3):
     try:
@@ -39,8 +45,11 @@ def safe_run(cmd, timeout=3):
         print(f"[ERROR] Lỗi thực thi lệnh {cmd}: {e}")
         return None
 
-# Persistent Security Configuration & Ban System
-SECURITY_CONFIG_FILE = os.path.join(os.path.dirname(__file__), "security_config.json")
+def restart_emulator():
+    subprocess.run(["supervisorctl", "restart", "emulator"], timeout=15, check=True)
+
+# Persistent administrator configuration
+SECURITY_CONFIG_FILE = os.environ.get("SECURITY_CONFIG_FILE", "/data/security_config.json")
 
 def load_security_config():
     if os.path.exists(SECURITY_CONFIG_FILE):
@@ -52,21 +61,24 @@ def load_security_config():
     return {}
 
 def save_security_config(cfg):
+    temp_path = None
     try:
-        with open(SECURITY_CONFIG_FILE, "w", encoding="utf-8") as f:
+        config_dir = os.path.dirname(SECURITY_CONFIG_FILE) or "."
+        os.makedirs(config_dir, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=config_dir, prefix="security-", suffix=".tmp", delete=False) as f:
+            temp_path = f.name
             json.dump(cfg, f, indent=2)
+        os.replace(temp_path, SECURITY_CONFIG_FILE)
+        temp_path = None
+        if os.name == "posix":
+            os.chmod(SECURITY_CONFIG_FILE, 0o600)
     except Exception as e:
         print(f"[SECURITY] Lỗi lưu cấu hình: {e}")
-
-# Automatically clear any banned IPs on deployment/startup so the owner is never locked out
-try:
-    _cfg = load_security_config()
-    if _cfg.get("banned_ips"):
-        print(f"[SECURITY] Tự động giải phóng {len(_cfg['banned_ips'])} IP bị khóa khi khởi động lại dịch vụ.")
-        _cfg["banned_ips"] = []
-        save_security_config(_cfg)
-except Exception:
-    pass
+        return False
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
+    return True
 
 def hash_secret(secret_str, salt=None):
     if not salt:
@@ -86,19 +98,20 @@ def verify_credentials(candidate_user, candidate_pass):
     cand_pass = str(candidate_pass).strip()
 
     admin_user, cfg = get_admin_credentials()
-    if cand_user != admin_user.lower() and cand_user != "admin":
+    if cand_user != admin_user.lower():
         return False
 
     if "hashed_password" in cfg and "salt" in cfg:
         calc_hash, _ = hash_secret(cand_pass, cfg["salt"])
         return hmac.compare_digest(calc_hash, cfg["hashed_password"])
 
-    # If ADMIN_PASSWORD is explicitly set in environment
-    if os.environ.get("ADMIN_PASSWORD"):
-        return hmac.compare_digest(cand_pass, os.environ.get("ADMIN_PASSWORD").strip())
+    # If ADMIN_PASSWORD is set in environment
+    configured_password = os.environ.get("ADMIN_PASSWORD", "").strip()
+    if configured_password:
+        return hmac.compare_digest(cand_pass, configured_password)
 
-    # Initial default: accept BOTH "admin" AND "1234"
-    return hmac.compare_digest(cand_pass, "admin") or hmac.compare_digest(cand_pass, "1234")
+    # Default fallback: "admin"
+    return hmac.compare_digest(cand_pass, "admin")
 
 def update_credentials(new_user, new_pass):
     hashed, salt = hash_secret(str(new_pass).strip())
@@ -107,56 +120,35 @@ def update_credentials(new_user, new_pass):
     cfg["hashed_password"] = hashed
     cfg["salt"] = salt
     cfg["updated_at"] = time.time()
-    save_security_config(cfg)
+    if not save_security_config(cfg):
+        raise OSError("Could not persist administrator credentials")
 
-# IP Blacklist & Anti-Brute-Force: Exactly 3 failed attempts -> Permanent Lockout
-MAX_FAILED_ATTEMPTS = 3
-FAILED_LOGIN_ATTEMPTS = {}  # { ip: count }
+# Temporary login rate limit
+MAX_FAILED_ATTEMPTS = 5
+LOGIN_WINDOW_SECONDS = 300
+FAILED_LOGIN_ATTEMPTS = {}  # { ip: [timestamps] }
 
 def get_client_ip(req):
-    forwarded = req.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
     return req.remote_addr or "127.0.0.1"
 
-def is_ip_banned(ip):
-    cfg = load_security_config()
-    banned = cfg.get("banned_ips", [])
-    return ip in banned
-
-def ban_ip(ip, reason="Nhập sai thông tin đăng nhập quá 3 lần"):
-    cfg = load_security_config()
-    banned = set(cfg.get("banned_ips", []))
-    banned.add(ip)
-    cfg["banned_ips"] = list(banned)
-    save_security_config(cfg)
-    print(f"[SECURITY] ĐÃ KHÓA VĨNH VIỄN IP: {ip} ({reason})")
-
 def record_failed_attempt(ip):
-    count = FAILED_LOGIN_ATTEMPTS.get(ip, 0) + 1
-    FAILED_LOGIN_ATTEMPTS[ip] = count
-    if count >= MAX_FAILED_ATTEMPTS:
-        ban_ip(ip)
-        return True, 0
-    return False, MAX_FAILED_ATTEMPTS - count
+    with login_attempts_lock:
+        now = time.time()
+        attempts = [t for t in FAILED_LOGIN_ATTEMPTS.get(ip, []) if now - t < LOGIN_WINDOW_SECONDS]
+        attempts.append(now)
+        FAILED_LOGIN_ATTEMPTS[ip] = attempts
+        count = len(attempts)
+        if count >= MAX_FAILED_ATTEMPTS:
+            return True, 0
+        return False, MAX_FAILED_ATTEMPTS - count
 
 def reset_failed_attempts(ip):
-    FAILED_LOGIN_ATTEMPTS.pop(ip, None)
+    with login_attempts_lock:
+        FAILED_LOGIN_ATTEMPTS.pop(ip, None)
 
-@app.before_request
-def security_gate():
-    # Always allow health check
-    if request.path == '/health':
-        return None
-
-    ip = get_client_ip(request)
-    if is_ip_banned(ip):
-        if request.path.startswith('/api/'):
-            return jsonify({
-                "error": "Truy cập bị từ chối: Địa chỉ IP của bạn đã bị khóa vĩnh viễn do nhập sai quá 3 lần.",
-                "banned": True
-            }), 403
-        return render_template('blocked.html', ip=ip), 403
+@app.errorhandler(413)
+def upload_too_large(_error):
+    return jsonify({"error": "File tải lên vượt quá giới hạn 64 MB."}), 413
 
 @app.after_request
 def add_security_headers(response):
@@ -194,8 +186,6 @@ def check_pin(req):
     if session.get("authenticated") is True:
         return True
     pin = req.headers.get("X-PIN") or req.headers.get("X-Auth-Token")
-    if not pin:
-        pin = req.args.get("pin")
     if not pin and req.is_json:
         data = req.get_json(silent=True)
         if isinstance(data, dict):
@@ -267,11 +257,13 @@ def index():
 @app.route('/api/auth/login', methods=['POST'])
 def auth_login():
     ip = get_client_ip(request)
-    if is_ip_banned(ip):
+    with login_attempts_lock:
+        recent_attempts = [t for t in FAILED_LOGIN_ATTEMPTS.get(ip, []) if time.time() - t < LOGIN_WINDOW_SECONDS]
+    if len(recent_attempts) >= MAX_FAILED_ATTEMPTS:
         return jsonify({
-            "error": "Truy cập bị từ chối: Địa chỉ IP đã bị khóa vĩnh viễn do nhập sai quá 3 lần.",
-            "banned": True
-        }), 403
+            "error": "Quá nhiều lần đăng nhập sai. Vui lòng đợi 5 phút rồi thử lại.",
+            "locked": True
+        }), 429
 
     data = request.get_json(silent=True) or {}
     username = str(data.get("username", "")).strip()
@@ -294,13 +286,13 @@ def auth_login():
         session.permanent = True
         return jsonify({"status": "ok", "message": "Đăng nhập thành công"})
     else:
-        is_banned, remaining = record_failed_attempt(ip)
+        is_limited, remaining = record_failed_attempt(ip)
         time.sleep(1.0)
-        if is_banned:
+        if is_limited:
             return jsonify({
-                "error": "Bạn đã nhập sai thông tin 3 lần. Địa chỉ IP của bạn đã bị KHÓA TRUY CẬP VĨNH VIỄN!",
-                "banned": True
-            }), 403
+                "error": "Quá nhiều lần đăng nhập sai. Vui lòng đợi 5 phút rồi thử lại.",
+                "locked": True
+            }), 429
         return jsonify({
             "error": "Tài khoản hoặc mật khẩu không chính xác!",
             "remaining": remaining
@@ -334,10 +326,13 @@ def auth_change_credentials():
     if not new_user:
         return jsonify({"error": "Tài khoản mới không được để trống!"}), 400
 
-    if len(new_pass) < 4:
-        return jsonify({"error": "Mật khẩu mới phải có ít nhất 4 ký tự!"}), 400
+    if len(new_pass) < 12:
+        return jsonify({"error": "Mật khẩu mới phải có ít nhất 12 ký tự!"}), 400
 
-    update_credentials(new_user, new_pass)
+    try:
+        update_credentials(new_user, new_pass)
+    except OSError:
+        return jsonify({"error": "Không thể lưu thông tin đăng nhập. Hãy kiểm tra quyền ghi và volume /data."}), 500
     session["authenticated"] = True
     session["admin_user"] = new_user
     session.permanent = True
@@ -364,23 +359,12 @@ def auth_status():
         return jsonify({"authenticated": False})
 
     admin_user, cfg = get_admin_credentials()
-    is_default = ("hashed_password" not in cfg) and (os.environ.get("ADMIN_PASSWORD") is None)
-    banned_count = len(cfg.get("banned_ips", []))
+    is_default = ("hashed_password" not in cfg) and len(os.environ.get("ADMIN_PASSWORD", "").strip()) < 12
     return jsonify({
         "authenticated": True,
         "admin_user": admin_user,
-        "is_default": is_default,
-        "banned_count": banned_count
+        "is_default": is_default
     })
-
-@app.route('/api/auth/unban', methods=['POST'])
-def auth_unban():
-    if not session.get("authenticated") and not check_pin(request):
-        return jsonify({"error": "Unauthorized"}), 401
-    cfg = load_security_config()
-    cfg["banned_ips"] = []
-    save_security_config(cfg)
-    return jsonify({"status": "ok", "message": "Đã gỡ lệnh cấm toàn bộ IP!"})
 
 @app.route('/api/screenshot', methods=['GET'])
 def screenshot():
@@ -400,6 +384,7 @@ def screenshot():
 
         response = Response(jpeg_bytes, mimetype='image/jpeg')
         response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
         return response
 
     except Exception:
@@ -408,6 +393,7 @@ def screenshot():
         blank.save(buf, format='JPEG', quality=50)
         response = Response(buf.getvalue(), mimetype='image/jpeg')
         response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
         return response
 
 @app.route('/api/status', methods=['GET'])
@@ -433,7 +419,9 @@ def server_status():
     except Exception:
         pass
 
-    rom_file = "/app/roms/NRO.jar"
+    rom_file = ROM_FILE
+    if not os.path.exists(rom_file) and os.path.exists("/app/roms/NRO.jar"):
+        rom_file = "/app/roms/NRO.jar"
     rom_info = {"name": "Không có", "size_kb": 0}
     if os.path.exists(rom_file):
         rom_info = {
@@ -539,8 +527,8 @@ def handle_input():
                 try:
                     raw_x = float(data.get("x", 0))
                     raw_y = float(data.get("y", 0))
-                    x = max(0, min(SCREEN_WIDTH, int(round(raw_x))))
-                    y = max(0, min(SCREEN_HEIGHT, int(round(raw_y)))) + MENU_BAR_OFFSET
+                    x = max(0, min(SCREEN_WIDTH - 1, int(round(raw_x))))
+                    y = max(0, min(SCREEN_HEIGHT - 1, int(round(raw_y)))) + MENU_BAR_OFFSET
                     cmd = ["xdotool", "mousemove", str(x), str(y), "click", "1"]
                     safe_run(cmd, timeout=2)
                 except (ValueError, TypeError):
@@ -973,8 +961,7 @@ def handle_select_server():
         print(f"[RMS] Đã lưu máy chủ {server_num} (index {sv_idx}) vào {sv_path}")
 
         # Khởi động lại game để nạp máy chủ mới
-        subprocess.run(["pkill", "-9", "-f", "microemulator"], timeout=5, check=False)
-        subprocess.run(["supervisorctl", "restart", "emulator"], timeout=10, check=False)
+        restart_emulator()
 
         # Tự động vào game khi Menu chính sẵn sàng
         t = threading.Thread(target=auto_enter_game_worker, daemon=True)
@@ -1007,8 +994,7 @@ def handle_quick_login():
         write_rms_account(username, password, server_num)
 
         # 2. Khởi động lại game để áp dụng tài khoản & máy chủ mới ngay lập tức
-        subprocess.run(["pkill", "-9", "-f", "microemulator"], timeout=5, check=False)
-        subprocess.run(["supervisorctl", "restart", "emulator"], timeout=10, check=False)
+        restart_emulator()
 
         # 3. Kích hoạt worker tự động bấm 'Chơi TK' ngay khi màn hình chính 5 nút xuất hiện
         if auto_enter:
@@ -1028,8 +1014,7 @@ def restart_game():
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
 
     try:
-        subprocess.run(["pkill", "-9", "-f", "microemulator"], timeout=5, check=False)
-        subprocess.run(["supervisorctl", "restart", "emulator"], timeout=10, check=False)
+        restart_emulator()
         return jsonify({"status": "ok", "message": "Đã khởi động lại game thành công!"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1063,15 +1048,27 @@ def upload_rom():
         return jsonify({"error": "Vui lòng chọn file .jar để tải lên!"}), 400
 
     f = request.files['file']
-    if not f.filename.lower().endswith('.jar'):
+    if not f.filename or not f.filename.lower().endswith('.jar'):
         return jsonify({"error": "Chỉ chấp nhận file định dạng .jar!"}), 400
 
-    os.makedirs("/app/roms", exist_ok=True)
-    dest_path = "/app/roms/NRO.jar"
-    f.save(dest_path)
-
-    subprocess.run(["pkill", "-9", "-f", "microemulator"], check=False)
-    subprocess.run(["supervisorctl", "restart", "emulator"], check=False)
+    rom_dir = os.path.dirname(ROM_FILE)
+    os.makedirs(rom_dir, exist_ok=True)
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix="NRO-", suffix=".jar", dir=rom_dir, delete=False) as temp_file:
+            temp_path = temp_file.name
+            f.save(temp_file)
+        if not zipfile.is_zipfile(temp_path):
+            os.unlink(temp_path)
+            return jsonify({"error": "File tải lên không phải JAR/ZIP hợp lệ."}), 400
+        os.replace(temp_path, ROM_FILE)
+        temp_path = None
+        restart_emulator()
+    except subprocess.SubprocessError:
+        return jsonify({"error": "Đã lưu JAR nhưng không thể khởi động lại emulator."}), 500
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
 
     return jsonify({"status": "ok", "message": "Đã nạp file .jar thành công và đang khởi động lại game!"})
 

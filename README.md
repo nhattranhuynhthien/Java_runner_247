@@ -1,98 +1,41 @@
-# 🐉 NRO Cloud 24/7 • Ultra-Light Web Controller
+# NRO Cloud Controller
 
-Hệ thống treo game Ngọc Rồng Online (NRO / DragonBoy J2ME Mod) **24/24 trên nền tảng đám mây (Cloud)** với kiến trúc **Siêu Nhẹ (Ultra-Lightweight)**.
+Ứng dụng chạy MicroEmulator trong Xvfb, điều khiển bằng dashboard Flask và `xdotool`. Màn hình game là 240×360; Xvfb dùng 240×384 để chứa thêm vùng menu 24 px của MicroEmulator, phần này được cắt khỏi ảnh gửi lên dashboard.
 
----
+## ROM và dữ liệu
 
-## ⚡ Điểm Khác Biệt & Tối Ưu Của Kiến Trúc Mới
+- Đặt game J2ME hợp lệ tại `roms/NRO.jar` trước khi build.
+- Có thể tải JAR mới lên từ dashboard. File được lưu tại `/data/roms/NRO.jar` và được thay thế nguyên tử sau khi kiểm tra cấu trúc ZIP/JAR.
+- Thư mục `/data` chứa cả ROM tải lên và thông tin đăng nhập đã băm. Gắn persistent volume vào `/data` nếu nền tảng hỗ trợ; nếu không, dữ liệu này có thể mất khi container được thay thế.
+- Có thể đổi vị trí ROM bằng biến `ROM_FILE`.
 
-- 🚀 **Nói không với noVNC / x11vnc / Môi trường Desktop nặng (Fluxbox/XFCE):** Tải trang web trong chớp mắt (< 0.2s), không ngốn CPU và RAM nền.
-- 📺 **Màn hình ảo Headless Xvfb chuẩn 240x360:** Khớp 100% kích thước pixel gốc của game J2ME, hình ảnh sắc nét không vỡ viền.
-- 📷 **Chụp màn hình On-Demand (Chỉ chụp khi bạn xem):**
-  - Chuyển khung hình X11 thành ảnh JPEG nén siêu nhẹ (~4KB).
-  - Tự động tạm dừng tải ảnh khi chuyển tab hoặc tắt trình duyệt (`document.hidden`), đưa mức tiêu thụ tài nguyên của server về **gần như 0%**.
-- 🎮 **Nạp lệnh trực tiếp qua `xdotool`:**
-  - Bấm phím ảo, click chuột hoặc chạm trực tiếp vào màn hình game trên điện thoại đều được ánh xạ tọa độ tức thì vào X11.
-  - Hỗ trợ gõ chữ, gửi lệnh chat mod (`td`, `ak`, `k 5`, v.v.) và đăng nhập tài khoản nhanh chóng.
-- 🔐 **Bảo mật PIN Admin:** Ngăn chặn người lạ bấm trộm hoặc xem màn hình treo game của bạn.
+## Đăng nhập
 
----
+Không còn mật khẩu mặc định. Trước khi chạy, đặt `ADMIN_PASSWORD` thành mật khẩu riêng dài tối thiểu 12 ký tự. Tài khoản mặc định là `admin`; có thể đổi tài khoản/mật khẩu trong dashboard. Sau lần đổi đầu tiên, thông tin băm được lưu trong `/data/security_config.json` và sẽ được ưu tiên hơn biến môi trường.
 
-## 📂 Cấu Trúc Dự Án
-
-```text
-nro-cloud-controller/
-├── Dockerfile                   # Docker build Ubuntu 22.04 + OpenJDK 8 + Supervisor
-├── supervisord.conf             # Quản lý 3 tiến trình: Xvfb, MicroEmulator, Flask/Gunicorn
-├── requirements.txt             # Flask, Gunicorn, Pillow
-├── config2.xml                  # Cấu hình MicroEmulator borderless 240x360
-├── scripts/
-│   └── start_emu.sh             # Script khởi chạy game với MicroEmulator
-├── app/
-│   ├── __init__.py
-│   ├── server.py                # Backend Flask API (screenshot, input, health)
-│   └── templates/
-│       └── index.html           # Giao diện web mobile-first hiện đại
-├── roms/
-│   ├── .gitkeep
-│   └── NRO.jar                  # File game / bản mod Ngọc Rồng (.jar)
-└── README.md
-```
-
----
-
-## 🛠️ Hướng Dẫn Nạp Game / Đổi Bản Mod
-
-1. **Cách 1: Thêm file trước khi deploy**
-   - Đặt file game của bạn vào thư mục `roms/` và đổi tên thành: `NRO.jar`.
-2. **Cách 2: Đổi file trực tiếp trên giao diện Web**
-   - Bấm nút **"Đổi Mod"** ở góc phải màn hình web.
-   - Chọn file `.jar` từ máy tính hoặc điện thoại và bấm **"Nạp & Chạy Ngay"**. Hệ thống sẽ tự động thay thế và khởi động lại game.
-
----
-
-## 💻 Chạy Kiểm Tra Nội Bộ Bằng Docker
+Ví dụ Docker:
 
 ```bash
-# 1. Build Docker image
 docker build -t nro-cloud .
-
-# 2. Chạy container ở cổng 8080
-docker run -d --name nro -p 8080:8080 -e ADMIN_PIN=1234 nro-cloud
-
-# 3. Mở trình duyệt truy cập:
-# http://localhost:8080
+docker run -d --name nro -p 8080:8080 \
+  -e ADMIN_PASSWORD='your-long-unique-password' \
+  -e SESSION_SECRET='your-long-random-session-secret' \
+  -v nro-data:/data nro-cloud
 ```
 
----
+`SESSION_COOKIE_SECURE=1` bật cờ Secure cho cookie khi chạy sau HTTPS. Không bật nếu truy cập trực tiếp qua HTTP cục bộ.
 
-## ☁️ Hướng Dẫn Deploy Lên Render.com (Miễn Phí 0 VNĐ)
+## Chạy và deploy
 
-1. Đẩy mã nguồn lên kho GitHub của bạn:
-   ```bash
-   git add .
-   git commit -m "feat: migrate to nro ultra-light web controller"
-   git push origin main
-   ```
-2. Truy cập [Render.com Dashboard](https://dashboard.render.com):
-   - Chọn Web Service của bạn.
-   - Nhánh: `main`.
-   - Môi trường: `Docker`.
-3. Cấu hình biến môi trường (Environment Variables) nếu muốn:
-   - `ADMIN_PIN`: Mã PIN bảo mật (mặc định là `1234`).
-   - `PORT`: Cổng dịch vụ (Render tự động cấp qua `$PORT`).
-4. Bấm **Manual Deploy** -> **Deploy latest commit**.
+- Dashboard: `http://localhost:8080`
+- Health check: `GET /health` trả `OK` và không chụp ảnh màn hình.
+- Trên Render hoặc Hugging Face Spaces, cấu hình `ADMIN_PASSWORD` và `SESSION_SECRET` trong secrets/environment variables. Với Hugging Face Spaces, đặt `PORT=7860`.
+- Nếu nền tảng có persistent disk, mount vào `/data` để giữ ROM và thông tin đăng nhập qua các lần deploy.
+- Có thể theo dõi `/health` bằng UptimeRobot. Health check chỉ xác nhận web process phản hồi; nó không đảm bảo game server từ xa đang hoạt động.
 
----
+## Vận hành
 
-## ⏱️ Giữ Game Treo 24/24 Với UptimeRobot
-
-Render có cơ chế tự động ngủ sau 15 phút nếu không có truy cập. Để server thức 24/24:
-
-1. Đăng ký tài khoản miễn phí tại [UptimeRobot.com](https://uptimerobot.com).
-2. Tạo mới một Monitor:
-   - **Monitor Type:** `HTTP(s)`
-   - **Friendly Name:** `NRO Cloud 24/7`
-   - **URL (or IP):** `https://<ten-app-cua-ban>.onrender.com/health`
-   - **Monitoring Interval:** `5 minutes`
-3. Endpoint `/health` trả về `OK` ngay tức thì trong vài mili-giây mà không đụng vào đồ họa X11, giúp server luôn online ổn định 24/24 hoàn toàn miễn phí.
+- Supervisor quản lý Xvfb, emulator và Gunicorn.
+- Dashboard ngừng polling ảnh và trạng thái khi tab bị ẩn; polling tiếp tục khi tab hiện lại.
+- Upload JAR giới hạn tối đa 64 MB và xác thực file có cấu trúc ZIP/JAR.
+- Đăng nhập sai bị giới hạn 5 lần trong 5 phút theo địa chỉ kết nối mà Flask nhận được; ứng dụng không tin `X-Forwarded-For` trực tiếp.

@@ -161,8 +161,6 @@
 
             <!-- Header Controls -->
             <div class="flex items-center gap-1.5 sm:gap-2">
-                <input type="hidden" id="input-pin" value="">
-
                 <!-- Security / Change Credentials -->
                 <button id="btn-open-change-auth" class="h-7 px-2.5 rounded-lg bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 text-xs text-slate-300 flex items-center justify-center font-medium gap-1" title="Quản lý tài khoản & mật khẩu đăng nhập">
                     <svg class="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -212,7 +210,7 @@
         <div id="default-pin-warning" class="hidden w-full max-w-xl mb-3 p-3 rounded-xl bg-amber-500/15 border border-amber-500/35 text-amber-300 text-xs flex items-center justify-between gap-3 shadow-lg backdrop-blur">
             <div class="flex items-center gap-2">
                 <span class="text-base flex-shrink-0">⚠️</span>
-                <span><strong>Cảnh báo bảo mật:</strong> Hệ thống đang dùng tài khoản/mật khẩu mặc định (<code class="font-mono text-amber-200">admin</code> / <code class="font-mono text-amber-200">admin</code>). Hãy đổi ngay!</span>
+                <span><strong>Cần cấu hình đăng nhập:</strong> Hãy đặt <code class="font-mono text-amber-200">ADMIN_PASSWORD</code> dài ít nhất 12 ký tự trong biến môi trường rồi khởi động lại dịch vụ.</span>
             </div>
             <button id="btn-banner-change-pin" class="px-2.5 py-1.5 rounded-lg bg-amber-500/30 hover:bg-amber-500/40 text-amber-100 font-bold text-[11px] whitespace-nowrap border border-amber-500/40 transition active:scale-95">
                 Đổi Mật Khẩu
@@ -372,89 +370,124 @@
                     </div>
                 </div>
 
-                <!-- NRO Mod Quick Actions & XMAP Controller -->
-                <div class="w-full max-w-[288px] sm:max-w-[340px] bg-slate-900/85 border border-white/10 rounded-xl p-2.5 flex flex-col gap-2.5 shadow-lg">
-                    <div class="flex items-center justify-between text-[11px] font-bold text-slate-300">
-                        <span>Treo Map & Tối Ưu GDL</span>
-                        <span class="text-[9px] text-indigo-400 font-mono px-1.5 py-0.2 rounded bg-indigo-500/15 border border-indigo-500/25">Xmap Pro</span>
+                <!-- NRO Mod Quick Actions & Auto Up SKH Controller -->
+                <div class="w-full max-w-[288px] sm:max-w-[340px] bg-slate-900/90 border border-white/10 rounded-xl p-3 flex flex-col gap-2.5 shadow-xl">
+                    <div class="flex items-center justify-between text-xs font-bold text-slate-200">
+                        <span class="flex items-center gap-1.5">
+                            <span class="w-2 h-2 rounded-full bg-indigo-400"></span>
+                            Auto Up SKH & Treo Map
+                        </span>
+                        <span class="text-[10px] text-indigo-400/90 font-mono font-medium">Tự động 1 chạm</span>
                     </div>
 
-                    <!-- 1-Click Super AFK Hang Mode Button -->
-                    <button class="w-full py-2 px-3 rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 active:scale-95 text-white font-bold text-xs flex items-center justify-center shadow-md shadow-indigo-600/25 transition mod-chip tracking-wide" data-cmd="xdh, annguoi, s20, gb, ts, anhat" title="Kích hoạt tức thì: Xóa đồ họa + Ẩn người + Chạy nhanh x5 + Giữ map + Tàn sát + Auto nhặt">
-                        BẬT TREO SIÊU MƯỢT (GDL)
-                    </button>
+                    <!-- Step 1: Chọn Map & Khu Vực -->
+                    <div class="bg-slate-950/70 border border-white/10 rounded-lg p-2 flex flex-col gap-2">
+                        <!-- Chọn Map Gợi Ý & Xmap -->
+                        <div class="flex flex-col gap-1">
+                            <div class="flex items-center justify-between text-[10px] text-slate-400">
+                                <span>1. Chọn Map Up (Gợi ý map SKH)</span>
+                                <button type="button" id="btn-open-xmap" class="text-indigo-400 hover:text-indigo-300 font-mono font-semibold hover:underline" title="Gửi lệnh xmap để mở bảng chọn map tự động">
+                                    Bay Map (Xmap)
+                                </button>
+                            </div>
+                            <select id="select-farm-map" class="w-full bg-slate-900 border border-white/15 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-400 font-sans cursor-pointer transition">
+                                <option value="xmap">🧭 Mở Menu Xmap (Tự chọn map bất kỳ)</option>
+                                <optgroup label="🌍 Trái Đất (Quái 100 - 500 HP)">
+                                    <option value="1">Đồi hoa cúc (Map 1 - Quái Đậu Bay)</option>
+                                    <option value="2">Thung lũng tre (Map 2 - Quái Rùa Vàng)</option>
+                                    <option value="3">Rừng nấm (Map 3 - Quái Thỏ Trắng)</option>
+                                    <option value="4">Rừng xương (Map 4 - Quái Sói)</option>
+                                </optgroup>
+                                <optgroup label="🌿 Namếc (Quái 100 - 500 HP)">
+                                    <option value="8">Đồi nấm cục (Map 8 - Quái Ốc Mượn Hồn)</option>
+                                    <option value="9">Thung lũng Maima (Map 9 - Quái Thằn Lằn)</option>
+                                    <option value="11">Vực cấm (Map 11)</option>
+                                </optgroup>
+                                <optgroup label="🪐 Xayda (Quái 100 - 500 HP)">
+                                    <option value="14">Đồi hoang (Map 14 - Quái Khủng Long)</option>
+                                    <option value="15">Làng Aru (Map 15 - Quái Bọ Đỏ)</option>
+                                    <option value="16">Rừng nguyên sinh (Map 16)</option>
+                                </optgroup>
+                            </select>
+                        </div>
 
-                    <!-- Group 1: Map Treo & Di Chuyển -->
-                    <div class="flex flex-col gap-1">
-                        <span class="text-[10px] text-slate-400 font-semibold">Map Treo & Di Chuyển</span>
-                        <div class="flex flex-wrap gap-1">
-                            <button class="mod-chip text-indigo-300 border-indigo-500/25 bg-indigo-950/30" data-cmd="xmap" title="Mở bảng Menu Xmap để chọn mọi map/hành tinh muốn treo">
-                                Chọn Map (Xmap)
-                            </button>
-                            <button class="mod-chip" data-cmd="gb" title="Tự động quay lại đúng map treo khi bị chết hoặc mất mạng">
-                                Giữ Map (gb)
-                            </button>
-                            <button class="mod-chip" data-cmd="s20" title="Tăng tốc chạy lên 5 lần, di chuyển qua map tức thì không lag">
-                                Chạy Nhanh (s20)
-                            </button>
-                            <button class="mod-chip" data-cmd="kvt" title="Khóa vị trí đứng yên tại bãi quái, không bị xô đẩy">
-                                Khóa Vị Trí (kvt)
-                            </button>
-                            <button class="mod-chip" data-cmd="nb" title="Tự động đổi khu tránh Boss khi Boss xuất hiện">
-                                Né Boss (nb)
-                            </button>
-                            <button class="mod-chip" data-cmd="cflag" title="Bật cờ chống PK để người khác không thể đồ sát">
-                                Cờ Chống PK
+                        <!-- Chọn Khu (Zone) -->
+                        <div class="flex items-center justify-between gap-2 pt-0.5">
+                            <div class="flex items-center gap-1.5 flex-1">
+                                <span class="text-[10px] text-slate-400 whitespace-nowrap">2. Khu (Zone):</span>
+                                <input type="number" id="farm-zone" min="0" max="29" value="5" placeholder="Số khu"
+                                    class="w-16 bg-slate-900 border border-white/15 rounded-md px-2 py-1 text-xs text-center text-white focus:outline-none focus:border-indigo-400 font-mono font-bold">
+                            </div>
+                            <button type="button" id="btn-quick-switch-zone" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 active:scale-95 text-indigo-300 font-semibold text-[11px] border border-white/10 whitespace-nowrap transition" title="Gửi lệnh đổi sang khu này ngay">
+                                Đổi Khu
                             </button>
                         </div>
                     </div>
 
-                    <!-- Group 2: Giảm Đồ Họa & Xóa Hiệu Ứng (GDL) -->
-                    <div class="flex flex-col gap-1 border-t border-white/5 pt-1.5">
-                        <span class="text-[10px] text-slate-400 font-semibold">Giảm Lag & Xóa Đồ Họa</span>
-                        <div class="flex flex-wrap gap-1">
-                            <button class="mod-chip text-emerald-300 border-emerald-500/25 bg-emerald-950/30" data-cmd="xdh" title="Bật/Tắt xóa toàn bộ đồ họa nền và hiệu ứng nặng">
-                                Xóa Đồ Họa (xdh)
-                            </button>
-                            <button class="mod-chip" data-cmd="annguoi" title="Ẩn toàn bộ người chơi khác trong map, load map siêu tốc">
-                                Ẩn Người (annguoi)
-                            </button>
-                            <button class="mod-chip" data-cmd="anquai" title="Ẩn quái trong map">
-                                Ẩn Quái
-                            </button>
-                            <button class="mod-chip" data-cmd="anitem" title="Ẩn item rơi dưới đất">
-                                Ẩn Item
-                            </button>
-                        </div>
+                    <!-- Step 2: Kích Hoạt Auto 1 Chạm -->
+                    <div class="flex flex-col gap-1.5">
+                        <span class="text-[10px] text-slate-400 font-semibold">3. Bật Auto Treo:</span>
+                        
+                        <!-- Main 1-Click Button 1: Auto TDLT -->
+                        <button id="btn-auto-tdlt" class="w-full py-2 px-3 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-emerald-900/40 transition" title="Tự đổi khu + TĐLT + Lọc đồ SKH + Auto nhặt + Giữ map + Siêu mượt GDL">
+                            <span>⚡</span>
+                            <span id="txt-auto-tdlt">BẬT AUTO TDLT (Khuyên Dùng)</span>
+                        </button>
+
+                        <!-- Main 1-Click Button 2: Auto Tàn Sát -->
+                        <button id="btn-auto-ts" class="w-full py-2 px-3 rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 active:scale-95 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-indigo-900/40 transition" title="Không cần vé TĐLT: Tự đổi khu + Tàn sát + Lọc đồ SKH + Auto nhặt + Giữ map + Siêu mượt GDL">
+                            <span>⚔️</span>
+                            <span id="txt-auto-ts">BẬT AUTO TÀN SÁT (Đánh Chay)</span>
+                        </button>
+
+                        <!-- Stop Auto Button -->
+                        <button id="btn-stop-all-auto" class="w-full py-1.5 px-2 rounded-lg bg-slate-800/80 hover:bg-rose-950/40 hover:text-rose-300 hover:border-rose-500/30 text-slate-400 text-[11px] font-semibold border border-white/10 active:scale-95 transition flex items-center justify-center gap-1" title="Dừng toàn bộ tự động và bật lại hình ảnh bình thường">
+                            <span>⏹️ Dừng Auto & Hiện Đồ Họa</span>
+                        </button>
                     </div>
 
-                    <!-- Group 3: Chiến Đấu & Tiện Ích -->
+                    <!-- Step 3: Các Phím Tiện Ích Mod & Lọc Đồ -->
                     <div class="flex flex-col gap-1 border-t border-white/5 pt-1.5">
-                        <span class="text-[10px] text-slate-400 font-semibold">Chiến Đấu & Auto Treo</span>
+                        <span class="text-[10px] text-slate-400 font-semibold">Phím Tắt Tiện Ích Mod:</span>
                         <div class="flex flex-wrap gap-1">
-                            <button class="mod-chip text-blue-300 border-blue-500/25 bg-blue-950/30" data-cmd="ts" title="Tàn sát tất cả quái trong map">
-                                Tàn Sát (ts)
+                            <button class="mod-chip text-amber-300 border-amber-500/25 bg-amber-950/30" data-cmd="cd" title="Mở menu cài đặt Lọc Đồ: Chọn danh sách giữ đồ SKH, tự bán đồ rác">
+                                Cài Lọc Đồ (cd)
                             </button>
-                            <button class="mod-chip" data-cmd="anhat" title="Tự động nhặt mọi vật phẩm rơi">
+                            <button class="mod-chip text-emerald-300 border-emerald-500/25 bg-emerald-950/30" data-cmd="locdo" title="Bật/Tắt chế độ tự lọc đồ trong game">
+                                Lọc Đồ (locdo)
+                            </button>
+                            <button class="mod-chip" data-cmd="anhat" title="Bật/Tắt tự động nhặt item">
                                 Auto Nhặt
                             </button>
-                            <button class="mod-chip" data-cmd="ak" title="Tự động đánh quái">
-                                Tự Đánh (ak)
+                            <button class="mod-chip" data-cmd="gb" title="Bật/Tắt Goback (tự quay lại map khi chết)">
+                                Giữ Map (gb)
                             </button>
-                            <button class="mod-chip" data-cmd="tdlt" title="Bật tự động luyện tập kết hợp tàn sát">
-                                Auto TDLT
+                            <button class="mod-chip" data-cmd="s20" title="Chạy nhanh gấp 5 lần">
+                                Chạy x5 (s20)
+                            </button>
+                            <button class="mod-chip" data-cmd="kvt" title="Khóa vị trí không bị quái đẩy">
+                                Khóa Vị Trí
+                            </button>
+                            <button class="mod-chip" data-cmd="nb" title="Tự đổi khu khi Boss xuất hiện">
+                                Né Boss (nb)
+                            </button>
+                            <button class="mod-chip" data-cmd="cflag" title="Bật cờ chống PK đồ sát">
+                                Cờ PK
+                            </button>
+                            <button class="mod-chip" data-cmd="xdh" title="Bật/Tắt xóa đồ họa giảm lag">
+                                Đồ Họa (xdh)
+                            </button>
+                            <button class="mod-chip" data-cmd="annguoi" title="Ẩn toàn bộ người chơi khác">
+                                Ẩn Người
                             </button>
                             <button class="mod-chip" data-cmd="cs" title="Sử dụng Capsule">
                                 Capsule
-                            </button>
-                            <button class="mod-chip" data-cmd="k" title="Đổi sang khu khác">
-                                Đổi Khu (k)
                             </button>
                         </div>
                     </div>
 
                     <!-- Custom Chat / Command Input -->
-                    <div class="flex items-center gap-1.5 mt-0.5 border-t border-white/5 pt-1.5">
+                    <div class="flex items-center gap-1.5 border-t border-white/5 pt-1.5">
                         <input type="text" id="input-cmd" placeholder="Lệnh khác (vd: k5, s30, xmap)..." class="flex-1 bg-slate-950 border border-white/10 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 font-mono">
                         <button id="btn-send-cmd" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 font-semibold text-xs rounded-lg flex items-center justify-center border border-white/10">
                             Gửi
@@ -661,13 +694,6 @@
                 </div>
             </form>
 
-            <!-- Banned IP Section -->
-            <div class="pt-2 border-t border-white/10 flex items-center justify-between text-[11px] text-slate-400">
-                <span>Đang khóa: <strong id="txt-banned-count" class="text-rose-400 font-mono">0</strong> IP vi phạm</span>
-                <button type="button" id="btn-unban-all" class="px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition font-mono">
-                    Gỡ khóa tất cả IP
-                </button>
-            </div>
         </div>
     </div>
 
@@ -676,7 +702,6 @@
         (function() {
             // State
             const state = {
-                pin: '',
                 fpsInterval: parseInt(localStorage.getItem('nro_interval') || '700'),
                 timer: null,
                 isFetching: false,
@@ -684,7 +709,6 @@
             };
 
             // DOM Elements
-            const pinInput = document.getElementById('input-pin');
             const fpsSelect = document.getElementById('select-fps');
             const screenImg = document.getElementById('screen-img');
             const screenWrapper = document.getElementById('screen-container');
@@ -698,15 +722,7 @@
             const serverAlertText = document.getElementById('server-alert-text');
 
             // Initialize Controls
-            pinInput.value = state.pin;
             fpsSelect.value = state.fpsInterval.toString();
-
-            pinInput.addEventListener('change', (e) => {
-                state.pin = e.target.value.trim();
-                localStorage.setItem('nro_pin', state.pin);
-                fetchScreenshot();
-                fetchStatus();
-            });
 
             fpsSelect.addEventListener('change', (e) => {
                 state.fpsInterval = parseInt(e.target.value);
@@ -716,10 +732,11 @@
 
             // Chained Adaptive Screenshot Fetcher (Zero-stutter)
             function fetchScreenshot() {
+                if (document.hidden) return;
                 if (state.isFetching) return;
                 state.isFetching = true;
 
-                const url = `/api/screenshot?pin=${encodeURIComponent(state.pin)}&t=${Date.now()}`;
+                const url = `/api/screenshot?t=${Date.now()}`;
                 const preloader = new Image();
                 
                 preloader.onload = function() {
@@ -739,7 +756,7 @@
                     state.failCount++;
                     if (state.failCount >= 3) {
                         screenOverlay.classList.remove('opacity-0', 'pointer-events-none');
-                        overlayText.textContent = "Mất kết nối hoặc sai mã PIN!";
+                        overlayText.textContent = "Mất kết nối hoặc phiên đăng nhập đã hết hạn.";
                     }
                     state.isFetching = false;
                     if (state.fpsInterval > 0) {
@@ -759,7 +776,8 @@
 
             // Fetch System Status (every 10s)
             function fetchStatus() {
-                fetch(`/api/status?pin=${encodeURIComponent(state.pin)}`)
+                if (document.hidden) return;
+                fetch('/api/status')
                     .then(res => res.json())
                     .then(data => {
                         if (data.status === 'online') {
@@ -797,7 +815,6 @@
 
             // Fast API Input Sender (Immediate response)
             function sendInput(payload) {
-                payload.pin = state.pin;
                 return fetch('/api/input', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -846,12 +863,12 @@
                     fetch('/api/quick_cmd', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ pin: state.pin, cmd: cmd })
+                        body: JSON.stringify({ cmd: cmd })
                     }).then(r => r.json()).then(res => {
                         if (res.error) {
                             showToast(res.error, 'rose');
                         } else {
-                            showToast(`Đã bật: ${cmd}`, 'emerald');
+                            showToast(`Đã gửi lệnh: ${cmd}`, 'emerald');
                         }
                         setTimeout(fetchScreenshot, 400);
                     }).catch(() => {
@@ -888,6 +905,144 @@
                 if (e.key === 'Enter') handleSendCmd();
             });
 
+            // Auto Up SKH & Farm Zone Controller
+            const selectFarmMap = document.getElementById('select-farm-map');
+            const btnOpenXmap = document.getElementById('btn-open-xmap');
+            const farmZone = document.getElementById('farm-zone');
+            const btnQuickSwitchZone = document.getElementById('btn-quick-switch-zone');
+            const btnAutoTdlt = document.getElementById('btn-auto-tdlt');
+            const txtAutoTdlt = document.getElementById('txt-auto-tdlt');
+            const btnAutoTs = document.getElementById('btn-auto-ts');
+            const txtAutoTs = document.getElementById('txt-auto-ts');
+            const btnStopAllAuto = document.getElementById('btn-stop-all-auto');
+
+            // Restore saved farm zone from localStorage
+            try {
+                const savedZone = localStorage.getItem('nro_farm_zone');
+                if (savedZone !== null && farmZone) {
+                    farmZone.value = savedZone;
+                }
+            } catch (e) {}
+
+            if (farmZone) {
+                farmZone.addEventListener('change', () => {
+                    try { localStorage.setItem('nro_farm_zone', farmZone.value); } catch (e) {}
+                });
+            }
+
+            // Quick Xmap opener
+            function triggerXmap() {
+                showToast("Đang mở Menu Xmap trên màn hình game...", "indigo");
+                fetch('/api/quick_cmd', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pin: state.pin, cmd: 'xmap' })
+                }).then(() => {
+                    showToast("Bảng Xmap đã mở! Dùng phím Lên/Xuống + OK để chọn map", "emerald");
+                    setTimeout(fetchScreenshot, 400);
+                }).catch(() => showToast("Lỗi mở Xmap", "rose"));
+            }
+
+            if (btnOpenXmap) btnOpenXmap.addEventListener('click', triggerXmap);
+            if (selectFarmMap) {
+                selectFarmMap.addEventListener('change', () => {
+                    triggerXmap();
+                });
+            }
+
+            // Quick Switch Zone
+            if (btnQuickSwitchZone && farmZone) {
+                btnQuickSwitchZone.addEventListener('click', () => {
+                    const z = parseInt(farmZone.value, 10);
+                    if (isNaN(z) || z < 0) {
+                        showToast("Vui lòng nhập số khu hợp lệ (0 - 29)", "amber");
+                        farmZone.focus();
+                        return;
+                    }
+                    try { localStorage.setItem('nro_farm_zone', z.toString()); } catch (e) {}
+                    showToast(`Đang chuyển sang Khu ${z}...`, "indigo");
+                    fetch('/api/quick_cmd', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ pin: state.pin, cmd: `k${z}` })
+                    }).then(r => r.json()).then(res => {
+                        if (res.error) showToast(res.error, "rose");
+                        else showToast(`Đã gửi lệnh đổi sang Khu ${z}!`, "emerald");
+                        setTimeout(fetchScreenshot, 400);
+                    }).catch(() => showToast("Lỗi kết nối", "rose"));
+                });
+            }
+
+            // Execute Auto Batch Function
+            function runAutoFarm(mode) {
+                const z = farmZone ? parseInt(farmZone.value, 10) : NaN;
+                const cmdList = [];
+                if (!isNaN(z) && z >= 0) {
+                    cmdList.push(`k${z}`);
+                    try { localStorage.setItem('nro_farm_zone', z.toString()); } catch (e) {}
+                }
+
+                if (mode === 'tdlt') {
+                    // Auto TDLT + Lọc đồ SKH + Auto nhặt + Goback + Chạy x5 + GDL
+                    cmdList.push('tdlt', 'locdo', 'anhat', 'gb', 's20', 'xdh', 'annguoi');
+                    showToast(`⚡ Đang kích hoạt Auto TDLT + Lọc đồ SKH tại Khu ${!isNaN(z) ? z : 'hiện tại'}...`, "emerald");
+                    if (btnAutoTdlt) {
+                        btnAutoTdlt.disabled = true;
+                        if (txtAutoTdlt) txtAutoTdlt.textContent = "Đang kích hoạt TDLT...";
+                    }
+                } else if (mode === 'ts') {
+                    // Auto Tàn Sát + Lọc đồ SKH + Auto nhặt + Goback + Chạy x5 + GDL
+                    cmdList.push('ts', 'locdo', 'anhat', 'gb', 's20', 'xdh', 'annguoi');
+                    showToast(`⚔️ Đang kích hoạt Auto Tàn Sát + Lọc đồ SKH tại Khu ${!isNaN(z) ? z : 'hiện tại'}...`, "indigo");
+                    if (btnAutoTs) {
+                        btnAutoTs.disabled = true;
+                        if (txtAutoTs) txtAutoTs.textContent = "Đang kích hoạt Tàn Sát...";
+                    }
+                }
+
+                fetch('/api/quick_cmd', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pin: state.pin, cmd: cmdList.join(', ') })
+                }).then(r => r.json()).then(res => {
+                    if (res.error) {
+                        showToast(res.error, "rose");
+                    } else {
+                        showToast(`Đã bật chế độ Auto thành công! Hệ thống đang tự động treo 24/7.`, "emerald");
+                    }
+                    setTimeout(fetchScreenshot, 400);
+                    setTimeout(fetchScreenshot, 1000);
+                }).catch(() => {
+                    showToast("Lỗi kết nối", "rose");
+                }).finally(() => {
+                    if (btnAutoTdlt) {
+                        btnAutoTdlt.disabled = false;
+                        if (txtAutoTdlt) txtAutoTdlt.textContent = "BẬT AUTO TDLT (Khuyên Dùng)";
+                    }
+                    if (btnAutoTs) {
+                        btnAutoTs.disabled = false;
+                        if (txtAutoTs) txtAutoTs.textContent = "BẬT AUTO TÀN SÁT (Đánh Chay)";
+                    }
+                });
+            }
+
+            if (btnAutoTdlt) btnAutoTdlt.addEventListener('click', () => runAutoFarm('tdlt'));
+            if (btnAutoTs) btnAutoTs.addEventListener('click', () => runAutoFarm('ts'));
+
+            if (btnStopAllAuto) {
+                btnStopAllAuto.addEventListener('click', () => {
+                    showToast("Đang dừng Auto & khôi phục đồ họa bình thường...", "amber");
+                    fetch('/api/quick_cmd', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ pin: state.pin, cmd: 'ts, tdlt, xdh, annguoi' })
+                    }).then(() => {
+                        showToast("Đã dừng tự động & bật lại hiển thị!", "emerald");
+                        setTimeout(fetchScreenshot, 500);
+                    }).catch(() => showToast("Lỗi gửi lệnh", "rose"));
+                });
+            }
+
             // Anti-Stuck Button
             function triggerAntiStuck() {
                 sendInput({ action: 'anti_stuck' });
@@ -901,7 +1056,7 @@
                 fetch('/api/restart', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pin: state.pin })
+                    body: JSON.stringify({})
                 }).then(() => {
                     screenOverlay.classList.remove('opacity-0', 'pointer-events-none');
                     overlayText.textContent = "Đang khởi động lại game...";
@@ -915,7 +1070,7 @@
             // Download Screenshot
             document.getElementById('btn-download-shot').addEventListener('click', () => {
                 const a = document.createElement('a');
-                a.href = `/api/screenshot?pin=${encodeURIComponent(state.pin)}&download=1`;
+                a.href = `/api/screenshot?download=1`;
                 a.download = `NRO_Capture_${Date.now()}.jpg`;
                 a.click();
             });
@@ -950,7 +1105,6 @@
                 }
                 const fd = new FormData();
                 fd.append('file', fileInput.files[0]);
-                fd.append('pin', state.pin);
 
                 const btnSubmit = document.getElementById('btn-submit-upload');
                 btnSubmit.disabled = true;
@@ -988,7 +1142,7 @@
 
             function loadLogs() {
                 logsContent.textContent = "Đang lấy log từ máy chủ...";
-                fetch(`/api/logs?pin=${encodeURIComponent(state.pin)}`)
+                fetch('/api/logs')
                     .then(res => res.json())
                     .then(data => {
                         logsContent.textContent = data.logs || "Chưa có log.";
@@ -1103,7 +1257,7 @@
                     fetch('/api/select_server', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ pin: state.pin, server: sVal })
+                        body: JSON.stringify({ server: sVal })
                     })
                     .then(r => r.json())
                     .then(data => {
@@ -1134,7 +1288,7 @@
                     fetch('/api/open_account_dialog', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ pin: state.pin })
+                        body: JSON.stringify({})
                     })
                     .then(r => r.json())
                     .then(data => {
@@ -1206,7 +1360,6 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        pin: state.pin,
                         username: username,
                         password: password,
                         server: serverVal,
@@ -1354,8 +1507,6 @@
             const inputConfirmPass = document.getElementById('input-confirm-pass');
             const authChangeError = document.getElementById('auth-change-error');
             const btnSubmitChangeAuth = document.getElementById('btn-submit-change-auth');
-            const txtBannedCount = document.getElementById('txt-banned-count');
-            const btnUnbanAll = document.getElementById('btn-unban-all');
 
             let currentAdminUser = 'admin';
 
@@ -1396,8 +1547,8 @@
                         authChangeError.classList.remove('hidden');
                         return;
                     }
-                    if (newPass.length < 4) {
-                        authChangeError.textContent = "Mật khẩu mới phải có ít nhất 4 ký tự";
+                    if (newPass.length < 12) {
+                        authChangeError.textContent = "Mật khẩu mới phải có ít nhất 12 ký tự";
                         authChangeError.classList.remove('hidden');
                         return;
                     }
@@ -1442,27 +1593,6 @@
                 });
             }
 
-            // Unban All IPs Button
-            if (btnUnbanAll) {
-                btnUnbanAll.addEventListener('click', async () => {
-                    if (!confirm("Bạn có chắc chắn muốn gỡ khóa cho tất cả các địa chỉ IP bị cấm?")) return;
-                    try {
-                        const res = await fetch('/api/auth/unban', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ all: true })
-                        });
-                        const data = await res.json();
-                        if (res.ok && data.status === 'ok') {
-                            showToast(data.message, "emerald");
-                            if (txtBannedCount) txtBannedCount.textContent = '0';
-                        }
-                    } catch (e) {
-                        showToast("Lỗi khi mở khóa IP", "rose");
-                    }
-                });
-            }
-
             // Check Master Auth Status
             function checkAuthStatus() {
                 fetch('/api/auth/status')
@@ -1474,9 +1604,6 @@
                             if (d.is_default) defaultWarn.classList.remove('hidden');
                             else defaultWarn.classList.add('hidden');
                         }
-                        if (txtBannedCount && d.banned_count !== undefined) {
-                            txtBannedCount.textContent = d.banned_count.toString();
-                        }
                     })
                     .catch(() => {});
             }
@@ -1485,7 +1612,18 @@
             // Auto-run on start
             restartTimer();
             fetchStatus();
-            setInterval(fetchStatus, 10000);
+            let statusTimer = setInterval(fetchStatus, 10000);
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) {
+                    if (state.timer) clearTimeout(state.timer);
+                    state.timer = null;
+                    clearInterval(statusTimer);
+                } else {
+                    fetchStatus();
+                    fetchScreenshot();
+                    statusTimer = setInterval(fetchStatus, 10000);
+                }
+            });
 
             // Anti-Inspection & DevTools Protection (Blocks F12, Right-Click, Ctrl+Shift+I/J/C, Ctrl+U)
             document.addEventListener('contextmenu', e => e.preventDefault());

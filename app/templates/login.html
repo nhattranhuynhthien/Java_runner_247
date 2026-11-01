@@ -95,7 +95,7 @@
         <!-- Strict Security Note -->
         <div class="mt-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-center max-w-sm">
             <p class="text-[11px] text-amber-300 font-medium leading-relaxed">
-                ⚠️ <strong>Quy định bảo mật nghiêm ngặt:</strong> Nhập sai quá <strong>3 lần</strong>, địa chỉ IP của bạn sẽ bị <strong>KHÓA TRUY CẬP VĨNH VIỄN</strong>.
+                ⚠️ Hệ thống giới hạn <strong>5 lần đăng nhập sai trong 5 phút</strong>. Hết thời gian chờ, bạn có thể thử lại.
             </p>
         </div>
     </div>
@@ -157,10 +157,9 @@
                     errorText.textContent = data.error || "Tài khoản hoặc mật khẩu không chính xác.";
                     
                     if (data.banned || data.locked) {
-                        errorSubtext.textContent = "Hệ thống đã khóa truy cập vĩnh viễn!";
-                        setTimeout(() => window.location.reload(), 1500);
+                        errorSubtext.textContent = "Vui lòng đợi 5 phút rồi thử lại.";
                     } else if (data.remaining !== undefined) {
-                        errorSubtext.textContent = `CẢNH BÁO: Còn lại ${data.remaining} lần thử trước khi bị KHÓA VĨNH VIỄN!`;
+                        errorSubtext.textContent = `Còn ${data.remaining} lần thử trước khi tạm giới hạn đăng nhập.`;
                     } else {
                         errorSubtext.textContent = '';
                     }
