@@ -633,11 +633,18 @@ def send_chat_command(c, wid=None):
     # Fallback xdotool
     chat_open = is_chat_box_open()
     if not chat_open:
-        cmd_open = ["xdotool", "key", "Return"]
+        # Dragonboy chat trigger: Phím '#' (numbersign) hoặc 'Return'
+        cmd_open = ["xdotool", "key", "numbersign"]
         if wid:
-            cmd_open = ["xdotool", "key", "--window", wid, "Return"]
+            cmd_open = ["xdotool", "key", "--window", wid, "numbersign"]
         safe_run(cmd_open, timeout=2)
-        time.sleep(0.3)
+        time.sleep(0.35)
+        if not is_chat_box_open():
+            cmd_open_ret = ["xdotool", "key", "Return"]
+            if wid:
+                cmd_open_ret = ["xdotool", "key", "--window", wid, "Return"]
+            safe_run(cmd_open_ret, timeout=1)
+            time.sleep(0.3)
 
     # Xóa sạch ô chat bằng click (X) và BackSpace
     cmd_click_clear = ["xdotool", "mousemove", "211", str(246 + MENU_BAR_OFFSET), "click", "1"]
@@ -709,7 +716,7 @@ def handle_auto_farm():
     Tự động hóa hoàn toàn chức năng Treo Map & Auto Up SKH:
     1. Tự động bay map bằng Xmap (nếu có chọn map cụ thể).
     2. Chờ nhân vật bay tới map rồi đổi khu (zone) mong muốn.
-    3. Tự động kích hoạt TDLT hoặc Tàn sát kèm theo toàn bộ bộ tiện ích:
+    3. Tự động kích hoạt GỘP CẢ TDLT VÀ TÀN SÁT (không lo hết đậu/hết vé, nhân vật vẫn đánh liên tục):
        Lọc đồ SKH (locdo), Auto nhặt (anhat), Giữ map (gb), Chạy x5 (s20), Giảm đồ họa (xdh), Ẩn người (annguoi).
     """
     if not check_pin(request):
@@ -718,7 +725,7 @@ def handle_auto_farm():
     data = request.get_json(silent=True) or {}
     map_val = str(data.get("map", "")).strip()
     zone_val = str(data.get("zone", "")).strip()
-    mode = str(data.get("mode", "tdlt")).strip().lower()
+    mode = str(data.get("mode", "all")).strip().lower()
 
     # 1. Ưu tiên gửi qua GameBridgeAgent nội bộ
     try:
@@ -733,7 +740,7 @@ def handle_auto_farm():
                 return jsonify({
                     "status": "ok",
                     "method": "bridge",
-                    "message": "Đã kích hoạt Auto Farm thành công qua Game Engine!",
+                    "message": "Đã kích hoạt Auto Farm (TDLT + Tàn Sát) thành công qua Game Engine!",
                     "details": res_data
                 })
     except Exception as e:
@@ -754,10 +761,18 @@ def handle_auto_farm():
                     send_chat_command(f"k{zone_val}", wid=wid)
                     time.sleep(1.2)
 
-                # Bật chế độ farm (tdlt hoặc ts)
-                farm_cmd = "ts" if mode == "ts" else "tdlt"
-                send_chat_command(farm_cmd, wid=wid)
-                time.sleep(1.2)
+                # Bật chế độ farm: Gộp cả TDLT và Tàn Sát
+                if mode in ("all", "combo"):
+                    send_chat_command("tdlt", wid=wid)
+                    time.sleep(1.2)
+                    send_chat_command("ts", wid=wid)
+                    time.sleep(1.2)
+                elif mode == "ts":
+                    send_chat_command("ts", wid=wid)
+                    time.sleep(1.2)
+                else:
+                    send_chat_command("tdlt", wid=wid)
+                    time.sleep(1.2)
 
                 # Kích hoạt toàn bộ tiện ích mod
                 for util in ["locdo", "anhat", "gb", "s20", "xdh", "annguoi"]:
@@ -771,7 +786,7 @@ def handle_auto_farm():
     return jsonify({
         "status": "ok",
         "method": "fallback",
-        "message": "Đã bắt đầu chuỗi tự động đổi khu và kích hoạt Farm!"
+        "message": "Đã bắt đầu chuỗi tự động đổi khu và kích hoạt Farm (TDLT + Tàn Sát)!"
     })
 
 @app.route('/api/game_status', methods=['GET'])

@@ -24,17 +24,25 @@ public class GameBridgeAgent {
         startHttpServer();
     }
 
+    private static volatile ClassLoader cachedClassLoader = null;
+
     private static ClassLoader findMidletClassLoader() {
+        if (cachedClassLoader != null) return cachedClassLoader;
         for (Thread t : Thread.getAllStackTraces().keySet()) {
             ClassLoader cl = t.getContextClassLoader();
             if (cl != null && cl.getClass().getName().contains("MIDletClassLoader")) {
+                cachedClassLoader = cl;
                 return cl;
             }
         }
         if (instrumentation != null) {
             for (Class<?> c : instrumentation.getAllLoadedClasses()) {
-                if (c.getName().equals("nro.f")) {
-                    return c.getClassLoader();
+                if (c.getName().startsWith("nro.")) {
+                    ClassLoader cl = c.getClassLoader();
+                    if (cl != null) {
+                        cachedClassLoader = cl;
+                        return cl;
+                    }
                 }
             }
         }
@@ -93,22 +101,65 @@ public class GameBridgeAgent {
 
     // Execute chat command in game
     public static boolean executeChatCmd(String cmd) {
+        if (cmd == null || cmd.trim().isEmpty()) return false;
+        cmd = cmd.trim();
+        boolean handled = false;
         try {
+            // 1. Special handling for xmap
+            if ("xmap".equalsIgnoreCase(cmd)) {
+                Class<?> cls_f = getGameClass("nro.f");
+                if (cls_f != null) {
+                    Field aField = cls_f.getField("a");
+                    Object inst_f = aField.get(null);
+                    if (inst_f != null) {
+                        Method nMeth = cls_f.getMethod("n");
+                        nMeth.invoke(inst_f);
+                        System.out.println("[BRIDGE] Opened Xmap menu via nro.f.a.n()");
+                        handled = true;
+                    }
+                }
+            }
+
+            // 2. Execute via nro.F (Mod Command Handler)
             Class<?> clsF = getGameClass("nro.F");
             if (clsF != null) {
                 Method aMeth = clsF.getMethod("a");
                 Object instF = aMeth.invoke(null);
                 if (instF != null) {
                     Method dMeth = clsF.getMethod("d", String.class);
-                    Object res = dMeth.invoke(instF, cmd);
-                    System.out.println("[BRIDGE] Executed cmd [" + cmd + "] -> " + res);
-                    return true;
+                    Object resD = dMeth.invoke(instF, cmd);
+                    if (Boolean.TRUE.equals(resD)) {
+                        handled = true;
+                    } else {
+                        // Also try parametrized command handler 'e' (e.g. k5, s20, kts, etc.)
+                        try {
+                            Method eMeth = clsF.getMethod("e", String.class);
+                            Object resE = eMeth.invoke(instF, cmd);
+                            if (Boolean.TRUE.equals(resE)) handled = true;
+                        } catch (Throwable ignored) {}
+                    }
+                    System.out.println("[BRIDGE] Executed nro.F cmd [" + cmd + "] -> " + handled);
+                }
+            }
+
+            // 3. If not handled by mod, pass to network chat pipeline nro.am
+            if (!handled) {
+                Class<?> clsAm = getGameClass("nro.am");
+                if (clsAm != null) {
+                    Method aMeth = clsAm.getMethod("a");
+                    Object instAm = aMeth.invoke(null);
+                    if (instAm != null) {
+                        Method pMeth = clsAm.getMethod("p", String.class);
+                        pMeth.invoke(instAm, cmd);
+                        System.out.println("[BRIDGE] Executed via nro.am.a().p [" + cmd + "]");
+                        handled = true;
+                    }
                 }
             }
         } catch (Throwable t) {
             System.out.println("[BRIDGE] executeChatCmd error for [" + cmd + "]: " + t);
         }
-        return false;
+        return handled;
     }
 
     // Get current game status
@@ -268,7 +319,7 @@ public class GameBridgeAgent {
                 // Batch auto farm sequence with smart map travel
                 final String mapStr = params.get("map");
                 final String zoneStr = params.get("zone");
-                final String mode = params.get("mode") != null ? params.get("mode") : "tdlt";
+                final String mode = params.get("mode") != null ? params.get("mode") : "all";
 
                 if (farmThread != null && farmThread.isAlive()) {
                     farmThread.interrupt();
@@ -303,7 +354,7 @@ public class GameBridgeAgent {
                                         }
                                     }
                                     // Settle after arrival
-                                    Thread.sleep(1000);
+                                    Thread.sleep(1200);
                                 }
                             }
 
@@ -312,32 +363,37 @@ public class GameBridgeAgent {
                                 try {
                                     int z = Integer.parseInt(zoneStr.trim());
                                     executeChatCmd("k" + z);
-                                    Thread.sleep(800);
+                                    Thread.sleep(1000);
                                 } catch (Throwable ignored) {}
                             }
 
-                            // 3. Activate auto farm mode
+                            // 3. Activate auto farm mode: TDLT + TÀN SÁT COMBO
                             if ("ts".equalsIgnoreCase(mode)) {
                                 executeChatCmd("ts");
-                            } else {
+                            } else if ("tdlt".equalsIgnoreCase(mode)) {
                                 executeChatCmd("tdlt");
+                            } else {
+                                // Default COMBO: activate both tdlt AND ts
+                                executeChatCmd("tdlt");
+                                Thread.sleep(350);
+                                executeChatCmd("ts");
                             }
                             Thread.sleep(300);
 
                             // 4. Activate support utilities
                             executeChatCmd("locdo");
-                            Thread.sleep(200);
+                            Thread.sleep(250);
                             executeChatCmd("anhat");
-                            Thread.sleep(200);
+                            Thread.sleep(250);
                             executeChatCmd("gb");
-                            Thread.sleep(200);
+                            Thread.sleep(250);
                             executeChatCmd("s20");
-                            Thread.sleep(200);
+                            Thread.sleep(250);
                             executeChatCmd("xdh");
-                            Thread.sleep(200);
+                            Thread.sleep(250);
                             executeChatCmd("annguoi");
 
-                            System.out.println("[BRIDGE] AutoFarm: All commands activated successfully!");
+                            System.out.println("[BRIDGE] AutoFarm: Combo (TDLT + Tàn Sát + Lọc Đồ + Auto Nhặt + Goback + Siêu Mượt) activated successfully!");
                         } catch (InterruptedException ie) {
                             System.out.println("[BRIDGE] AutoFarm thread interrupted.");
                         } catch (Throwable t) {
@@ -349,6 +405,19 @@ public class GameBridgeAgent {
                 farmThread.start();
 
                 jsonResp = "{\"status\": \"ok\", \"message\": \"Auto farm started\", \"map\": \"" + mapStr + "\", \"zone\": \"" + zoneStr + "\", \"mode\": \"" + mode + "\"}";
+            } else if (path.equals("/api/game/stop_farm")) {
+                if (farmThread != null && farmThread.isAlive()) {
+                    farmThread.interrupt();
+                }
+                stopXmap();
+                executeChatCmd("ts");
+                try { Thread.sleep(100); } catch (Throwable ignored) {}
+                executeChatCmd("tdlt");
+                try { Thread.sleep(100); } catch (Throwable ignored) {}
+                executeChatCmd("xdh");
+                try { Thread.sleep(100); } catch (Throwable ignored) {}
+                executeChatCmd("annguoi");
+                jsonResp = "{\"status\": \"ok\", \"message\": \"Auto farm stopped & graphics restored\"}";
             } else {
                 statusCode = 404;
                 jsonResp = "{\"error\": \"Not found\"}";

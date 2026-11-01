@@ -444,17 +444,21 @@
                     <div class="flex flex-col gap-1.5">
                         <span class="text-[10px] text-slate-400 font-semibold">3. Bật Auto Treo:</span>
                         
-                        <!-- Main 1-Click Button 1: Auto TDLT -->
-                        <button id="btn-auto-tdlt" class="w-full py-2 px-3 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-emerald-900/40 transition" title="Tự đổi khu + TĐLT + Lọc đồ SKH + Auto nhặt + Giữ map + Siêu mượt GDL">
-                            <span>⚡</span>
-                            <span id="txt-auto-tdlt">BẬT AUTO TDLT (Khuyên Dùng)</span>
+                        <!-- Main Unified 1-Click Auto Farm Button (TDLT + Tàn Sát COMBO) -->
+                        <button id="btn-auto-farm" class="w-full py-2.5 px-3 rounded-lg bg-gradient-to-r from-amber-500 via-emerald-600 to-teal-600 hover:from-amber-400 hover:via-emerald-500 hover:to-teal-500 active:scale-95 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/50 transition border border-white/20" title="Tự động 1 chạm: Bay Map + Đổi Khu + TĐLT + Tàn Sát (tự đánh liên tục kể cả khi hết đậu) + Lọc đồ SKH + Auto Nhặt + Giữ Map + Siêu Mượt GDL">
+                            <span class="text-sm">⚡</span>
+                            <span id="txt-auto-farm">KÍCH HOẠT AUTO UP SKH (TDLT + TÀN SÁT)</span>
                         </button>
 
-                        <!-- Main 1-Click Button 2: Auto Tàn Sát -->
-                        <button id="btn-auto-ts" class="w-full py-2 px-3 rounded-lg bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 active:scale-95 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-indigo-900/40 transition" title="Không cần vé TĐLT: Tự đổi khu + Tàn sát + Lọc đồ SKH + Auto nhặt + Giữ map + Siêu mượt GDL">
-                            <span>⚔️</span>
-                            <span id="txt-auto-ts">BẬT AUTO TÀN SÁT (Đánh Chay)</span>
-                        </button>
+                        <!-- Optional Individual Toggles -->
+                        <div class="flex items-center gap-1.5">
+                            <button id="btn-auto-tdlt" class="flex-1 py-1 px-2 rounded bg-slate-800 hover:bg-slate-700 active:scale-95 text-emerald-300 font-semibold text-[11px] border border-white/10 transition" title="Chỉ bật Tự động luyện tập">
+                                <span id="txt-auto-tdlt">Chỉ TDLT</span>
+                            </button>
+                            <button id="btn-auto-ts" class="flex-1 py-1 px-2 rounded bg-slate-800 hover:bg-slate-700 active:scale-95 text-cyan-300 font-semibold text-[11px] border border-white/10 transition" title="Chỉ bật Tàn sát (đánh chay không dùng skill)">
+                                <span id="txt-auto-ts">Chỉ Tàn Sát</span>
+                            </button>
+                        </div>
 
                         <!-- Stop Auto Button -->
                         <button id="btn-stop-all-auto" class="w-full py-1.5 px-2 rounded-lg bg-slate-800/80 hover:bg-rose-950/40 hover:text-rose-300 hover:border-rose-500/30 text-slate-400 text-[11px] font-semibold border border-white/10 active:scale-95 transition flex items-center justify-center gap-1" title="Dừng toàn bộ tự động và bật lại hình ảnh bình thường">
@@ -879,7 +883,7 @@
                     fetch('/api/quick_cmd', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ cmd: cmd })
+                        body: JSON.stringify({ pin: state.pin, cmd: cmd })
                     }).then(r => r.json()).then(res => {
                         if (res.error) {
                             showToast(res.error, 'rose');
@@ -926,6 +930,8 @@
             const btnOpenXmap = document.getElementById('btn-open-xmap');
             const farmZone = document.getElementById('farm-zone');
             const btnQuickSwitchZone = document.getElementById('btn-quick-switch-zone');
+            const btnAutoFarm = document.getElementById('btn-auto-farm');
+            const txtAutoFarm = document.getElementById('txt-auto-farm');
             const btnAutoTdlt = document.getElementById('btn-auto-tdlt');
             const txtAutoTdlt = document.getElementById('txt-auto-tdlt');
             const btnAutoTs = document.getElementById('btn-auto-ts');
@@ -1010,22 +1016,28 @@
                 const mapVal = selectFarmMap ? selectFarmMap.value : "0";
                 const mapName = selectFarmMap && selectFarmMap.selectedIndex >= 0 ? selectFarmMap.options[selectFarmMap.selectedIndex].text : "";
 
-                if (mode === 'tdlt') {
+                if (mode === 'all') {
+                    if (btnAutoFarm) {
+                        btnAutoFarm.disabled = true;
+                        if (txtAutoFarm) txtAutoFarm.textContent = "Đang kích hoạt Auto Combo...";
+                    }
+                } else if (mode === 'tdlt') {
                     if (btnAutoTdlt) {
                         btnAutoTdlt.disabled = true;
-                        if (txtAutoTdlt) txtAutoTdlt.textContent = "Đang kích hoạt TDLT...";
+                        if (txtAutoTdlt) txtAutoTdlt.textContent = "Đang bật TDLT...";
                     }
                 } else if (mode === 'ts') {
                     if (btnAutoTs) {
                         btnAutoTs.disabled = true;
-                        if (txtAutoTs) txtAutoTs.textContent = "Đang kích hoạt Tàn Sát...";
+                        if (txtAutoTs) txtAutoTs.textContent = "Đang bật Tàn Sát...";
                     }
                 }
 
+                const modeLabel = mode === 'all' ? 'TDLT + TÀN SÁT' : mode.toUpperCase();
                 if (mapVal !== "0" && mapVal !== "xmap") {
-                    showToast(`🚀 Đang bay tới ${mapName}, đổi sang Khu ${!isNaN(z) ? z : 'hiện tại'} & kích hoạt Auto ${mode.toUpperCase()}...`, "indigo");
+                    showToast(`🚀 Đang bay tới ${mapName}, đổi sang Khu ${!isNaN(z) ? z : 'hiện tại'} & kích hoạt Auto ${modeLabel}...`, "indigo");
                 } else {
-                    showToast(`⚡ Đang đổi sang Khu ${!isNaN(z) ? z : 'hiện tại'} & kích hoạt Auto ${mode.toUpperCase()}...`, "emerald");
+                    showToast(`⚡ Đang đổi sang Khu ${!isNaN(z) ? z : 'hiện tại'} & kích hoạt Auto ${modeLabel}...`, "emerald");
                 }
 
                 fetch('/api/auto_farm', {
@@ -1048,17 +1060,22 @@
                 }).catch(() => {
                     showToast("Lỗi kết nối máy chủ", "rose");
                 }).finally(() => {
+                    if (btnAutoFarm) {
+                        btnAutoFarm.disabled = false;
+                        if (txtAutoFarm) txtAutoFarm.textContent = "KÍCH HOẠT AUTO UP SKH (TDLT + TÀN SÁT)";
+                    }
                     if (btnAutoTdlt) {
                         btnAutoTdlt.disabled = false;
-                        if (txtAutoTdlt) txtAutoTdlt.textContent = "BẬT AUTO TDLT (Khuyên Dùng)";
+                        if (txtAutoTdlt) txtAutoTdlt.textContent = "Chỉ TDLT";
                     }
                     if (btnAutoTs) {
                         btnAutoTs.disabled = false;
-                        if (txtAutoTs) txtAutoTs.textContent = "BẬT AUTO TÀN SÁT (Đánh Chay)";
+                        if (txtAutoTs) txtAutoTs.textContent = "Chỉ Tàn Sát";
                     }
                 });
             }
 
+            if (btnAutoFarm) btnAutoFarm.addEventListener('click', () => runAutoFarm('all'));
             if (btnAutoTdlt) btnAutoTdlt.addEventListener('click', () => runAutoFarm('tdlt'));
             if (btnAutoTs) btnAutoTs.addEventListener('click', () => runAutoFarm('ts'));
 
