@@ -391,22 +391,38 @@
                                 </button>
                             </div>
                             <select id="select-farm-map" class="w-full bg-slate-900 border border-white/15 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-400 font-sans cursor-pointer transition">
-                                <option value="xmap">🧭 Mở Menu Xmap (Tự chọn map bất kỳ)</option>
-                                <optgroup label="🌍 Trái Đất (Quái 100 - 500 HP)">
+                                <option value="0">📍 Giữ nguyên Map hiện tại (Không bay map)</option>
+                                <option value="xmap">🧭 Mở Menu Xmap (Tự chọn map bất kỳ trong game)</option>
+                                <optgroup label="🌍 Trái Đất (Map SKH 100 - 500 HP)">
                                     <option value="1">Đồi hoa cúc (Map 1 - Quái Đậu Bay)</option>
                                     <option value="2">Thung lũng tre (Map 2 - Quái Rùa Vàng)</option>
                                     <option value="3">Rừng nấm (Map 3 - Quái Thỏ Trắng)</option>
                                     <option value="4">Rừng xương (Map 4 - Quái Sói)</option>
+                                    <option value="5">Đảo Kame (Map 5)</option>
+                                    <option value="6">Đông Karjn (Map 6)</option>
                                 </optgroup>
-                                <optgroup label="🌿 Namếc (Quái 100 - 500 HP)">
+                                <optgroup label="🌿 Namếc (Map SKH 100 - 500 HP)">
                                     <option value="8">Đồi nấm cục (Map 8 - Quái Ốc Mượn Hồn)</option>
                                     <option value="9">Thung lũng Maima (Map 9 - Quái Thằn Lằn)</option>
                                     <option value="11">Vực cấm (Map 11)</option>
+                                    <option value="12">Núi tuyết (Map 12)</option>
+                                    <option value="13">Đảo Guru (Map 13)</option>
                                 </optgroup>
-                                <optgroup label="🪐 Xayda (Quái 100 - 500 HP)">
+                                <optgroup label="🪐 Xayda (Map SKH 100 - 500 HP)">
                                     <option value="14">Đồi hoang (Map 14 - Quái Khủng Long)</option>
                                     <option value="15">Làng Aru (Map 15 - Quái Bọ Đỏ)</option>
                                     <option value="16">Rừng nguyên sinh (Map 16)</option>
+                                    <option value="17">Rừng cọ (Map 17)</option>
+                                    <option value="18">Thác Karjn (Map 18)</option>
+                                </optgroup>
+                                <optgroup label="🌌 Vực Đá / Siêu Thị / Căn Cứ Fide">
+                                    <option value="24">Sân sau siêu thị (Map 24)</option>
+                                    <option value="25">Siêu thị (Map 25)</option>
+                                    <option value="26">Thành phố phía tây (Map 26)</option>
+                                    <option value="27">Rừng Bamboo (Map 27)</option>
+                                    <option value="28">Rừng tuyết (Map 28)</option>
+                                    <option value="29">Núi Appule (Map 29)</option>
+                                    <option value="30">Căn cứ Fide (Map 30)</option>
                                 </optgroup>
                             </select>
                         </div>
@@ -944,9 +960,24 @@
             }
 
             if (btnOpenXmap) btnOpenXmap.addEventListener('click', triggerXmap);
+            // Restore saved farm map & zone from localStorage
+            try {
+                const savedMap = localStorage.getItem('nro_farm_map');
+                if (savedMap !== null && selectFarmMap) {
+                    selectFarmMap.value = savedMap;
+                }
+            } catch (e) {}
+
             if (selectFarmMap) {
                 selectFarmMap.addEventListener('change', () => {
-                    triggerXmap();
+                    const val = selectFarmMap.value;
+                    try { localStorage.setItem('nro_farm_map', val); } catch (e) {}
+                    if (val === 'xmap') {
+                        triggerXmap();
+                    } else if (val !== '0') {
+                        const txt = selectFarmMap.options[selectFarmMap.selectedIndex]?.text || val;
+                        showToast(`Đã chọn: ${txt}. Khi bấm Bật Auto hệ thống sẽ tự bay map!`, "indigo");
+                    }
                 });
             }
 
@@ -973,47 +1004,49 @@
                 });
             }
 
-            // Execute Auto Batch Function
+            // Execute Auto Batch Function (Auto Farm SKH 1-Chạm)
             function runAutoFarm(mode) {
                 const z = farmZone ? parseInt(farmZone.value, 10) : NaN;
-                const cmdList = [];
-                if (!isNaN(z) && z >= 0) {
-                    cmdList.push(`k${z}`);
-                    try { localStorage.setItem('nro_farm_zone', z.toString()); } catch (e) {}
-                }
+                const mapVal = selectFarmMap ? selectFarmMap.value : "0";
+                const mapName = selectFarmMap && selectFarmMap.selectedIndex >= 0 ? selectFarmMap.options[selectFarmMap.selectedIndex].text : "";
 
                 if (mode === 'tdlt') {
-                    // Auto TDLT + Lọc đồ SKH + Auto nhặt + Goback + Chạy x5 + GDL
-                    cmdList.push('tdlt', 'locdo', 'anhat', 'gb', 's20', 'xdh', 'annguoi');
-                    showToast(`⚡ Đang kích hoạt Auto TDLT + Lọc đồ SKH tại Khu ${!isNaN(z) ? z : 'hiện tại'}...`, "emerald");
                     if (btnAutoTdlt) {
                         btnAutoTdlt.disabled = true;
                         if (txtAutoTdlt) txtAutoTdlt.textContent = "Đang kích hoạt TDLT...";
                     }
                 } else if (mode === 'ts') {
-                    // Auto Tàn Sát + Lọc đồ SKH + Auto nhặt + Goback + Chạy x5 + GDL
-                    cmdList.push('ts', 'locdo', 'anhat', 'gb', 's20', 'xdh', 'annguoi');
-                    showToast(`⚔️ Đang kích hoạt Auto Tàn Sát + Lọc đồ SKH tại Khu ${!isNaN(z) ? z : 'hiện tại'}...`, "indigo");
                     if (btnAutoTs) {
                         btnAutoTs.disabled = true;
                         if (txtAutoTs) txtAutoTs.textContent = "Đang kích hoạt Tàn Sát...";
                     }
                 }
 
-                fetch('/api/quick_cmd', {
+                if (mapVal !== "0" && mapVal !== "xmap") {
+                    showToast(`🚀 Đang bay tới ${mapName}, đổi sang Khu ${!isNaN(z) ? z : 'hiện tại'} & kích hoạt Auto ${mode.toUpperCase()}...`, "indigo");
+                } else {
+                    showToast(`⚡ Đang đổi sang Khu ${!isNaN(z) ? z : 'hiện tại'} & kích hoạt Auto ${mode.toUpperCase()}...`, "emerald");
+                }
+
+                fetch('/api/auto_farm', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pin: state.pin, cmd: cmdList.join(', ') })
+                    body: JSON.stringify({
+                        pin: state.pin,
+                        map: mapVal,
+                        zone: !isNaN(z) ? z.toString() : "",
+                        mode: mode
+                    })
                 }).then(r => r.json()).then(res => {
                     if (res.error) {
                         showToast(res.error, "rose");
                     } else {
-                        showToast(`Đã bật chế độ Auto thành công! Hệ thống đang tự động treo 24/7.`, "emerald");
+                        showToast(res.message || "Đã kích hoạt chế độ Auto thành công!", "emerald");
                     }
-                    setTimeout(fetchScreenshot, 400);
-                    setTimeout(fetchScreenshot, 1000);
+                    setTimeout(fetchScreenshot, 500);
+                    setTimeout(fetchScreenshot, 1500);
                 }).catch(() => {
-                    showToast("Lỗi kết nối", "rose");
+                    showToast("Lỗi kết nối máy chủ", "rose");
                 }).finally(() => {
                     if (btnAutoTdlt) {
                         btnAutoTdlt.disabled = false;

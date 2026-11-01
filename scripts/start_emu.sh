@@ -22,14 +22,26 @@ fi
 
 setxkbmap -display :1 -layout us 2>/dev/null || true
 
+# Check if GameBridgeAgent is available
+AGENT_OPT=""
+if [ -f "/app/bridge.jar" ]; then
+    echo "[EMU] Loading GameBridgeAgent from /app/bridge.jar"
+    AGENT_OPT="-javaagent:/app/bridge.jar"
+elif [ -f "./bridge.jar" ]; then
+    echo "[EMU] Loading GameBridgeAgent from ./bridge.jar"
+    AGENT_OPT="-javaagent:./bridge.jar"
+fi
+
 if [ -f "$JAR_FILE" ]; then
     echo "[EMU] Starting game ROM: $JAR_FILE"
     exec java -Xmx220m -Xms96m -XX:+UseSerialGC -XX:TieredStopAtLevel=1 \
         -Dsun.java2d.opengl=false -Dsun.java2d.pmoffscreen=false -Dsun.java2d.xrender=false \
+        $AGENT_OPT \
         -jar /app/microemulator.jar --quit "$JAR_FILE"
 fi
 
 echo "[EMU] No ROM found at $JAR_FILE; starting MicroEmulator launcher."
 exec java -Xmx220m -Xms96m -XX:+UseSerialGC -XX:TieredStopAtLevel=1 \
     -Dsun.java2d.opengl=false -Dsun.java2d.pmoffscreen=false -Dsun.java2d.xrender=false \
+    $AGENT_OPT \
     -jar /app/microemulator.jar

@@ -469,23 +469,23 @@ def type_text_reliably(value, wid=None):
         safe_run(cmd_paste, timeout=2)
         return
 
-    # Cách 2: Gõ bằng xdotool (xử lý riêng ký tự @ bằng phím shift+2)
+    # Cách 2: Gõ bằng xdotool (xử lý riêng ký tự @ bằng phím at trong X11/Xvfb)
     if "@" in value:
         parts = value.split("@")
         for i, part in enumerate(parts):
             if part:
-                cmd = ["xdotool", "type", "--delay", "20", "--", part]
+                cmd = ["xdotool", "type", "--delay", "25", "--", part]
                 if wid:
-                    cmd = ["xdotool", "type", "--window", wid, "--delay", "20", "--", part]
+                    cmd = ["xdotool", "type", "--window", wid, "--delay", "25", "--", part]
                 safe_run(cmd, timeout=5)
-                time.sleep(0.04)
+                time.sleep(0.05)
             if i < len(parts) - 1:
-                # Gõ phím @ chuẩn xác bằng Shift + 2
-                cmd_at = ["xdotool", "key", "shift+2"]
+                # Gõ phím @ chuẩn xác bằng xdotool key at
+                cmd_at = ["xdotool", "key", "at"]
                 if wid:
-                    cmd_at = ["xdotool", "key", "--window", wid, "shift+2"]
+                    cmd_at = ["xdotool", "key", "--window", wid, "at"]
                 safe_run(cmd_at, timeout=2)
-                time.sleep(0.04)
+                time.sleep(0.05)
     else:
         cmd = ["xdotool", "type", "--delay", "20", "--", value]
         if wid:
@@ -593,6 +593,90 @@ def is_chat_box_open():
         pass
     return False
 
+def send_via_bridge(cmd):
+    """Gửi lệnh trực tiếp vào JVM qua GameBridgeAgent nội bộ nếu có."""
+    try:
+        import urllib.parse
+        import urllib.request
+        url = f"http://127.0.0.1:28888/api/game/cmd?cmd={urllib.parse.quote(cmd)}"
+        req = urllib.request.Request(url, data=b"", headers={"User-Agent": "NRO-Server"})
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            if resp.status == 200:
+                return True
+    except Exception:
+        pass
+    return False
+
+def get_bridge_status():
+    """Lấy trạng thái game thời gian thực từ JVM Bridge."""
+    try:
+        import urllib.request
+        import json
+        req = urllib.request.Request("http://127.0.0.1:28888/api/game/status", headers={"User-Agent": "NRO-Server"})
+        with urllib.request.urlopen(req, timeout=1.0) as resp:
+            if resp.status == 200:
+                return json.loads(resp.read().decode('utf-8'))
+    except Exception:
+        pass
+    return None
+
+def send_chat_command(c, wid=None):
+    """
+    Gửi một lệnh chat vào game một cách tin cậy 100%:
+    1. Ưu tiên qua GameBridgeAgent (tức thì, 0 độ trễ, không lỗi giao diện).
+    2. Fallback: dùng xdotool với phím xác nhận F1 (Left Softkey) và độ trễ 1.15s
+       để tôn trọng giới hạn cooldown 1000ms trong mã nguồn Dragonboy.
+    """
+    if send_via_bridge(c):
+        return True
+
+    # Fallback xdotool
+    chat_open = is_chat_box_open()
+    if not chat_open:
+        cmd_open = ["xdotool", "key", "Return"]
+        if wid:
+            cmd_open = ["xdotool", "key", "--window", wid, "Return"]
+        safe_run(cmd_open, timeout=2)
+        time.sleep(0.3)
+
+    # Xóa sạch ô chat bằng click (X) và BackSpace
+    cmd_click_clear = ["xdotool", "mousemove", "211", str(246 + MENU_BAR_OFFSET), "click", "1"]
+    safe_run(cmd_click_clear, timeout=1)
+    time.sleep(0.08)
+
+    cmd_clear = ["xdotool", "key", "--repeat", "35", "--delay", "6", "BackSpace"]
+    if wid:
+        cmd_clear = ["xdotool", "key", "--window", wid, "--repeat", "35", "--delay", "6", "BackSpace"]
+    safe_run(cmd_clear, timeout=1)
+    time.sleep(0.08)
+
+    # Gõ lệnh
+    cmd_type = ["xdotool", "type", "--delay", "25", "--", c]
+    if wid:
+        cmd_type = ["xdotool", "type", "--window", wid, "--delay", "25", "--", c]
+    safe_run(cmd_type, timeout=3)
+    time.sleep(0.18)
+
+    # Xác nhận lệnh: Trong Dragonboy, nút OK là Left Softkey (F1) hoặc click (80, 274)
+    cmd_click_ok = ["xdotool", "mousemove", "80", str(274 + MENU_BAR_OFFSET), "click", "1"]
+    safe_run(cmd_click_ok, timeout=2)
+    time.sleep(0.1)
+
+    # Gửi Return và F1 (F1 = Left Softkey trong MicroEmulator)
+    safe_run(["xdotool", "key", "Return"], timeout=1)
+    safe_run(["xdotool", "key", "F1"], timeout=1)
+
+    # Chờ tối thiểu 1.15s vì Dragonboy có chat cooldown 1000ms
+    time.sleep(0.5)
+    if is_chat_box_open():
+        safe_run(cmd_click_ok, timeout=1)
+        safe_run(["xdotool", "key", "F1"], timeout=1)
+        time.sleep(0.65)
+    else:
+        time.sleep(0.65)
+
+    return True
+
 @app.route('/api/quick_cmd', methods=['POST'])
 def handle_quick_cmd():
     if not check_pin(request):
@@ -605,58 +689,99 @@ def handle_quick_cmd():
 
     cmds = [c.strip() for c in raw_cmd.replace(';', ',').split(',') if c.strip()]
 
+    # Thử gửi toàn bộ qua bridge nếu có
+    if send_via_bridge(raw_cmd):
+        return jsonify({"status": "ok", "method": "bridge", "sent_cmd": raw_cmd, "executed": cmds})
+
     try:
         with x11_lock:
             wid = focus_game_window()
             for c in cmds:
-                # 1. Đảm bảo mở khung chat
-                chat_open = is_chat_box_open()
-                if not chat_open:
-                    cmd_open = ["xdotool", "key", "Return"]
-                    if wid:
-                        cmd_open = ["xdotool", "key", "--window", wid, "Return"]
-                    safe_run(cmd_open, timeout=2)
-                    time.sleep(0.25)
+                send_chat_command(c, wid=wid)
 
-                # 2. Xóa sạch mọi ký tự cũ còn tồn trong ô chat
-                # Click nút đỏ (X) tại (211, 246) và gửi BackSpace
-                cmd_click_clear = ["xdotool", "mousemove", "211", str(246 + MENU_BAR_OFFSET), "click", "1"]
-                safe_run(cmd_click_clear, timeout=1)
-                time.sleep(0.08)
-
-                cmd_clear = ["xdotool", "key", "--repeat", "30", "--delay", "6", "BackSpace"]
-                if wid:
-                    cmd_clear = ["xdotool", "key", "--window", wid, "--repeat", "30", "--delay", "6", "BackSpace"]
-                safe_run(cmd_clear, timeout=1)
-                time.sleep(0.08)
-
-                # 3. Gõ lệnh mod chính xác
-                cmd_type = ["xdotool", "type", "--delay", "25", "--", c]
-                if wid:
-                    cmd_type = ["xdotool", "type", "--window", wid, "--delay", "25", "--", c]
-                safe_run(cmd_type, timeout=3)
-                time.sleep(0.18)
-
-                # 4. Xác nhận gửi lệnh: Click nút [ OK ] màu cam chuẩn xác tại (80, 274)
-                # Tọa độ thực trên X11: x = 80, y = 274 + MENU_BAR_OFFSET (298)
-                cmd_click_ok = ["xdotool", "mousemove", "80", str(274 + MENU_BAR_OFFSET), "click", "1"]
-                safe_run(cmd_click_ok, timeout=2)
-                time.sleep(0.1)
-
-                # Gửi thêm Return và F2 để đảm bảo mọi chế độ input đều kích hoạt OK
-                safe_run(["xdotool", "key", "Return"], timeout=1)
-                safe_run(["xdotool", "key", "F2"], timeout=1)
-
-                # 5. Chờ khung chat đóng hẳn trước khi gõ lệnh tiếp theo
-                time.sleep(0.35)
-                # Nếu khung chat vẫn chưa đóng (do game lag), click lại OK
-                if is_chat_box_open():
-                    safe_run(cmd_click_ok, timeout=1)
-                    time.sleep(0.2)
-
-        return jsonify({"status": "ok", "sent_cmd": raw_cmd, "executed": cmds})
+        return jsonify({"status": "ok", "method": "xdotool", "sent_cmd": raw_cmd, "executed": cmds})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/auto_farm', methods=['POST'])
+def handle_auto_farm():
+    """
+    Tự động hóa hoàn toàn chức năng Treo Map & Auto Up SKH:
+    1. Tự động bay map bằng Xmap (nếu có chọn map cụ thể).
+    2. Chờ nhân vật bay tới map rồi đổi khu (zone) mong muốn.
+    3. Tự động kích hoạt TDLT hoặc Tàn sát kèm theo toàn bộ bộ tiện ích:
+       Lọc đồ SKH (locdo), Auto nhặt (anhat), Giữ map (gb), Chạy x5 (s20), Giảm đồ họa (xdh), Ẩn người (annguoi).
+    """
+    if not check_pin(request):
+        return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
+
+    data = request.get_json(silent=True) or {}
+    map_val = str(data.get("map", "")).strip()
+    zone_val = str(data.get("zone", "")).strip()
+    mode = str(data.get("mode", "tdlt")).strip().lower()
+
+    # 1. Ưu tiên gửi qua GameBridgeAgent nội bộ
+    try:
+        import urllib.parse
+        import urllib.request
+        query = f"map={urllib.parse.quote(map_val)}&zone={urllib.parse.quote(zone_val)}&mode={urllib.parse.quote(mode)}"
+        url = f"http://127.0.0.1:28888/api/game/auto_farm?{query}"
+        req = urllib.request.Request(url, data=b"", headers={"User-Agent": "NRO-Server"})
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
+            if resp.status == 200:
+                res_data = json.loads(resp.read().decode('utf-8'))
+                return jsonify({
+                    "status": "ok",
+                    "method": "bridge",
+                    "message": "Đã kích hoạt Auto Farm thành công qua Game Engine!",
+                    "details": res_data
+                })
+    except Exception as e:
+        print(f"[AUTO_FARM] Bridge offline ({e}), running fallback thread...")
+
+    # 2. Fallback: chạy nền bằng chuỗi chat commands
+    def fallback_farm_worker():
+        try:
+            with x11_lock:
+                wid = focus_game_window()
+                # Nếu người dùng chọn mở menu Xmap
+                if map_val == "xmap":
+                    send_chat_command("xmap", wid=wid)
+                    time.sleep(1.2)
+
+                # Đổi khu nếu có
+                if zone_val and zone_val.isdigit():
+                    send_chat_command(f"k{zone_val}", wid=wid)
+                    time.sleep(1.2)
+
+                # Bật chế độ farm (tdlt hoặc ts)
+                farm_cmd = "ts" if mode == "ts" else "tdlt"
+                send_chat_command(farm_cmd, wid=wid)
+                time.sleep(1.2)
+
+                # Kích hoạt toàn bộ tiện ích mod
+                for util in ["locdo", "anhat", "gb", "s20", "xdh", "annguoi"]:
+                    send_chat_command(util, wid=wid)
+                    time.sleep(1.2)
+        except Exception as err:
+            print(f"[FALLBACK_FARM] Error: {err}")
+
+    threading.Thread(target=fallback_farm_worker, daemon=True).start()
+
+    return jsonify({
+        "status": "ok",
+        "method": "fallback",
+        "message": "Đã bắt đầu chuỗi tự động đổi khu và kích hoạt Farm!"
+    })
+
+@app.route('/api/game_status', methods=['GET'])
+def handle_game_status():
+    if not check_pin(request):
+        return jsonify({"error": "Unauthorized"}), 403
+    st = get_bridge_status()
+    if st:
+        return jsonify({"status": "ok", "game": st})
+    return jsonify({"status": "offline", "game": None})
 
 def get_menu_layout():
     """
