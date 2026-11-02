@@ -1,5 +1,7 @@
 # NRO Cloud Controller
 
+MicroEmulator config and RMS saves are stored under `/data/.microemulator`. Mount a persistent volume at `/data` to retain the saved game account, server, and emulator setup across container replacement. On startup, the emulator copies legacy files from `/root/.microemulator` into this location when needed.
+
 Ứng dụng chạy MicroEmulator trong Xvfb, điều khiển bằng dashboard Flask và `xdotool`. Màn hình game là 240×360; Xvfb dùng 240×384 để chứa thêm vùng menu 24 px của MicroEmulator, phần này được cắt khỏi ảnh gửi lên dashboard.
 
 ## ROM và dữ liệu

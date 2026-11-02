@@ -402,27 +402,30 @@
                                     <option value="6">Đông Karjn (Map 6)</option>
                                 </optgroup>
                                 <optgroup label="🌿 Namếc (Map SKH 100 - 500 HP)">
-                                    <option value="8">Đồi nấm cục (Map 8 - Quái Ốc Mượn Hồn)</option>
-                                    <option value="9">Thung lũng Maima (Map 9 - Quái Thằn Lằn)</option>
-                                    <option value="11">Vực cấm (Map 11)</option>
-                                    <option value="12">Núi tuyết (Map 12)</option>
+                                    <option value="8">Đồi nấm tím (Map 8)</option>
+                                    <option value="9">Thị trấn Moori (Map 9)</option>
+                                    <option value="10">Thung lũng Namếc (Map 10)</option>
+                                    <option value="11">Thung lũng Maima (Map 11 - Quái Thằn Lằn)</option>
+                                    <option value="12">Vực Maima (Map 12)</option>
                                     <option value="13">Đảo Guru (Map 13)</option>
                                 </optgroup>
                                 <optgroup label="🪐 Xayda (Map SKH 100 - 500 HP)">
-                                    <option value="14">Đồi hoang (Map 14 - Quái Khủng Long)</option>
-                                    <option value="15">Làng Aru (Map 15 - Quái Bọ Đỏ)</option>
-                                    <option value="16">Rừng nguyên sinh (Map 16)</option>
-                                    <option value="17">Rừng cọ (Map 17)</option>
-                                    <option value="18">Thác Karjn (Map 18)</option>
+                                    <option value="14">Làng Kakarot (Map 14)</option>
+                                    <option value="15">Đồi hoang (Map 15 - Quái Khủng Long)</option>
+                                    <option value="16">Làng Plant (Map 16)</option>
+                                    <option value="17">Rừng nguyên sinh (Map 17)</option>
+                                    <option value="18">Rừng thông Xayda (Map 18)</option>
                                 </optgroup>
-                                <optgroup label="🌌 Vực Đá / Siêu Thị / Căn Cứ Fide">
-                                    <option value="24">Sân sau siêu thị (Map 24)</option>
-                                    <option value="25">Siêu thị (Map 25)</option>
-                                    <option value="26">Thành phố phía tây (Map 26)</option>
+                                <optgroup label="🗺️ Bản đồ khác (đúng ID game)">
+                                    <option value="24">Trạm tàu vũ trụ (Map 24)</option>
                                     <option value="27">Rừng Bamboo (Map 27)</option>
-                                    <option value="28">Rừng tuyết (Map 28)</option>
-                                    <option value="29">Núi Appule (Map 29)</option>
-                                    <option value="30">Căn cứ Fide (Map 30)</option>
+                                    <option value="28">Rừng dương xỉ (Map 28)</option>
+                                    <option value="29">Nam Kamê (Map 29)</option>
+                                    <option value="30">Đảo Bulông (Map 30)</option>
+                                    <option value="69">Vực cấm (Map 69)</option>
+                                    <option value="70">Núi Appule (Map 70)</option>
+                                    <option value="84">Siêu thị (Map 84)</option>
+                                    <option value="104">Sân sau siêu thị (Map 104)</option>
                                 </optgroup>
                             </select>
                         </div>
@@ -776,7 +779,7 @@
                     state.failCount++;
                     if (state.failCount >= 3) {
                         screenOverlay.classList.remove('opacity-0', 'pointer-events-none');
-                        overlayText.textContent = "Mất kết nối hoặc phiên đăng nhập đã hết hạn.";
+                        overlayText.textContent = "Không tải được màn hình game. Hãy thử Làm mới hoặc Khởi động lại game.";
                     }
                     state.isFetching = false;
                     if (state.fpsInterval > 0) {
@@ -839,12 +842,21 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
-                }).then(() => {
+                }).then(async res => {
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok || data.status !== 'ok') {
+                        throw new Error(data.error || `Lệnh thất bại (HTTP ${res.status})`);
+                    }
                     // Trigger fast frame capture after action (60ms and 220ms)
                     state.isFetching = false;
                     setTimeout(fetchScreenshot, 60);
                     setTimeout(fetchScreenshot, 220);
-                }).catch(err => console.error(err));
+                    return data;
+                }).catch(err => {
+                    showToast(err.message || 'Không gửi được lệnh tới game.', 'rose');
+                    console.error(err);
+                    return null;
+                });
             }
 
             // Touch / Click on Screen Canvas
@@ -876,24 +888,28 @@
             });
 
             // Quick Mod Chips
+            function sendModAction(cmd) {
+                return fetch('/api/mod_action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pin: state.pin, cmd })
+                }).then(async response => {
+                    const data = await response.json().catch(() => ({}));
+                    if (!response.ok || data.status !== 'ok') {
+                        throw new Error(data.error || `Không thực thi được thao tác (HTTP ${response.status})`);
+                    }
+                    return data;
+                });
+            }
+
             document.querySelectorAll('[data-cmd]').forEach(btn => {
                 const cmd = btn.getAttribute('data-cmd');
                 btn.addEventListener('click', () => {
-                    showToast(`Đang gửi lệnh: ${cmd}`, 'indigo');
-                    fetch('/api/quick_cmd', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ pin: state.pin, cmd: cmd })
-                    }).then(r => r.json()).then(res => {
-                        if (res.error) {
-                            showToast(res.error, 'rose');
-                        } else {
-                            showToast(`Đã gửi lệnh: ${cmd}`, 'emerald');
-                        }
+                    showToast(`Đang thực thi: ${cmd}`, 'indigo');
+                    sendModAction(cmd).then(() => {
+                        showToast(`Đã thực thi: ${cmd}`, 'emerald');
                         setTimeout(fetchScreenshot, 400);
-                    }).catch(() => {
-                        showToast('Lỗi gửi lệnh', 'rose');
-                    });
+                    }).catch(err => showToast(err.message || 'Lỗi thực thi thao tác', 'rose'));
                 });
             });
 
@@ -955,22 +971,27 @@
             // Quick Xmap opener
             function triggerXmap() {
                 showToast("Đang mở Menu Xmap trên màn hình game...", "indigo");
-                fetch('/api/quick_cmd', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pin: state.pin, cmd: 'xmap' })
-                }).then(() => {
+                sendModAction('xmap').then(() => {
                     showToast("Bảng Xmap đã mở! Dùng phím Lên/Xuống + OK để chọn map", "emerald");
                     setTimeout(fetchScreenshot, 400);
-                }).catch(() => showToast("Lỗi mở Xmap", "rose"));
+                }).catch(err => showToast(err.message || "Lỗi mở Xmap", "rose"));
             }
 
             if (btnOpenXmap) btnOpenXmap.addEventListener('click', triggerXmap);
             // Restore saved farm map & zone from localStorage
             try {
                 const savedMap = localStorage.getItem('nro_farm_map');
+                // Correct older dropdown values whose labels pointed at the wrong map IDs.
+                const correctedMapIds = {
+                    '9': '11', '11': '69', '12': '107', '14': '15',
+                    '16': '17', '17': '35', '24': '104', '25': '84',
+                    '26': '0', '28': '106', '29': '70', '30': '71'
+                };
+                const restoredMap = savedMap in correctedMapIds ? correctedMapIds[savedMap] : savedMap;
                 if (savedMap !== null && selectFarmMap) {
-                    selectFarmMap.value = savedMap;
+                    selectFarmMap.value = restoredMap;
+                    if (selectFarmMap.value !== restoredMap) selectFarmMap.value = '0';
+                    if (restoredMap !== savedMap) localStorage.setItem('nro_farm_map', selectFarmMap.value);
                 }
             } catch (e) {}
 
@@ -998,15 +1019,10 @@
                     }
                     try { localStorage.setItem('nro_farm_zone', z.toString()); } catch (e) {}
                     showToast(`Đang chuyển sang Khu ${z}...`, "indigo");
-                    fetch('/api/quick_cmd', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ pin: state.pin, cmd: `k${z}` })
-                    }).then(r => r.json()).then(res => {
-                        if (res.error) showToast(res.error, "rose");
-                        else showToast(`Đã gửi lệnh đổi sang Khu ${z}!`, "emerald");
+                    sendModAction(`k${z}`).then(() => {
+                        showToast(`Đã đổi sang Khu ${z}!`, "emerald");
                         setTimeout(fetchScreenshot, 400);
-                    }).catch(() => showToast("Lỗi kết nối", "rose"));
+                    }).catch(err => showToast(err.message || "Lỗi kết nối", "rose"));
                 });
             }
 
@@ -1082,14 +1098,10 @@
             if (btnStopAllAuto) {
                 btnStopAllAuto.addEventListener('click', () => {
                     showToast("Đang dừng Auto & khôi phục đồ họa bình thường...", "amber");
-                    fetch('/api/quick_cmd', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ pin: state.pin, cmd: 'ts, tdlt, xdh, annguoi' })
-                    }).then(() => {
+                    sendModAction('ts, tdlt, xdh, annguoi').then(() => {
                         showToast("Đã dừng tự động & bật lại hiển thị!", "emerald");
                         setTimeout(fetchScreenshot, 500);
-                    }).catch(() => showToast("Lỗi gửi lệnh", "rose"));
+                    }).catch(err => showToast(err.message || "Lỗi thực thi thao tác", "rose"));
                 });
             }
 
@@ -1107,11 +1119,16 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({})
-                }).then(() => {
+                }).then(async res => {
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok || data.status !== 'ok') {
+                        throw new Error(data.error || `Không thể khởi động lại (HTTP ${res.status})`);
+                    }
                     screenOverlay.classList.remove('opacity-0', 'pointer-events-none');
                     overlayText.textContent = "Đang khởi động lại game...";
                     setTimeout(fetchScreenshot, 3000);
-                });
+                    showToast(data.message || 'Đang khởi động lại game.');
+                }).catch(err => showToast(err.message || 'Không thể khởi động lại game.', 'rose'));
             });
 
             // Refresh Screen Button

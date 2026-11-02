@@ -48,6 +48,13 @@ def safe_run(cmd, timeout=3):
 def restart_emulator():
     subprocess.run(["supervisorctl", "restart", "emulator"], timeout=15, check=True)
 
+def run_input_command(cmd, timeout=3):
+    """Run a dashboard input command and fail visibly if X11 rejects it."""
+    result = safe_run(cmd, timeout=timeout)
+    if result is None or result.returncode != 0:
+        raise RuntimeError("Không gửi được lệnh tới màn hình game. Hãy thử khởi động lại game.")
+    return result
+
 # Persistent administrator configuration
 SECURITY_CONFIG_FILE = os.environ.get("SECURITY_CONFIG_FILE", "/data/security_config.json")
 
@@ -466,7 +473,7 @@ def type_text_reliably(value, wid=None):
         cmd_paste = ["xdotool", "key", "ctrl+v"]
         if wid:
             cmd_paste = ["xdotool", "key", "--window", wid, "ctrl+v"]
-        safe_run(cmd_paste, timeout=2)
+        run_input_command(cmd_paste, timeout=2)
         return
 
     # Cách 2: Gõ bằng xdotool (xử lý riêng ký tự @ bằng phím at trong X11/Xvfb)
@@ -477,20 +484,20 @@ def type_text_reliably(value, wid=None):
                 cmd = ["xdotool", "type", "--delay", "25", "--", part]
                 if wid:
                     cmd = ["xdotool", "type", "--window", wid, "--delay", "25", "--", part]
-                safe_run(cmd, timeout=5)
+                run_input_command(cmd, timeout=5)
                 time.sleep(0.05)
             if i < len(parts) - 1:
                 # Gõ phím @ chuẩn xác bằng xdotool key at
                 cmd_at = ["xdotool", "key", "at"]
                 if wid:
                     cmd_at = ["xdotool", "key", "--window", wid, "at"]
-                safe_run(cmd_at, timeout=2)
+                run_input_command(cmd_at, timeout=2)
                 time.sleep(0.05)
     else:
         cmd = ["xdotool", "type", "--delay", "20", "--", value]
         if wid:
             cmd = ["xdotool", "type", "--window", wid, "--delay", "20", "--", value]
-        safe_run(cmd, timeout=8)
+        run_input_command(cmd, timeout=8)
 
 @app.route('/api/input', methods=['POST'])
 def handle_input():
@@ -514,14 +521,14 @@ def handle_input():
                 cmd = ["xdotool", "key", key_to_send]
                 if wid:
                     cmd = ["xdotool", "key", "--window", wid, key_to_send]
-                safe_run(cmd, timeout=2)
+                run_input_command(cmd, timeout=2)
 
                 # Khi người dùng bấm OK / Select: Gửi kèm space để hỗ trợ trọn vẹn mọi ngữ cảnh game (cả Enter lẫn Space)
                 if raw_val.lower() in ("ok", "select"):
                     cmd_space = ["xdotool", "key", "space"]
                     if wid:
                         cmd_space = ["xdotool", "key", "--window", wid, "space"]
-                    safe_run(cmd_space, timeout=2)
+                    run_input_command(cmd_space, timeout=2)
 
             elif action == "click":
                 try:
@@ -530,7 +537,7 @@ def handle_input():
                     x = max(0, min(SCREEN_WIDTH - 1, int(round(raw_x))))
                     y = max(0, min(SCREEN_HEIGHT - 1, int(round(raw_y)))) + MENU_BAR_OFFSET
                     cmd = ["xdotool", "mousemove", str(x), str(y), "click", "1"]
-                    safe_run(cmd, timeout=2)
+                    run_input_command(cmd, timeout=2)
                 except (ValueError, TypeError):
                     return jsonify({"error": "Invalid coordinates"}), 400
 
@@ -544,30 +551,30 @@ def handle_input():
                     cmd = ["xdotool", "key", "F2"]
                     if wid:
                         cmd = ["xdotool", "key", "--window", wid, "F2"]
-                    safe_run(cmd, timeout=2)
+                    run_input_command(cmd, timeout=2)
                 elif submit == "enter" or data.get("enter") is True:
                     cmd = ["xdotool", "key", "Return"]
                     if wid:
                         cmd = ["xdotool", "key", "--window", wid, "Return"]
-                    safe_run(cmd, timeout=2)
+                    run_input_command(cmd, timeout=2)
 
             elif action == "clear_text":
                 # Clear all characters in the active text box
                 cmd = ["xdotool", "key", "--repeat", "45", "--delay", "8", "BackSpace"]
                 if wid:
                     cmd = ["xdotool", "key", "--window", wid, "--repeat", "45", "--delay", "8", "BackSpace"]
-                safe_run(cmd, timeout=3)
+                run_input_command(cmd, timeout=3)
 
             elif action == "anti_stuck":
                 # Đóng mọi hộp thoại đang mở: hộp thoại chat (80, 274), thông báo giữa (120, 245/255), thông báo dưới (120, 285)
-                safe_run(["xdotool", "mousemove", "80", str(274 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
-                safe_run(["xdotool", "mousemove", "120", str(255 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
-                safe_run(["xdotool", "mousemove", "120", str(245 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
-                safe_run(["xdotool", "mousemove", "120", str(285 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
-                safe_run(["xdotool", "key", "Return"], timeout=1)
-                safe_run(["xdotool", "key", "space"], timeout=1)
-                safe_run(["xdotool", "key", "F1"], timeout=1)
-                safe_run(["xdotool", "key", "Escape"], timeout=1)
+                run_input_command(["xdotool", "mousemove", "80", str(274 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                run_input_command(["xdotool", "mousemove", "120", str(255 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                run_input_command(["xdotool", "mousemove", "120", str(245 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                run_input_command(["xdotool", "mousemove", "120", str(285 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                run_input_command(["xdotool", "key", "Return"], timeout=1)
+                run_input_command(["xdotool", "key", "space"], timeout=1)
+                run_input_command(["xdotool", "key", "F1"], timeout=1)
+                run_input_command(["xdotool", "key", "Escape"], timeout=1)
 
             else:
                 return jsonify({"error": "Invalid action"}), 400
@@ -606,6 +613,18 @@ def send_via_bridge(cmd):
     except Exception:
         pass
     return False
+
+def send_mod_actions_via_bridge(cmd):
+    """Execute mod commands through the JVM handler only; never type into game chat."""
+    import urllib.parse
+    import urllib.request
+    url = f"http://127.0.0.1:28888/api/game/mod_action?cmd={urllib.parse.quote(cmd)}"
+    req = urllib.request.Request(url, data=b"", headers={"User-Agent": "NRO-Server"})
+    with urllib.request.urlopen(req, timeout=2.0) as resp:
+        result = json.loads(resp.read().decode("utf-8"))
+        if resp.status != 200 or result.get("status") != "ok":
+            raise RuntimeError(result.get("error", "GameBridge rejected the mod action."))
+        return result
 
 def get_bridge_status():
     """Lấy trạng thái game thời gian thực từ JVM Bridge."""
@@ -696,19 +715,31 @@ def handle_quick_cmd():
 
     cmds = [c.strip() for c in raw_cmd.replace(';', ',').split(',') if c.strip()]
 
-    # Thử gửi toàn bộ qua bridge nếu có
+    # Custom commands also go through the JVM bridge; never open the chat UI as fallback.
     if send_via_bridge(raw_cmd):
         return jsonify({"status": "ok", "method": "bridge", "sent_cmd": raw_cmd, "executed": cmds})
+    return jsonify({"error": "GameBridge chưa sẵn sàng. Hãy khởi động lại game rồi thử lại."}), 503
+
+@app.route('/api/mod_action', methods=['POST'])
+def handle_mod_action():
+    if not check_pin(request):
+        return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
+
+    data = request.get_json(silent=True) or {}
+    raw_cmd = str(data.get("cmd", "")).strip().lower()
+    if not raw_cmd:
+        return jsonify({"error": "Missing mod action."}), 400
+
+    allowed = {"cd", "locdo", "anhat", "gb", "s20", "kvt", "nb", "cflag", "xdh", "annguoi", "cs", "xmap", "ts", "tdlt"}
+    cmds = [cmd.strip() for cmd in raw_cmd.replace(";", ",").split(",") if cmd.strip()]
+    if any(cmd not in allowed and not (cmd.startswith("k") and cmd[1:].isdigit()) for cmd in cmds):
+        return jsonify({"error": "Unsupported mod action."}), 400
 
     try:
-        with x11_lock:
-            wid = focus_game_window()
-            for c in cmds:
-                send_chat_command(c, wid=wid)
-
-        return jsonify({"status": "ok", "method": "xdotool", "sent_cmd": raw_cmd, "executed": cmds})
+        result = send_mod_actions_via_bridge(",".join(cmds))
+        return jsonify({"status": "ok", "method": "game_bridge", "executed": cmds, "details": result})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": f"GameBridge chưa sẵn sàng: {e}"}), 503
 
 @app.route('/api/auto_farm', methods=['POST'])
 def handle_auto_farm():
@@ -727,7 +758,6 @@ def handle_auto_farm():
     zone_val = str(data.get("zone", "")).strip()
     mode = str(data.get("mode", "all")).strip().lower()
 
-    # 1. Ưu tiên gửi qua GameBridgeAgent nội bộ
     try:
         import urllib.parse
         import urllib.request
@@ -744,50 +774,7 @@ def handle_auto_farm():
                     "details": res_data
                 })
     except Exception as e:
-        print(f"[AUTO_FARM] Bridge offline ({e}), running fallback thread...")
-
-    # 2. Fallback: chạy nền bằng chuỗi chat commands
-    def fallback_farm_worker():
-        try:
-            with x11_lock:
-                wid = focus_game_window()
-                # Nếu người dùng chọn mở menu Xmap
-                if map_val == "xmap":
-                    send_chat_command("xmap", wid=wid)
-                    time.sleep(1.2)
-
-                # Đổi khu nếu có
-                if zone_val and zone_val.isdigit():
-                    send_chat_command(f"k{zone_val}", wid=wid)
-                    time.sleep(1.2)
-
-                # Bật chế độ farm: Gộp cả TDLT và Tàn Sát
-                if mode in ("all", "combo"):
-                    send_chat_command("tdlt", wid=wid)
-                    time.sleep(1.2)
-                    send_chat_command("ts", wid=wid)
-                    time.sleep(1.2)
-                elif mode == "ts":
-                    send_chat_command("ts", wid=wid)
-                    time.sleep(1.2)
-                else:
-                    send_chat_command("tdlt", wid=wid)
-                    time.sleep(1.2)
-
-                # Kích hoạt toàn bộ tiện ích mod
-                for util in ["locdo", "anhat", "gb", "s20", "xdh", "annguoi"]:
-                    send_chat_command(util, wid=wid)
-                    time.sleep(1.2)
-        except Exception as err:
-            print(f"[FALLBACK_FARM] Error: {err}")
-
-    threading.Thread(target=fallback_farm_worker, daemon=True).start()
-
-    return jsonify({
-        "status": "ok",
-        "method": "fallback",
-        "message": "Đã bắt đầu chuỗi tự động đổi khu và kích hoạt Farm (TDLT + Tàn Sát)!"
-    })
+        return jsonify({"error": f"GameBridge chưa sẵn sàng: {e}"}), 503
 
 @app.route('/api/game_status', methods=['GET'])
 def handle_game_status():
@@ -854,25 +841,32 @@ def get_all_suite_dirs():
     Trả về danh sách tất cả các thư mục suite RMS của MicroEmulator để đảm bảo ghi đúng 100%.
     Bao gồm suite-Dragonboy250 v3.0, suite-null, và tất cả thư mục suite-* hiện có.
     """
-    base_dirs = ["/root/.microemulator", os.path.expanduser("~/.microemulator")]
+    primary_home = os.environ.get(
+        "MICROEMULATOR_HOME",
+        os.path.join(os.environ.get("HOME", "/data"), ".microemulator")
+    )
+    base_dirs = [primary_home, "/root/.microemulator", os.path.expanduser("~/.microemulator")]
     home = os.environ.get("HOME")
     if home:
         base_dirs.append(os.path.join(home, ".microemulator"))
 
-    suite_dirs = set()
-    for base in base_dirs:
+    suite_dirs = []
+    for base in dict.fromkeys(base_dirs):
         try:
             if os.path.exists(base):
-                for name in os.listdir(base):
-                    if name.startswith("suite-"):
-                        suite_dirs.add(os.path.join(base, name))
-            suite_dirs.add(os.path.join(base, "suite-Dragonboy250 v3.0"))
-            suite_dirs.add(os.path.join(base, "suite-null"))
+                for name in sorted(os.listdir(base)):
+                    suite_dir = os.path.join(base, name)
+                    if name.startswith("suite-") and suite_dir not in suite_dirs:
+                        suite_dirs.append(suite_dir)
+            for name in ("suite-Dragonboy250 v3.0", "suite-null"):
+                suite_dir = os.path.join(base, name)
+                if suite_dir not in suite_dirs:
+                    suite_dirs.append(suite_dir)
         except Exception:
             pass
 
     if not suite_dirs:
-        suite_dirs.add("/root/.microemulator/suite-Dragonboy250 v3.0")
+        suite_dirs.append(os.path.join(primary_home, "suite-Dragonboy250 v3.0"))
 
     for d in suite_dirs:
         try:
@@ -883,7 +877,11 @@ def get_all_suite_dirs():
 
 def get_rms_suite_dir():
     dirs = get_all_suite_dirs()
-    return dirs[0] if dirs else "/root/.microemulator/suite-Dragonboy250 v3.0"
+    primary_home = os.environ.get(
+        "MICROEMULATOR_HOME",
+        os.path.join(os.environ.get("HOME", "/data"), ".microemulator")
+    )
+    return dirs[0] if dirs else os.path.join(primary_home, "suite-Dragonboy250 v3.0")
 
 def make_rs_bytes(store_name, records):
     """

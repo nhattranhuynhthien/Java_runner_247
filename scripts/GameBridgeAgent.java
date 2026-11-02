@@ -99,13 +99,13 @@ public class GameBridgeAgent {
         return false;
     }
 
-    // Execute chat command in game
-    public static boolean executeChatCmd(String cmd) {
+    // Execute a supported mod action directly without opening the game's chat UI.
+    public static boolean executeModAction(String cmd) {
         if (cmd == null || cmd.trim().isEmpty()) return false;
         cmd = cmd.trim();
         boolean handled = false;
         try {
-            // 1. Special handling for xmap
+            // Special handling for the Xmap menu.
             if ("xmap".equalsIgnoreCase(cmd)) {
                 Class<?> cls_f = getGameClass("nro.f");
                 if (cls_f != null) {
@@ -118,9 +118,10 @@ public class GameBridgeAgent {
                         handled = true;
                     }
                 }
+                if (handled) return true;
             }
 
-            // 2. Execute via nro.F (Mod Command Handler)
+            // Invoke the mod command handler directly.
             Class<?> clsF = getGameClass("nro.F");
             if (clsF != null) {
                 Method aMeth = clsF.getMethod("a");
@@ -131,7 +132,7 @@ public class GameBridgeAgent {
                     if (Boolean.TRUE.equals(resD)) {
                         handled = true;
                     } else {
-                        // Also try parametrized command handler 'e' (e.g. k5, s20, kts, etc.)
+                        // Also try parametrized actions such as k5 and s20.
                         try {
                             Method eMeth = clsF.getMethod("e", String.class);
                             Object resE = eMeth.invoke(instF, cmd);
@@ -141,25 +142,31 @@ public class GameBridgeAgent {
                     System.out.println("[BRIDGE] Executed nro.F cmd [" + cmd + "] -> " + handled);
                 }
             }
+        } catch (Throwable t) {
+            System.out.println("[BRIDGE] executeModAction error for [" + cmd + "]: " + t);
+        }
+        return handled;
+    }
 
-            // 3. If not handled by mod, pass to network chat pipeline nro.am
-            if (!handled) {
-                Class<?> clsAm = getGameClass("nro.am");
-                if (clsAm != null) {
-                    Method aMeth = clsAm.getMethod("a");
-                    Object instAm = aMeth.invoke(null);
-                    if (instAm != null) {
-                        Method pMeth = clsAm.getMethod("p", String.class);
-                        pMeth.invoke(instAm, cmd);
-                        System.out.println("[BRIDGE] Executed via nro.am.a().p [" + cmd + "]");
-                        handled = true;
-                    }
+    // Legacy custom-command route: direct mod action first, then game chat pipeline.
+    public static boolean executeChatCmd(String cmd) {
+        if (executeModAction(cmd)) return true;
+        try {
+            Class<?> clsAm = getGameClass("nro.am");
+            if (clsAm != null) {
+                Method aMeth = clsAm.getMethod("a");
+                Object instAm = aMeth.invoke(null);
+                if (instAm != null) {
+                    Method pMeth = clsAm.getMethod("p", String.class);
+                    pMeth.invoke(instAm, cmd.trim());
+                    System.out.println("[BRIDGE] Executed via nro.am.a().p [" + cmd + "]");
+                    return true;
                 }
             }
         } catch (Throwable t) {
             System.out.println("[BRIDGE] executeChatCmd error for [" + cmd + "]: " + t);
         }
-        return handled;
+        return false;
     }
 
     // Get current game status
@@ -315,6 +322,28 @@ public class GameBridgeAgent {
                     statusCode = 400;
                     jsonResp = "{\"error\": \"Missing cmd parameter\"}";
                 }
+            } else if (path.equals("/api/game/mod_action")) {
+                String cmd = params.get("cmd");
+                if (cmd != null && !cmd.trim().isEmpty()) {
+                    String[] actions = cmd.split("[,;]");
+                    String failedAction = null;
+                    for (String action : actions) {
+                        action = action.trim();
+                        if (!action.isEmpty() && !executeModAction(action)) {
+                            failedAction = action;
+                            break;
+                        }
+                    }
+                    if (failedAction == null) {
+                        jsonResp = "{\"status\": \"ok\", \"cmd\": \"" + cmd + "\"}";
+                    } else {
+                        statusCode = 400;
+                        jsonResp = "{\"status\": \"error\", \"error\": \"Unsupported mod action: " + failedAction + "\"}";
+                    }
+                } else {
+                    statusCode = 400;
+                    jsonResp = "{\"error\": \"Missing cmd parameter\"}";
+                }
             } else if (path.equals("/api/game/auto_farm")) {
                 // Batch auto farm sequence with smart map travel
                 final String mapStr = params.get("map");
@@ -339,10 +368,14 @@ public class GameBridgeAgent {
                                 Integer curMap = (Integer) curStat.get("map_id");
                                 if (curMap == null || !curMap.equals(targetMap)) {
                                     System.out.println("[BRIDGE] AutoFarm: Traveling to map " + targetMap + "...");
-                                    travelToMap(targetMap);
+                                    if (!travelToMap(targetMap)) {
+                                        System.out.println("[BRIDGE] AutoFarm: Could not start travel to map " + targetMap + ".");
+                                        return;
+                                    }
 
                                     // Wait until arrived at target map (or max 60 seconds)
                                     long startWait = System.currentTimeMillis();
+                                    boolean arrived = false;
                                     while (System.currentTimeMillis() - startWait < 60000) {
                                         Thread.sleep(1000);
                                         Map<String, Object> st = getStatus();
@@ -350,8 +383,13 @@ public class GameBridgeAgent {
                                         Boolean xmapRun = (Boolean) st.get("xmap_running");
                                         if (cm != null && cm.equals(targetMap) && (xmapRun == null || !xmapRun)) {
                                             System.out.println("[BRIDGE] AutoFarm: Arrived at target map " + targetMap + "!");
+                                            arrived = true;
                                             break;
                                         }
+                                    }
+                                    if (!arrived) {
+                                        System.out.println("[BRIDGE] AutoFarm: Timed out waiting for map " + targetMap + "; farm actions cancelled.");
+                                        return;
                                     }
                                     // Settle after arrival
                                     Thread.sleep(1200);
@@ -362,36 +400,36 @@ public class GameBridgeAgent {
                             if (zoneStr != null && !zoneStr.trim().isEmpty()) {
                                 try {
                                     int z = Integer.parseInt(zoneStr.trim());
-                                    executeChatCmd("k" + z);
+                                    executeModAction("k" + z);
                                     Thread.sleep(1000);
                                 } catch (Throwable ignored) {}
                             }
 
                             // 3. Activate auto farm mode: TDLT + TÀN SÁT COMBO
                             if ("ts".equalsIgnoreCase(mode)) {
-                                executeChatCmd("ts");
+                                executeModAction("ts");
                             } else if ("tdlt".equalsIgnoreCase(mode)) {
-                                executeChatCmd("tdlt");
+                                executeModAction("tdlt");
                             } else {
                                 // Default COMBO: activate both tdlt AND ts
-                                executeChatCmd("tdlt");
+                                executeModAction("tdlt");
                                 Thread.sleep(350);
-                                executeChatCmd("ts");
+                                executeModAction("ts");
                             }
                             Thread.sleep(300);
 
                             // 4. Activate support utilities
-                            executeChatCmd("locdo");
+                            executeModAction("locdo");
                             Thread.sleep(250);
-                            executeChatCmd("anhat");
+                            executeModAction("anhat");
                             Thread.sleep(250);
-                            executeChatCmd("gb");
+                            executeModAction("gb");
                             Thread.sleep(250);
-                            executeChatCmd("s20");
+                            executeModAction("s20");
                             Thread.sleep(250);
-                            executeChatCmd("xdh");
+                            executeModAction("xdh");
                             Thread.sleep(250);
-                            executeChatCmd("annguoi");
+                            executeModAction("annguoi");
 
                             System.out.println("[BRIDGE] AutoFarm: Combo (TDLT + Tàn Sát + Lọc Đồ + Auto Nhặt + Goback + Siêu Mượt) activated successfully!");
                         } catch (InterruptedException ie) {
@@ -410,13 +448,13 @@ public class GameBridgeAgent {
                     farmThread.interrupt();
                 }
                 stopXmap();
-                executeChatCmd("ts");
+                executeModAction("ts");
                 try { Thread.sleep(100); } catch (Throwable ignored) {}
-                executeChatCmd("tdlt");
+                executeModAction("tdlt");
                 try { Thread.sleep(100); } catch (Throwable ignored) {}
-                executeChatCmd("xdh");
+                executeModAction("xdh");
                 try { Thread.sleep(100); } catch (Throwable ignored) {}
-                executeChatCmd("annguoi");
+                executeModAction("annguoi");
                 jsonResp = "{\"status\": \"ok\", \"message\": \"Auto farm stopped & graphics restored\"}";
             } else {
                 statusCode = 404;

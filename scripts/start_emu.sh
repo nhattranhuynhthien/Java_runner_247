@@ -1,6 +1,18 @@
 #!/bin/bash
 set -e
 
+# Keep MicroEmulator configuration and RMS data on the persistent /data volume.
+EMU_HOME="${MICROEMULATOR_HOME:-/data/.microemulator}"
+EMU_USER_HOME="$(dirname "$EMU_HOME")"
+mkdir -p "$EMU_HOME"
+if [ -d "/root/.microemulator" ] && [ ! -L "/root/.microemulator" ]; then
+    cp -an /root/.microemulator/. "$EMU_HOME/"
+fi
+if [ ! -f "$EMU_HOME/config2.xml" ] && [ -f "/app/config2.xml" ]; then
+    cp /app/config2.xml "$EMU_HOME/config2.xml"
+fi
+export HOME="$EMU_USER_HOME"
+
 echo "[EMU] Waiting for Xvfb :1..."
 for i in $(seq 1 30); do
     if [ -e "/tmp/.X11-unix/X1" ]; then
@@ -35,6 +47,7 @@ fi
 if [ -f "$JAR_FILE" ]; then
     echo "[EMU] Starting game ROM: $JAR_FILE"
     exec java -Xmx220m -Xms96m -XX:+UseSerialGC -XX:TieredStopAtLevel=1 \
+        -Duser.home="$EMU_USER_HOME" \
         -Dsun.java2d.opengl=false -Dsun.java2d.pmoffscreen=false -Dsun.java2d.xrender=false \
         $AGENT_OPT \
         -jar /app/microemulator.jar --quit "$JAR_FILE"
@@ -42,6 +55,7 @@ fi
 
 echo "[EMU] No ROM found at $JAR_FILE; starting MicroEmulator launcher."
 exec java -Xmx220m -Xms96m -XX:+UseSerialGC -XX:TieredStopAtLevel=1 \
+    -Duser.home="$EMU_USER_HOME" \
     -Dsun.java2d.opengl=false -Dsun.java2d.pmoffscreen=false -Dsun.java2d.xrender=false \
     $AGENT_OPT \
     -jar /app/microemulator.jar
