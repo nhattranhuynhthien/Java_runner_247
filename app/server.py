@@ -626,6 +626,20 @@ def send_mod_actions_via_bridge(cmd):
             raise RuntimeError(result.get("error", "GameBridge rejected the mod action."))
         return result
 
+def configure_punch_via_bridge():
+    """Ask the Hùng Hero bridge to add this character's actual punch skill to Auto."""
+    import urllib.request
+    req = urllib.request.Request(
+        "http://127.0.0.1:28888/api/game/configure_punch",
+        data=b"",
+        headers={"User-Agent": "NRO-Server"}
+    )
+    with urllib.request.urlopen(req, timeout=2.0) as resp:
+        result = json.loads(resp.read().decode("utf-8"))
+        if resp.status != 200 or result.get("status") != "ok":
+            raise RuntimeError(result.get("error", "Hùng Hero không xác nhận được chiêu Đấm."))
+        return result
+
 def get_bridge_status():
     """Lấy trạng thái game thời gian thực từ JVM Bridge."""
     try:
@@ -732,7 +746,7 @@ def handle_mod_action():
 
     allowed = {"cd", "locdo", "anhat", "gb", "s20", "kvt", "nb", "cflag", "xdh", "annguoi", "cs", "xmap", "ts", "tdlt"}
     cmds = [cmd.strip() for cmd in raw_cmd.replace(";", ",").split(",") if cmd.strip()]
-    if any(cmd not in allowed and not (cmd.startswith("k") and cmd[1:].isdigit()) for cmd in cmds):
+    if any(cmd not in allowed and not (cmd.startswith("k") and cmd[1:].isdigit()) and not (cmd.startswith("skill") and cmd[5:].isdigit() and 1 <= int(cmd[5:]) <= 10) for cmd in cmds):
         return jsonify({"error": "Unsupported mod action."}), 400
 
     try:
@@ -758,6 +772,12 @@ def handle_auto_farm():
     zone_val = str(data.get("zone", "")).strip()
     mode = str(data.get("mode", "all")).strip().lower()
 
+    # Hùng Hero requires the punch skill to be included in its auto-combat skill list.
+    try:
+        punch_skill = configure_punch_via_bridge()
+    except Exception as e:
+        return jsonify({"error": f"Không cài được chiêu Đấm của Hùng Hero: {e}"}), 503
+
     try:
         import urllib.parse
         import urllib.request
@@ -770,7 +790,7 @@ def handle_auto_farm():
                 return jsonify({
                     "status": "ok",
                     "method": "bridge",
-                    "message": "Đã kích hoạt Auto Farm (TDLT + Tàn Sát) thành công qua Game Engine!",
+                    "message": f"Đã thêm chiêu Đấm (skill{punch_skill.get('skill')}) và kích hoạt chế độ Auto qua Game Engine!",
                     "details": res_data
                 })
     except Exception as e:

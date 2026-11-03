@@ -2,6 +2,7 @@ import java.io.*;
 import java.net.*;
 import java.lang.reflect.*;
 import java.lang.instrument.Instrumentation;
+import java.text.Normalizer;
 import java.util.*;
 
 public class GameBridgeAgent {
@@ -167,6 +168,46 @@ public class GameBridgeAgent {
             System.out.println("[BRIDGE] executeChatCmd error for [" + cmd + "]: " + t);
         }
         return false;
+    }
+
+    // Hùng Hero's auto-farm needs the actual punch skill added to its skill list.
+    // Resolve its 1-based skill number from the active character's own skill array.
+    public static int configurePunchSkill() {
+        try {
+            Class<?> clsCr = getGameClass("nro.cr");
+            Class<?> clsCt = getGameClass("nro.ct");
+            if (clsCr == null || clsCt == null) return -1;
+
+            boolean alternateSkillSet = clsCr.getField("cS").getBoolean(null);
+            Object array = clsCt.getField(alternateSkillSet ? "c" : "d").get(null);
+            if (!(array instanceof Object[])) return -1;
+
+            Object[] skills = (Object[]) array;
+            for (int i = 0; i < skills.length; i++) {
+                Object skill = skills[i];
+                if (skill == null) continue;
+                Object template = skill.getClass().getField("a").get(skill);
+                if (template == null) continue;
+                Object rawName = template.getClass().getField("b").get(template);
+                if (!(rawName instanceof String)) continue;
+
+                String normalized = Normalizer.normalize((String) rawName, Normalizer.Form.NFD)
+                    .replaceAll("\\p{M}+", "")
+                    .replace('đ', 'd').replace('Đ', 'D')
+                    .trim().toLowerCase(Locale.ROOT);
+                if (normalized.equals("dam") || normalized.startsWith("dam ") || normalized.startsWith("dam-")) {
+                    int skillNumber = i + 1;
+                    if (executeModAction("skill" + skillNumber)) {
+                        System.out.println("[BRIDGE] Added Hùng Hero punch skill [" + rawName + "] (skill" + skillNumber + ") to auto combat.");
+                        return skillNumber;
+                    }
+                    return -1;
+                }
+            }
+        } catch (Throwable t) {
+            System.out.println("[BRIDGE] configurePunchSkill error: " + t);
+        }
+        return -1;
     }
 
     // Get current game status
@@ -343,6 +384,14 @@ public class GameBridgeAgent {
                 } else {
                     statusCode = 400;
                     jsonResp = "{\"error\": \"Missing cmd parameter\"}";
+                }
+            } else if (path.equals("/api/game/configure_punch")) {
+                int skillNumber = configurePunchSkill();
+                if (skillNumber > 0) {
+                    jsonResp = "{\"status\": \"ok\", \"skill\": " + skillNumber + "}";
+                } else {
+                    statusCode = 409;
+                    jsonResp = "{\"status\": \"error\", \"error\": \"Could not find or configure the punch skill for this character\"}";
                 }
             } else if (path.equals("/api/game/auto_farm")) {
                 // Batch auto farm sequence with smart map travel
