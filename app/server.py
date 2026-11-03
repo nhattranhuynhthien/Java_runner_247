@@ -629,16 +629,24 @@ def send_mod_actions_via_bridge(cmd):
 def configure_punch_via_bridge():
     """Ask the Hùng Hero bridge to add this character's actual punch skill to Auto."""
     import urllib.request
+    import urllib.error
     req = urllib.request.Request(
         "http://127.0.0.1:28888/api/game/configure_punch",
         data=b"",
         headers={"User-Agent": "NRO-Server"}
     )
-    with urllib.request.urlopen(req, timeout=2.0) as resp:
-        result = json.loads(resp.read().decode("utf-8"))
-        if resp.status != 200 or result.get("status") != "ok":
-            raise RuntimeError(result.get("error", "Hùng Hero không xác nhận được chiêu Đấm."))
-        return result
+    try:
+        with urllib.request.urlopen(req, timeout=10.0) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+            if resp.status != 200 or result.get("status") != "ok":
+                raise RuntimeError(result.get("error", "Hùng Hero không xác nhận được chiêu Đấm."))
+            return result
+    except urllib.error.HTTPError as e:
+        try:
+            result = json.loads(e.read().decode("utf-8"))
+            raise RuntimeError(result.get("error", f"HTTP {e.code}"))
+        except (ValueError, UnicodeDecodeError):
+            raise RuntimeError(f"HTTP {e.code}")
 
 def get_bridge_status():
     """Lấy trạng thái game thời gian thực từ JVM Bridge."""
@@ -772,11 +780,11 @@ def handle_auto_farm():
     zone_val = str(data.get("zone", "")).strip()
     mode = str(data.get("mode", "all")).strip().lower()
 
-    # Hùng Hero requires the punch skill to be included in its auto-combat skill list.
+    # Auto combat must not start until Hùng Hero confirms that punch is in its auto-skill list.
     try:
         punch_skill = configure_punch_via_bridge()
     except Exception as e:
-        return jsonify({"error": f"Không cài được chiêu Đấm của Hùng Hero: {e}"}), 503
+        return jsonify({"error": f"Không chọn được chiêu Đấm của Hùng Hero: {e}"}), 503
 
     try:
         import urllib.parse
@@ -790,7 +798,7 @@ def handle_auto_farm():
                 return jsonify({
                     "status": "ok",
                     "method": "bridge",
-                    "message": f"Đã thêm chiêu Đấm (skill{punch_skill.get('skill')}) và kích hoạt chế độ Auto qua Game Engine!",
+                    "message": f"Đã chọn chiêu Đấm (skill{punch_skill.get('skill')}) và khởi động Auto qua Game Engine!",
                     "details": res_data
                 })
     except Exception as e:

@@ -197,10 +197,25 @@ public class GameBridgeAgent {
                     .trim().toLowerCase(Locale.ROOT);
                 if (normalized.equals("dam") || normalized.startsWith("dam ") || normalized.startsWith("dam-")) {
                     int skillNumber = i + 1;
-                    if (executeModAction("skill" + skillNumber)) {
-                        System.out.println("[BRIDGE] Added Hùng Hero punch skill [" + rawName + "] (skill" + skillNumber + ") to auto combat.");
-                        return skillNumber;
+                    Object rawSkillId = template.getClass().getField("S").get(template);
+                    int skillId = ((Number) rawSkillId).intValue();
+                    Class<?> clsJ = getGameClass("nro.j");
+                    if (clsJ == null) return -1;
+                    Object rawAutoSkills = clsJ.getField("a").get(null);
+                    if (!(rawAutoSkills instanceof Vector)) return -1;
+                    Vector autoSkills = (Vector) rawAutoSkills;
+
+                    if (containsAutoSkill(autoSkills, skillId)) return skillNumber;
+
+                    for (int attempt = 0; attempt < 3; attempt++) {
+                        executeModAction("skill" + skillNumber);
+                        if (containsAutoSkill(autoSkills, skillId)) {
+                            System.out.println("[BRIDGE] Selected Hùng Hero punch skill [" + rawName + "] (skill" + skillNumber + ") in auto combat.");
+                            return skillNumber;
+                        }
+                        Thread.sleep(250);
                     }
+                    System.out.println("[BRIDGE] Hùng Hero did not add punch skill [" + rawName + "] (skill" + skillNumber + ") to the auto-skill list.");
                     return -1;
                 }
             }
@@ -208,6 +223,22 @@ public class GameBridgeAgent {
             System.out.println("[BRIDGE] configurePunchSkill error: " + t);
         }
         return -1;
+    }
+
+    private static boolean containsAutoSkill(Vector autoSkills, int skillId) {
+        try {
+            for (int i = 0; i < autoSkills.size(); i++) {
+                Object skill = autoSkills.elementAt(i);
+                if (skill == null) continue;
+                Object template = skill.getClass().getField("a").get(skill);
+                if (template == null) continue;
+                Object rawId = template.getClass().getField("S").get(template);
+                if (((Number) rawId).intValue() == skillId) return true;
+            }
+        } catch (Throwable t) {
+            System.out.println("[BRIDGE] Auto-skill verification error: " + t);
+        }
+        return false;
     }
 
     // Get current game status
@@ -386,12 +417,16 @@ public class GameBridgeAgent {
                     jsonResp = "{\"error\": \"Missing cmd parameter\"}";
                 }
             } else if (path.equals("/api/game/configure_punch")) {
-                int skillNumber = configurePunchSkill();
+                int skillNumber = -1;
+                for (int attempt = 0; attempt < 5 && skillNumber < 0; attempt++) {
+                    skillNumber = configurePunchSkill();
+                    if (skillNumber < 0) Thread.sleep(500);
+                }
                 if (skillNumber > 0) {
                     jsonResp = "{\"status\": \"ok\", \"skill\": " + skillNumber + "}";
                 } else {
                     statusCode = 409;
-                    jsonResp = "{\"status\": \"error\", \"error\": \"Could not find or configure the punch skill for this character\"}";
+                    jsonResp = "{\"status\": \"error\", \"error\": \"Hùng Hero could not confirm the punch skill in the auto-skill list; auto combat was not started\"}";
                 }
             } else if (path.equals("/api/game/auto_farm")) {
                 // Batch auto farm sequence with smart map travel
