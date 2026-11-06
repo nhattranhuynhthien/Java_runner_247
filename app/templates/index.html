@@ -503,6 +503,9 @@
                             <button class="mod-chip" data-cmd="annguoi" title="Ẩn toàn bộ người chơi khác">
                                 Ẩn Người
                             </button>
+                            <button class="mod-chip" data-cmd="alogin" title="Tự động kết nối lại khi mất sóng / bảo trì">
+                                Auto Kết Nối (alogin)
+                            </button>
                             <button class="mod-chip" data-cmd="cs" title="Sử dụng Capsule">
                                 Capsule
                             </button>
@@ -520,8 +523,9 @@
 
             </div>
 
-            <!-- RIGHT: Ergonomic J2ME Keypad -->
-            <div class="w-full max-w-[288px] sm:max-w-[320px] bg-slate-900/85 border border-white/10 rounded-2xl p-3 flex flex-col gap-3 shadow-lg">
+            <!-- RIGHT COLUMN: Ergonomic J2ME Keypad + Live Telemetry & SKH Tracker -->
+            <div class="w-full max-w-[288px] sm:max-w-[320px] flex flex-col gap-3">
+                <div class="w-full bg-slate-900/85 border border-white/10 rounded-2xl p-3 flex flex-col gap-3 shadow-lg">
                 <div class="flex items-center justify-between border-b border-white/5 pb-2">
                     <span class="text-xs font-bold text-slate-300">
                         Bàn phím Game
@@ -589,6 +593,61 @@
                     <button class="hover:text-rose-400 transition font-medium" data-key="backspace" title="Xóa ký tự">
                         Xóa
                     </button>
+                </div>
+                </div>
+
+                <!-- Live Character Telemetry & SKH Equipment Tracker -->
+                <div class="w-full bg-slate-900/90 border border-white/10 rounded-2xl p-3 flex flex-col gap-2.5 shadow-xl">
+                    <div class="flex items-center justify-between border-b border-white/5 pb-2">
+                        <span class="flex items-center gap-1.5 text-xs font-bold text-slate-200">
+                            <span id="telemetry-dot" class="w-2 h-2 rounded-full bg-slate-500"></span>
+                            Thông Số Nhân Vật & Đồ SKH
+                        </span>
+                        <span id="badge-watchdog" class="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-slate-800 text-slate-400 border border-white/10">
+                            Watchdog: Chờ
+                        </span>
+                    </div>
+
+                    <!-- Character Location & Name -->
+                    <div class="bg-slate-950/80 border border-white/10 rounded-lg p-2 flex flex-col gap-1.5 text-[11px]">
+                        <div class="flex items-center justify-between">
+                            <span class="text-slate-400">Nhân vật:</span>
+                            <span id="stat-char-name" class="font-bold text-emerald-400 font-mono">Chưa vào game</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-slate-400">Vị trí:</span>
+                            <span id="stat-location" class="font-semibold text-indigo-300 font-mono">--</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-1.5 pt-1 border-t border-white/5 font-mono text-[10px]">
+                            <div class="bg-slate-900/90 rounded px-2 py-1 border border-white/5">
+                                <div class="text-slate-500">Sức mạnh</div>
+                                <div id="stat-power" class="text-amber-300 font-bold truncate">--</div>
+                            </div>
+                            <div class="bg-slate-900/90 rounded px-2 py-1 border border-white/5">
+                                <div class="text-slate-500">Tiềm năng</div>
+                                <div id="stat-potential" class="text-cyan-300 font-bold truncate">--</div>
+                            </div>
+                            <div class="bg-slate-900/90 rounded px-2 py-1 border border-white/5">
+                                <div class="text-slate-500">HP / KI</div>
+                                <div id="stat-hp-mp" class="text-rose-300 font-bold truncate">--</div>
+                            </div>
+                            <div class="bg-slate-900/90 rounded px-2 py-1 border border-white/5">
+                                <div class="text-slate-500">Hành trang</div>
+                                <div id="stat-bag" class="text-slate-200 font-bold truncate">--</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SKH Equipment List -->
+                    <div class="flex flex-col gap-1">
+                        <div class="flex items-center justify-between text-[10px]">
+                            <span class="text-slate-400 font-semibold">Trang bị Set Kích Hoạt (SKH):</span>
+                            <span id="stat-skh-count" class="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono font-bold">0 món</span>
+                        </div>
+                        <div id="stat-skh-list" class="bg-slate-950/80 border border-white/10 rounded-lg p-2 max-h-28 overflow-y-auto text-[11px] font-mono text-slate-400 flex flex-col gap-1">
+                            <span>Chưa phát hiện đồ SKH trong hành trang.</span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -797,7 +856,114 @@
                 fetchScreenshot();
             }
 
-            // Fetch System Status (every 10s)
+            // Format numbers with Vietnamese dot separators
+            function fmtNum(val) {
+                if (val === undefined || val === null || isNaN(val)) return '--';
+                return Number(val).toLocaleString('vi-VN');
+            }
+
+            // Update Live Character Telemetry, Mod State Badges & SKH Equipment List
+            function updateGameTelemetry(game) {
+                const dot = document.getElementById('telemetry-dot');
+                const badgeWd = document.getElementById('badge-watchdog');
+                const elName = document.getElementById('stat-char-name');
+                const elLoc = document.getElementById('stat-location');
+                const elPower = document.getElementById('stat-power');
+                const elPotential = document.getElementById('stat-potential');
+                const elHpMp = document.getElementById('stat-hp-mp');
+                const elBag = document.getElementById('stat-bag');
+                const elSkhCount = document.getElementById('stat-skh-count');
+                const elSkhList = document.getElementById('stat-skh-list');
+
+                if (!game || !game.bridge_online) {
+                    if (dot) dot.className = 'w-2 h-2 rounded-full bg-slate-500';
+                    if (badgeWd) {
+                        badgeWd.textContent = 'Bridge: Offline';
+                        badgeWd.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-slate-800 text-slate-400 border border-white/10';
+                    }
+                    return;
+                }
+
+                // Watchdog 24/7 badge
+                if (badgeWd) {
+                    if (game.autofarm_active) {
+                        badgeWd.textContent = '⚡ Auto 24/7: ĐANG BẬT';
+                        badgeWd.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40';
+                    } else {
+                        badgeWd.textContent = 'Watchdog: Chờ';
+                        badgeWd.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-slate-800 text-slate-400 border border-white/10';
+                    }
+                }
+
+                if (game.in_game) {
+                    if (dot) dot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
+                    if (elName) {
+                        elName.textContent = game.char_name + (game.has_pet ? ' (+Đệ tử)' : '');
+                        elName.className = 'font-bold text-emerald-400 font-mono';
+                    }
+                    if (elLoc) {
+                        const mName = game.map_name && game.map_name !== 'Unknown' ? game.map_name : `Map ${game.map_id}`;
+                        elLoc.textContent = `${mName} [${game.map_id}] • Khu ${game.zone ?? '--'}`;
+                    }
+                    if (elPower) elPower.textContent = fmtNum(game.power);
+                    if (elPotential) elPotential.textContent = fmtNum(game.potential);
+                    if (elHpMp) {
+                        const hpPct = game.hp_max > 0 ? Math.round((game.hp * 100) / game.hp_max) : 0;
+                        const mpPct = game.mp_max > 0 ? Math.round((game.mp * 100) / game.mp_max) : 0;
+                        elHpMp.textContent = `${fmtNum(game.hp)} (${hpPct}%) / ${mpPct}% KI`;
+                    }
+                    if (elBag) {
+                        if (game.bag_total !== undefined) {
+                            elBag.textContent = `${game.bag_used}/${game.bag_total} ô (Trống ${game.bag_free}) • ${fmtNum(game.gold)} vàng`;
+                        } else {
+                            elBag.textContent = `${fmtNum(game.gold)} vàng`;
+                        }
+                    }
+                } else {
+                    if (dot) dot.className = 'w-2 h-2 rounded-full bg-amber-400';
+                    if (elName) {
+                        elName.textContent = 'Đang ở màn hình chờ / Kết nối...';
+                        elName.className = 'font-semibold text-amber-300 font-mono';
+                    }
+                }
+
+                // Highlight SKH items found in bag or body
+                if (elSkhCount && Array.isArray(game.skh_items)) {
+                    const count = game.skh_items.length;
+                    elSkhCount.textContent = `${count} món`;
+                    if (elSkhList) {
+                        if (count === 0) {
+                            elSkhList.innerHTML = '<span class="text-slate-500">Chưa phát hiện đồ SKH trong hành trang.</span>';
+                        } else {
+                            elSkhList.innerHTML = game.skh_items.map(item =>
+                                `<div class="text-amber-300 bg-amber-950/30 border border-amber-500/20 rounded px-1.5 py-0.5">✨ ${item}</div>`
+                            ).join('');
+                        }
+                    }
+                }
+
+                // Sync real-time mod button active states
+                const flagCmds = ['locdo', 'anhat', 'gb', 'kvt', 'nb', 'cflag', 'xdh', 'annguoi', 'alogin'];
+                flagCmds.forEach(cmd => {
+                    const btn = document.querySelector(`[data-cmd="${cmd}"]`);
+                    if (!btn) return;
+                    const isOn = Boolean(game['mod_' + cmd]);
+                    if (isOn) {
+                        btn.classList.add('ring-1', 'ring-emerald-400', 'bg-emerald-900/40', 'text-emerald-200');
+                    } else {
+                        btn.classList.remove('ring-1', 'ring-emerald-400', 'bg-emerald-900/40', 'text-emerald-200');
+                    }
+                });
+
+                if (txtAutoTdlt) {
+                    txtAutoTdlt.textContent = game.mod_tdlt ? '🟢 TDLT: ĐANG BẬT' : 'Chỉ TDLT';
+                }
+                if (txtAutoTs) {
+                    txtAutoTs.textContent = game.mod_ts ? '🟢 Tàn Sát: ĐANG BẬT' : 'Chỉ Tàn Sát';
+                }
+            }
+
+            // Fetch System Status & Live Game Telemetry
             function fetchStatus() {
                 if (document.hidden) return;
                 fetch('/api/status')
@@ -830,6 +996,10 @@
                                 if (loginServer && (!loginServer.value || loginServer.value === "0") && data.saved_account.server) {
                                     loginServer.value = data.saved_account.server.toString();
                                 }
+                            }
+
+                            if (data.game) {
+                                updateGameTelemetry(data.game);
                             }
                         }
                     })
@@ -909,6 +1079,7 @@
                     sendModAction(cmd).then(() => {
                         showToast(`Đã thực thi: ${cmd}`, 'emerald');
                         setTimeout(fetchScreenshot, 400);
+                        setTimeout(fetchStatus, 500);
                     }).catch(err => showToast(err.message || 'Lỗi thực thi thao tác', 'rose'));
                 });
             });
@@ -1073,6 +1244,8 @@
                     }
                     setTimeout(fetchScreenshot, 500);
                     setTimeout(fetchScreenshot, 1500);
+                    setTimeout(fetchStatus, 900);
+                    setTimeout(fetchStatus, 2500);
                 }).catch(() => {
                     showToast("Lỗi kết nối máy chủ", "rose");
                 }).finally(() => {
@@ -1082,11 +1255,9 @@
                     }
                     if (btnAutoTdlt) {
                         btnAutoTdlt.disabled = false;
-                        if (txtAutoTdlt) txtAutoTdlt.textContent = "Chỉ TDLT";
                     }
                     if (btnAutoTs) {
                         btnAutoTs.disabled = false;
-                        if (txtAutoTs) txtAutoTs.textContent = "Chỉ Tàn Sát";
                     }
                 });
             }
@@ -1097,11 +1268,20 @@
 
             if (btnStopAllAuto) {
                 btnStopAllAuto.addEventListener('click', () => {
-                    showToast("Đang dừng Auto & khôi phục đồ họa bình thường...", "amber");
-                    sendModAction('ts, tdlt, xdh, annguoi').then(() => {
-                        showToast("Đã dừng tự động & bật lại hiển thị!", "emerald");
-                        setTimeout(fetchScreenshot, 500);
-                    }).catch(err => showToast(err.message || "Lỗi thực thi thao tác", "rose"));
+                    showToast("Đang dừng Auto 24/7 & khôi phục đồ họa bình thường...", "amber");
+                    fetch('/api/stop_farm', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ pin: state.pin })
+                    }).then(r => r.json()).then(res => {
+                        if (res.error) {
+                            showToast(res.error, "rose");
+                        } else {
+                            showToast(res.message || "Đã dừng tự động & bật lại hiển thị!", "emerald");
+                        }
+                        setTimeout(fetchScreenshot, 400);
+                        setTimeout(fetchStatus, 500);
+                    }).catch(() => showToast("Lỗi kết nối máy chủ", "rose"));
                 });
             }
 
@@ -1679,7 +1859,7 @@
             // Auto-run on start
             restartTimer();
             fetchStatus();
-            let statusTimer = setInterval(fetchStatus, 10000);
+            let statusTimer = setInterval(fetchStatus, 4000);
             document.addEventListener('visibilitychange', () => {
                 if (document.hidden) {
                     if (state.timer) clearTimeout(state.timer);
@@ -1688,7 +1868,7 @@
                 } else {
                     fetchStatus();
                     fetchScreenshot();
-                    statusTimer = setInterval(fetchStatus, 10000);
+                    statusTimer = setInterval(fetchStatus, 4000);
                 }
             });
 

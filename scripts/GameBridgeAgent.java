@@ -10,19 +10,104 @@ public class GameBridgeAgent {
     private static int serverPort = 28888;
     private static volatile boolean running = true;
 
-    // Keep track of background farm task
+    // Keep track of background farm task & persistent 24/7 state
     private static Thread farmThread = null;
+    private static volatile boolean autoFarmActive = false;
+    private static volatile int autoFarmMap = 0;
+    private static volatile int autoFarmZone = -1;
+    private static volatile String autoFarmMode = "all";
+    private static volatile long lastWatchdogTravelMs = 0L;
+
+    private static File getStateFile() {
+        File dataDir = new File("/data");
+        if (dataDir.exists() && dataDir.isDirectory() && dataDir.canWrite()) {
+            return new File(dataDir, "autofarm_state.json");
+        }
+        String home = System.getProperty("user.home", ".");
+        return new File(home, "autofarm_state.json");
+    }
+
+    public static synchronized void saveAutoFarmState() {
+        try {
+            File f = getStateFile();
+            String json = "{\"active\":" + autoFarmActive +
+                          ",\"map\":" + autoFarmMap +
+                          ",\"zone\":" + autoFarmZone +
+                          ",\"mode\":\"" + (autoFarmMode != null ? autoFarmMode : "all") + "\"" +
+                          ",\"updated_at\":" + System.currentTimeMillis() + "}";
+            FileOutputStream fos = new FileOutputStream(f);
+            fos.write(json.getBytes("UTF-8"));
+            fos.close();
+        } catch (Throwable t) {
+            System.out.println("[BRIDGE] saveAutoFarmState error: " + t);
+        }
+    }
+
+    public static synchronized void loadAutoFarmState() {
+        try {
+            File f = getStateFile();
+            if (!f.exists()) return;
+            BufferedReader br = new BufferedReader(new InputStreamReader(new FileInputStream(f), "UTF-8"));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = br.readLine()) != null) sb.append(line);
+            br.close();
+            String s = sb.toString();
+            autoFarmActive = s.contains("\"active\":true") || s.contains("\"active\": true");
+            autoFarmMap = extractIntJson(s, "map", 0);
+            autoFarmZone = extractIntJson(s, "zone", -1);
+            String m = extractStrJson(s, "mode", "all");
+            autoFarmMode = (m != null && !m.isEmpty()) ? m : "all";
+            System.out.println("[BRIDGE] Loaded persisted AutoFarm state: active=" + autoFarmActive +
+                               ", map=" + autoFarmMap + ", zone=" + autoFarmZone + ", mode=" + autoFarmMode);
+        } catch (Throwable t) {
+            System.out.println("[BRIDGE] loadAutoFarmState error: " + t);
+        }
+    }
+
+    private static int extractIntJson(String json, String key, int defVal) {
+        try {
+            String pat = "\"" + key + "\":";
+            int idx = json.indexOf(pat);
+            if (idx < 0) return defVal;
+            int start = idx + pat.length();
+            while (start < json.length() && Character.isWhitespace(json.charAt(start))) start++;
+            int end = start;
+            if (end < json.length() && (json.charAt(end) == '-' || Character.isDigit(json.charAt(end)))) {
+                end++;
+                while (end < json.length() && Character.isDigit(json.charAt(end))) end++;
+                return Integer.parseInt(json.substring(start, end));
+            }
+        } catch (Throwable ignored) {}
+        return defVal;
+    }
+
+    private static String extractStrJson(String json, String key, String defVal) {
+        try {
+            String pat = "\"" + key + "\":\"";
+            int idx = json.indexOf(pat);
+            if (idx < 0) return defVal;
+            int start = idx + pat.length();
+            int end = json.indexOf("\"", start);
+            if (end > start) return json.substring(start, end);
+        } catch (Throwable ignored) {}
+        return defVal;
+    }
 
     public static void premain(String agentArgs, Instrumentation inst) {
         instrumentation = inst;
         System.out.println("[BRIDGE] GameBridgeAgent premain loaded!");
+        loadAutoFarmState();
         startHttpServer();
+        startWatchdogThread();
     }
 
     public static void agentmain(String agentArgs, Instrumentation inst) {
         instrumentation = inst;
         System.out.println("[BRIDGE] GameBridgeAgent agentmain loaded!");
+        loadAutoFarmState();
         startHttpServer();
+        startWatchdogThread();
     }
 
     private static volatile ClassLoader cachedClassLoader = null;
@@ -66,6 +151,106 @@ public class GameBridgeAgent {
             return Class.forName(name);
         } catch (Throwable ignored) {}
         return null;
+    }
+
+    private static String[] resolveModFlagTarget(String cmd) {
+        if (cmd == null) return null;
+        String c = cmd.trim().toLowerCase(Locale.ROOT);
+        if ("ts".equals(c)) return new String[]{"nro.j", "n"};
+        if ("tdlt".equals(c)) return new String[]{"nro.p", "z"};
+        if ("gb".equals(c)) return new String[]{"nro.A", "J"};
+        if ("anhat".equals(c)) return new String[]{"nro.i", "l"};
+        if ("locdo".equals(c)) return new String[]{"nro.F", "O"};
+        if ("xdh".equals(c)) return new String[]{"nro.E", "N"};
+        if ("annguoi".equals(c)) return new String[]{"nro.N", "ag"};
+        if ("anquai".equals(c)) return new String[]{"nro.N", "ai"};
+        if ("anitem".equals(c)) return new String[]{"nro.N", "aj"};
+        if ("alogin".equals(c)) return new String[]{"nro.e", "c"};
+        if ("sz".equals(c)) return new String[]{"nro.e", "d"};
+        if ("checklag".equals(c)) return new String[]{"nro.w", "F"};
+        if ("ahs".equals(c)) return new String[]{"nro.F", "R"};
+        if ("kvt".equals(c)) return new String[]{"nro.h", "j"};
+        if ("nb".equals(c)) return new String[]{"nro.H", "T"};
+        if ("cflag".equals(c)) return new String[]{"nro.V", "aq"};
+        if ("ak".equals(c)) return new String[]{"nro.n", "x"};
+        return null;
+    }
+
+    public static Boolean getModFlag(String cmd) {
+        try {
+            String[] target = resolveModFlagTarget(cmd);
+            if (target == null) return null;
+            Class<?> cls = getGameClass(target[0]);
+            if (cls == null) return null;
+            return cls.getField(target[1]).getBoolean(null);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    // Idempotently set a mod boolean feature to desired state without accidental toggle-off
+    public static boolean setModFlag(String cmd, boolean desired) {
+        try {
+            String c = cmd.trim().toLowerCase(Locale.ROOT);
+            // Special dependency: tdlt requires gb (nro.A.J == true) before enabling
+            if ("tdlt".equals(c) && desired) {
+                setModFlag("gb", true);
+            }
+
+            Boolean cur = getModFlag(c);
+            if (cur != null && cur.booleanValue() != desired) {
+                executeModAction(c);
+                Thread.sleep(80);
+            }
+
+            // Verify and enforce directly on the static field
+            String[] target = resolveModFlagTarget(c);
+            if (target != null) {
+                Class<?> cls = getGameClass(target[0]);
+                if (cls != null) {
+                    Field f = cls.getField(target[1]);
+                    if (f.getBoolean(null) != desired) {
+                        f.setBoolean(null, desired);
+                    }
+                }
+            }
+
+            // If enabling gb, also lock in the goback map & zone
+            if ("gb".equals(c) && desired) {
+                updateGobackTarget(autoFarmMap, autoFarmZone);
+            }
+            return true;
+        } catch (Throwable t) {
+            System.out.println("[BRIDGE] setModFlag error for [" + cmd + "]: " + t);
+            return false;
+        }
+    }
+
+    public static void updateGobackTarget(int prefMap, int prefZone) {
+        try {
+            Class<?> clsA = getGameClass("nro.A");
+            Class<?> clsAv = getGameClass("nro.av");
+            Class<?> clsCd = getGameClass("nro.cd");
+            if (clsA == null) return;
+
+            int mapToSave = prefMap;
+            if (mapToSave <= 0 && clsAv != null) {
+                mapToSave = clsAv.getField("h").getInt(null);
+            }
+            int zoneToSave = prefZone;
+            if (zoneToSave < 0 && clsCd != null) {
+                Object myChar = clsCd.getMethod("b").invoke(null);
+                if (myChar != null) {
+                    zoneToSave = myChar.getClass().getField("hH").getInt(myChar);
+                }
+            }
+            if (mapToSave > 0) {
+                clsA.getField("aj").setInt(null, mapToSave);
+            }
+            if (zoneToSave >= 0) {
+                clsA.getField("al").setInt(null, zoneToSave);
+            }
+        } catch (Throwable ignored) {}
     }
 
     // Call Xmap travel to mapId
@@ -298,10 +483,150 @@ public class GameBridgeAgent {
         return false;
     }
 
-    // Get current game status
+    // 24/7 Watchdog Thread: Ensures Auto-Reconnect (alogin + sz) and Auto-Resume Farm after disconnect or restart
+    private static void startWatchdogThread() {
+        Thread wd = new Thread(new Runnable() {
+            public void run() {
+                System.out.println("[BRIDGE] 24/7 Auto-Reconnect & AutoFarm Watchdog started.");
+                while (running) {
+                    try {
+                        Thread.sleep(8000);
+                        if (!autoFarmActive) continue;
+
+                        // Always keep Hùng Hero's built-in Auto-Login (nro.e.c) and Save-Zone (nro.e.d) active
+                        setModFlag("alogin", true);
+                        setModFlag("sz", true);
+                        setModFlag("checklag", true);
+
+                        // If an explicit farmThread is currently executing travel/setup, let it finish
+                        if (farmThread != null && farmThread.isAlive()) continue;
+
+                        Map<String, Object> st = getStatus();
+                        boolean inGame = Boolean.TRUE.equals(st.get("in_game"));
+                        if (!inGame) {
+                            continue;
+                        }
+
+                        // Ensure melee skill is in auto list
+                        configurePunchSkill();
+
+                        Boolean xmapRun = (Boolean) st.get("xmap_running");
+                        if (Boolean.TRUE.equals(xmapRun)) continue;
+
+                        Integer curMap = (Integer) st.get("map_id");
+                        Integer curZone = (Integer) st.get("zone");
+
+                        // Check if character is dead (let Goback handle healing & returning)
+                        Class<?> clsF = getGameClass("nro.F");
+                        if (clsF != null) {
+                            Boolean isDead = (Boolean) clsF.getMethod("d").invoke(null);
+                            if (Boolean.TRUE.equals(isDead)) continue;
+                        }
+
+                        // 1. If target map is configured and we are not there, trigger Xmap travel (with 20s cooldown)
+                        if (autoFarmMap > 0 && (curMap == null || curMap.intValue() != autoFarmMap)) {
+                            long now = System.currentTimeMillis();
+                            if (now - lastWatchdogTravelMs > 20000L) {
+                                lastWatchdogTravelMs = now;
+                                System.out.println("[WATCHDOG] Character at map " + curMap + " (target=" + autoFarmMap + "). Triggering Xmap...");
+                                travelToMap(autoFarmMap);
+                            }
+                            continue;
+                        }
+
+                        // 2. If at target map, verify target zone
+                        if (autoFarmZone >= 0 && curZone != null && curZone.intValue() != autoFarmZone) {
+                            System.out.println("[WATCHDOG] Switching zone from " + curZone + " -> " + autoFarmZone);
+                            executeModAction("k" + autoFarmZone);
+                            Thread.sleep(1000);
+                        }
+
+                        // 3. Ensure Goback + TDLT/TS + Lọc đồ + Auto nhặt are ON
+                        setModFlag("gb", true);
+                        updateGobackTarget(autoFarmMap, autoFarmZone);
+                        if ("ts".equalsIgnoreCase(autoFarmMode)) {
+                            setModFlag("ts", true);
+                        } else if ("tdlt".equalsIgnoreCase(autoFarmMode)) {
+                            setModFlag("tdlt", true);
+                        } else {
+                            setModFlag("tdlt", true);
+                            setModFlag("ts", true);
+                        }
+                        setModFlag("locdo", true);
+                        setModFlag("anhat", true);
+                    } catch (Throwable ignored) {}
+                }
+            }
+        }, "NRO-AutoFarm-Watchdog");
+        wd.setDaemon(true);
+        wd.start();
+    }
+
+    // Scan an item array (bag or body) for SKH items
+    private static void scanItemsForSkh(Object[] items, String locationLabel, List<String> skhList) {
+        if (items == null) return;
+        try {
+            Class<?> clsCD = getGameClass("nro.cD");
+            Method isSkhMeth = (clsCD != null) ? clsCD.getMethod("b", clsCD) : null;
+
+            for (int i = 0; i < items.length; i++) {
+                Object item = items[i];
+                if (item == null) continue;
+                Object template = item.getClass().getField("a").get(item);
+                if (template == null) continue;
+
+                boolean isSkh = false;
+                if (isSkhMeth != null) {
+                    isSkh = Boolean.TRUE.equals(isSkhMeth.invoke(null, item));
+                }
+
+                String itemName = String.valueOf(template.getClass().getField("b").get(template));
+                Object rawOpts = item.getClass().getField("b").get(item);
+                StringBuilder skhDesc = new StringBuilder();
+
+                if (rawOpts instanceof Object[]) {
+                    Object[] opts = (Object[]) rawOpts;
+                    for (int j = 0; j < opts.length; j++) {
+                        Object opt = opts[j];
+                        if (opt == null) continue;
+                        Object optTpl = opt.getClass().getField("a").get(opt);
+                        if (optTpl == null) continue;
+                        int optId = optTpl.getClass().getField("hQ").getInt(optTpl);
+                        if (optId >= 127 && optId <= 144) {
+                            isSkh = true;
+                            try {
+                                Object formatted = opt.getClass().getMethod("e").invoke(opt);
+                                if (formatted != null) {
+                                    if (skhDesc.length() > 0) skhDesc.append(", ");
+                                    skhDesc.append(formatted.toString());
+                                }
+                            } catch (Throwable ignored) {
+                                Object rawOptName = optTpl.getClass().getField("b").get(optTpl);
+                                if (rawOptName != null) {
+                                    if (skhDesc.length() > 0) skhDesc.append(", ");
+                                    skhDesc.append(rawOptName.toString());
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (isSkh) {
+                    String entry = itemName + (skhDesc.length() > 0 ? " [" + skhDesc.toString() + "]" : " [SKH]") + " (" + locationLabel + ")";
+                    skhList.add(entry);
+                }
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    // Get current game status & live character telemetry
     public static Map<String, Object> getStatus() {
         Map<String, Object> status = new LinkedHashMap<String, Object>();
         status.put("bridge_online", true);
+        status.put("autofarm_active", autoFarmActive);
+        status.put("autofarm_map", autoFarmMap);
+        status.put("autofarm_zone", autoFarmZone);
+        status.put("autofarm_mode", autoFarmMode);
 
         try {
             Class<?> cls_f = getGameClass("nro.f");
@@ -313,12 +638,13 @@ public class GameBridgeAgent {
             }
         } catch (Throwable ignored) {}
 
+        int currentMapId = -1;
         try {
             Class<?> cls_av = getGameClass("nro.av");
             if (cls_av != null) {
                 Field fH = cls_av.getField("h");
                 Field fG = cls_av.getField("g");
-                int currentMapId = fH.getInt(null);
+                currentMapId = fH.getInt(null);
                 String[] mapNames = (String[]) fG.get(null);
                 String currentMapName = (mapNames != null && currentMapId >= 0 && currentMapId < mapNames.length) ? mapNames[currentMapId] : "Unknown";
                 status.put("map_id", currentMapId);
@@ -326,17 +652,86 @@ public class GameBridgeAgent {
             }
         } catch (Throwable ignored) {}
 
+        boolean inGame = false;
         try {
             Class<?> cls_cd = getGameClass("nro.cd");
             if (cls_cd != null) {
                 Method bMeth = cls_cd.getMethod("b");
                 Object charObj = bMeth.invoke(null);
                 if (charObj != null) {
-                    Field fZone = charObj.getClass().getField("hH");
-                    status.put("zone", fZone.getInt(charObj));
+                    Class<?> cCls = charObj.getClass();
+                    String charName = (String) cCls.getField("gu").get(charObj);
+                    int zone = cCls.getField("hH").getInt(charObj);
+                    long hp = cCls.getField("aN").getLong(charObj);
+                    long hpMax = cCls.getField("az").getLong(charObj);
+                    long mp = cCls.getField("ax").getLong(charObj);
+                    long mpMax = cCls.getField("as").getLong(charObj);
+                    long power = cCls.getField("aQ").getLong(charObj);
+                    long potential = cCls.getField("aO").getLong(charObj);
+                    long damage = cCls.getField("aw").getLong(charObj);
+                    long gold = cCls.getField("av").getLong(charObj);
+                    boolean hasPet = cCls.getField("bQ").getBoolean(charObj);
+                    int cx = cCls.getField("gv").getInt(charObj);
+                    int cy = cCls.getField("gA").getInt(charObj);
+
+                    inGame = (charName != null && !charName.trim().isEmpty() && currentMapId >= 0 && hpMax > 0);
+                    status.put("char_name", charName != null ? charName : "");
+                    status.put("zone", zone);
+                    status.put("hp", hp);
+                    status.put("hp_max", hpMax);
+                    status.put("mp", mp);
+                    status.put("mp_max", mpMax);
+                    status.put("power", power);
+                    status.put("potential", potential);
+                    status.put("damage", damage);
+                    status.put("gold", gold);
+                    status.put("has_pet", hasPet);
+                    status.put("cx", cx);
+                    status.put("cy", cy);
+
+                    if (hasPet) {
+                        try {
+                            Object petObj = cls_cd.getMethod("c").invoke(null);
+                            if (petObj != null) {
+                                status.put("pet_power", petObj.getClass().getField("aQ").getLong(petObj));
+                                status.put("pet_potential", petObj.getClass().getField("aO").getLong(petObj));
+                            }
+                        } catch (Throwable ignored) {}
+                    }
+
+                    // Scan bag and body for SKH items and slot usage
+                    List<String> skhList = new ArrayList<String>();
+                    Object rawBody = cCls.getField("a").get(charObj);
+                    if (rawBody instanceof Object[]) {
+                        scanItemsForSkh((Object[]) rawBody, "Đang mặc", skhList);
+                    }
+                    Object rawBag = cCls.getField("b").get(charObj);
+                    if (rawBag instanceof Object[]) {
+                        Object[] bag = (Object[]) rawBag;
+                        int used = 0;
+                        for (int i = 0; i < bag.length; i++) {
+                            if (bag[i] != null) used++;
+                        }
+                        status.put("bag_total", bag.length);
+                        status.put("bag_used", used);
+                        status.put("bag_free", Math.max(0, bag.length - used));
+                        scanItemsForSkh(bag, "Hành trang", skhList);
+                    }
+                    status.put("skh_count", skhList.size());
+                    status.put("skh_items", skhList);
                 }
             }
         } catch (Throwable ignored) {}
+
+        status.put("in_game", inGame);
+
+        // Real-time mod boolean flags
+        String[] trackedFlags = new String[]{"ts", "tdlt", "gb", "anhat", "locdo", "xdh", "annguoi", "alogin", "sz", "kvt", "nb", "cflag"};
+        for (int i = 0; i < trackedFlags.length; i++) {
+            String fName = trackedFlags[i];
+            Boolean val = getModFlag(fName);
+            status.put("mod_" + fName, Boolean.TRUE.equals(val));
+        }
 
         return status;
     }
@@ -378,7 +773,6 @@ public class GameBridgeAgent {
             }
 
             String[] reqParts = reqLine.split(" ");
-            String method = reqParts.length > 0 ? reqParts[0] : "GET";
             String fullPath = reqParts.length > 1 ? reqParts[1] : "/";
 
             // Read headers to get content length if POST
@@ -486,10 +880,25 @@ public class GameBridgeAgent {
                     jsonResp = "{\"status\": \"error\", \"error\": \"Hùng Hero could not confirm the punch skill in the auto-skill list; auto combat was not started\"}";
                 }
             } else if (path.equals("/api/game/auto_farm")) {
-                // Batch auto farm sequence with smart map travel
+                // Batch auto farm sequence with smart map travel & persistent 24/7 state
                 final String mapStr = params.get("map");
                 final String zoneStr = params.get("zone");
                 final String mode = params.get("mode") != null ? params.get("mode") : "all";
+
+                int parsedMap = 0;
+                if (mapStr != null && !mapStr.equals("xmap") && !mapStr.equals("0")) {
+                    try { parsedMap = Integer.parseInt(mapStr.trim()); } catch (Throwable ignored) {}
+                }
+                int parsedZone = -1;
+                if (zoneStr != null && !zoneStr.trim().isEmpty()) {
+                    try { parsedZone = Integer.parseInt(zoneStr.trim()); } catch (Throwable ignored) {}
+                }
+
+                autoFarmActive = true;
+                autoFarmMap = parsedMap;
+                autoFarmZone = parsedZone;
+                autoFarmMode = mode;
+                saveAutoFarmState();
 
                 if (farmThread != null && farmThread.isAlive()) {
                     farmThread.interrupt();
@@ -498,19 +907,19 @@ public class GameBridgeAgent {
                 farmThread = new Thread(new Runnable() {
                     public void run() {
                         try {
-                            Integer targetMap = null;
-                            if (mapStr != null && !mapStr.equals("xmap") && !mapStr.equals("0")) {
-                                try { targetMap = Integer.parseInt(mapStr); } catch (Throwable ignored) {}
-                            }
+                            // Always enable Auto-Login & Save-Zone first
+                            setModFlag("alogin", true);
+                            setModFlag("sz", true);
+                            setModFlag("checklag", true);
 
                             // 1. If target map specified, check if already there
-                            if (targetMap != null) {
+                            if (autoFarmMap > 0) {
                                 Map<String, Object> curStat = getStatus();
                                 Integer curMap = (Integer) curStat.get("map_id");
-                                if (curMap == null || !curMap.equals(targetMap)) {
-                                    System.out.println("[BRIDGE] AutoFarm: Traveling to map " + targetMap + "...");
-                                    if (!travelToMap(targetMap)) {
-                                        System.out.println("[BRIDGE] AutoFarm: Could not start travel to map " + targetMap + ".");
+                                if (curMap == null || curMap.intValue() != autoFarmMap) {
+                                    System.out.println("[BRIDGE] AutoFarm: Traveling to map " + autoFarmMap + "...");
+                                    if (!travelToMap(autoFarmMap)) {
+                                        System.out.println("[BRIDGE] AutoFarm: Could not start travel to map " + autoFarmMap + ".");
                                         return;
                                     }
 
@@ -522,14 +931,14 @@ public class GameBridgeAgent {
                                         Map<String, Object> st = getStatus();
                                         Integer cm = (Integer) st.get("map_id");
                                         Boolean xmapRun = (Boolean) st.get("xmap_running");
-                                        if (cm != null && cm.equals(targetMap) && (xmapRun == null || !xmapRun)) {
-                                            System.out.println("[BRIDGE] AutoFarm: Arrived at target map " + targetMap + "!");
+                                        if (cm != null && cm.intValue() == autoFarmMap && (xmapRun == null || !xmapRun)) {
+                                            System.out.println("[BRIDGE] AutoFarm: Arrived at target map " + autoFarmMap + "!");
                                             arrived = true;
                                             break;
                                         }
                                     }
                                     if (!arrived) {
-                                        System.out.println("[BRIDGE] AutoFarm: Timed out waiting for map " + targetMap + "; farm actions cancelled.");
+                                        System.out.println("[BRIDGE] AutoFarm: Timed out waiting for map " + autoFarmMap + "; Watchdog will retry.");
                                         return;
                                     }
                                     // Settle after arrival
@@ -538,44 +947,46 @@ public class GameBridgeAgent {
                             }
 
                             // 2. Switch zone if specified
-                            if (zoneStr != null && !zoneStr.trim().isEmpty()) {
-                                try {
-                                    int z = Integer.parseInt(zoneStr.trim());
-                                    executeModAction("k" + z);
-                                    Thread.sleep(1000);
-                                } catch (Throwable ignored) {}
+                            if (autoFarmZone >= 0) {
+                                executeModAction("k" + autoFarmZone);
+                                Thread.sleep(1000);
                             }
 
                             // 2.5. Ensure melee/punch skill is in Hùng Hero's auto-skill list before starting combat
                             configurePunchSkill();
 
-                            // 3. Activate auto farm mode: TDLT + TÀN SÁT COMBO
+                            // 3. Enable Goback FIRST (required by Hùng Hero before TDLT can turn on!)
+                            setModFlag("gb", true);
+                            updateGobackTarget(autoFarmMap, autoFarmZone);
+                            Thread.sleep(200);
+
+                            // 4. Activate auto farm mode idempotently: TDLT + TÀN SÁT COMBO
                             if ("ts".equalsIgnoreCase(mode)) {
-                                executeModAction("ts");
+                                setModFlag("ts", true);
+                                setModFlag("tdlt", false);
                             } else if ("tdlt".equalsIgnoreCase(mode)) {
-                                executeModAction("tdlt");
+                                setModFlag("tdlt", true);
+                                setModFlag("ts", false);
                             } else {
                                 // Default COMBO: activate both tdlt AND ts
-                                executeModAction("tdlt");
-                                Thread.sleep(350);
-                                executeModAction("ts");
+                                setModFlag("tdlt", true);
+                                Thread.sleep(250);
+                                setModFlag("ts", true);
                             }
-                            Thread.sleep(300);
+                            Thread.sleep(200);
 
-                            // 4. Activate support utilities
-                            executeModAction("locdo");
-                            Thread.sleep(250);
-                            executeModAction("anhat");
-                            Thread.sleep(250);
-                            executeModAction("gb");
-                            Thread.sleep(250);
+                            // 5. Activate support utilities idempotently
+                            setModFlag("locdo", true);
+                            Thread.sleep(150);
+                            setModFlag("anhat", true);
+                            Thread.sleep(150);
                             executeModAction("s20");
-                            Thread.sleep(250);
-                            executeModAction("xdh");
-                            Thread.sleep(250);
-                            executeModAction("annguoi");
+                            Thread.sleep(150);
+                            setModFlag("xdh", true);
+                            Thread.sleep(150);
+                            setModFlag("annguoi", true);
 
-                            System.out.println("[BRIDGE] AutoFarm: Combo (TDLT + Tàn Sát + Lọc Đồ + Auto Nhặt + Goback + Siêu Mượt) activated successfully!");
+                            System.out.println("[BRIDGE] AutoFarm 24/7: Combo (Goback + TDLT + Tàn Sát + Lọc Đồ + Auto Nhặt + Auto Reconnect + Siêu Mượt) activated!");
                         } catch (InterruptedException ie) {
                             System.out.println("[BRIDGE] AutoFarm thread interrupted.");
                         } catch (Throwable t) {
@@ -588,17 +999,17 @@ public class GameBridgeAgent {
 
                 jsonResp = "{\"status\": \"ok\", \"message\": \"Auto farm started\", \"map\": \"" + mapStr + "\", \"zone\": \"" + zoneStr + "\", \"mode\": \"" + mode + "\"}";
             } else if (path.equals("/api/game/stop_farm")) {
+                autoFarmActive = false;
+                saveAutoFarmState();
                 if (farmThread != null && farmThread.isAlive()) {
                     farmThread.interrupt();
                 }
                 stopXmap();
-                executeModAction("ts");
-                try { Thread.sleep(100); } catch (Throwable ignored) {}
-                executeModAction("tdlt");
-                try { Thread.sleep(100); } catch (Throwable ignored) {}
-                executeModAction("xdh");
-                try { Thread.sleep(100); } catch (Throwable ignored) {}
-                executeModAction("annguoi");
+                setModFlag("ts", false);
+                setModFlag("tdlt", false);
+                setModFlag("gb", false);
+                setModFlag("xdh", false);
+                setModFlag("annguoi", false);
                 jsonResp = "{\"status\": \"ok\", \"message\": \"Auto farm stopped & graphics restored\"}";
             } else {
                 statusCode = 404;
@@ -636,17 +1047,40 @@ public class GameBridgeAgent {
         return m;
     }
 
+    private static String escapeJson(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r");
+    }
+
     private static String toJson(Map<String, Object> map) {
         StringBuilder sb = new StringBuilder("{");
         boolean first = true;
         for (Map.Entry<String, Object> e : map.entrySet()) {
             if (!first) sb.append(",");
             first = false;
-            sb.append("\"").append(e.getKey()).append("\":");
+            sb.append("\"").append(escapeJson(e.getKey())).append("\":");
             Object v = e.getValue();
-            if (v == null) sb.append("null");
-            else if (v instanceof Number || v instanceof Boolean) sb.append(v);
-            else sb.append("\"").append(v.toString().replace("\"", "\\\"")).append("\"");
+            if (v == null) {
+                sb.append("null");
+            } else if (v instanceof Number || v instanceof Boolean) {
+                sb.append(v);
+            } else if (v instanceof List) {
+                sb.append("[");
+                List<?> list = (List<?>) v;
+                for (int i = 0; i < list.size(); i++) {
+                    if (i > 0) sb.append(",");
+                    Object item = list.get(i);
+                    if (item == null) sb.append("null");
+                    else if (item instanceof Number || item instanceof Boolean) sb.append(item);
+                    else sb.append("\"").append(escapeJson(item.toString())).append("\"");
+                }
+                sb.append("]");
+            } else {
+                sb.append("\"").append(escapeJson(v.toString())).append("\"");
+            }
         }
         sb.append("}");
         return sb.toString();

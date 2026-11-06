@@ -444,7 +444,8 @@ def server_status():
         "server_socket_online": check_nro_socket(),
         "ram": get_ram_info(),
         "rom": rom_info,
-        "saved_account": read_rms_saved_info()
+        "saved_account": read_rms_saved_info(),
+        "game": get_bridge_status()
     })
 
 def type_text_reliably(value, wid=None):
@@ -752,7 +753,7 @@ def handle_mod_action():
     if not raw_cmd:
         return jsonify({"error": "Missing mod action."}), 400
 
-    allowed = {"cd", "locdo", "anhat", "gb", "s20", "kvt", "nb", "cflag", "xdh", "annguoi", "cs", "xmap", "ts", "tdlt"}
+    allowed = {"cd", "locdo", "anhat", "gb", "s20", "kvt", "nb", "cflag", "xdh", "annguoi", "anquai", "anitem", "alogin", "sz", "checklag", "ahs", "cs", "xmap", "ts", "tdlt"}
     cmds = [cmd.strip() for cmd in raw_cmd.replace(";", ",").split(",") if cmd.strip()]
     def is_valid_skill_cmd(c):
         if not c.startswith("skill"):
@@ -809,9 +810,27 @@ def handle_auto_farm():
                 return jsonify({
                     "status": "ok",
                     "method": "bridge",
-                    "message": f"Đã chọn chiêu đánh (skill{skill_num}) và khởi động Auto Up SKH (TDLT + Tàn Sát)!",
+                    "message": f"Đã chọn chiêu đánh (skill{skill_num}) và khởi động Auto Up SKH 24/7 (Goback + TDLT + Tàn Sát + Auto Reconnect)!",
                     "details": res_data
                 })
+    except Exception as e:
+        return jsonify({"error": f"GameBridge chưa sẵn sàng: {e}"}), 503
+
+@app.route('/api/stop_farm', methods=['POST'])
+def handle_stop_farm():
+    if not check_pin(request):
+        return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
+    try:
+        import urllib.request
+        url = "http://127.0.0.1:28888/api/game/stop_farm"
+        req = urllib.request.Request(url, data=b"", headers={"User-Agent": "NRO-Server"})
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
+            res_data = json.loads(resp.read().decode('utf-8'))
+            return jsonify({
+                "status": "ok",
+                "message": "Đã dừng toàn bộ Auto & khôi phục hiển thị đồ họa!",
+                "details": res_data
+            })
     except Exception as e:
         return jsonify({"error": f"GameBridge chưa sẵn sàng: {e}"}), 503
 
