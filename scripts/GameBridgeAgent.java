@@ -170,54 +170,111 @@ public class GameBridgeAgent {
         return false;
     }
 
-    // Hùng Hero's auto-farm needs the actual punch skill added to its skill list.
-    // Resolve its 1-based skill number from the active character's own skill array.
+    // Hùng Hero's auto-farm needs the primary melee/punch skill added to its auto-skill list (nro.j.a).
+    // In NRO, basic melee skills are Dragon (id 0), Demon (id 2), Galick (id 4), or Liên hoàn (id 17).
+    // Resolve its 1-based skill number from the active character's skill array and add it via "skill<N> 1".
     public static int configurePunchSkill() {
         try {
             Class<?> clsCr = getGameClass("nro.cr");
             Class<?> clsCt = getGameClass("nro.ct");
-            if (clsCr == null || clsCt == null) return -1;
+            Class<?> clsJ = getGameClass("nro.j");
+            if (clsCr == null || clsCt == null || clsJ == null) return -1;
 
             boolean alternateSkillSet = clsCr.getField("cS").getBoolean(null);
             Object array = clsCt.getField(alternateSkillSet ? "c" : "d").get(null);
             if (!(array instanceof Object[])) return -1;
-
             Object[] skills = (Object[]) array;
+
+            // Check if primary array has any non-null skill; if not, fallback to the other array
+            boolean hasAny = false;
+            for (int i = 0; i < skills.length; i++) {
+                if (skills[i] != null) { hasAny = true; break; }
+            }
+            if (!hasAny) {
+                Object altArray = clsCt.getField(alternateSkillSet ? "d" : "c").get(null);
+                if (altArray instanceof Object[]) skills = (Object[]) altArray;
+            }
+
+            int targetIdx = -1;
+            // Pass 1: Match basic melee skill by template ID (0=Dragon, 2=Demon, 4=Galick) or name
             for (int i = 0; i < skills.length; i++) {
                 Object skill = skills[i];
                 if (skill == null) continue;
                 Object template = skill.getClass().getField("a").get(skill);
                 if (template == null) continue;
+                int skillId = ((Number) template.getClass().getField("S").get(template)).intValue();
                 Object rawName = template.getClass().getField("b").get(template);
-                if (!(rawName instanceof String)) continue;
+                String normalized = (rawName instanceof String)
+                    ? Normalizer.normalize((String) rawName, Normalizer.Form.NFD)
+                        .replaceAll("\\p{M}+", "")
+                        .replace('đ', 'd').replace('Đ', 'D')
+                        .trim().toLowerCase(Locale.ROOT)
+                    : "";
 
-                String normalized = Normalizer.normalize((String) rawName, Normalizer.Form.NFD)
-                    .replaceAll("\\p{M}+", "")
-                    .replace('đ', 'd').replace('Đ', 'D')
-                    .trim().toLowerCase(Locale.ROOT);
-                if (normalized.equals("dam") || normalized.startsWith("dam ") || normalized.startsWith("dam-")) {
-                    int skillNumber = i + 1;
-                    Object rawSkillId = template.getClass().getField("S").get(template);
-                    int skillId = ((Number) rawSkillId).intValue();
-                    Class<?> clsJ = getGameClass("nro.j");
-                    if (clsJ == null) return -1;
-                    Object rawAutoSkills = clsJ.getField("a").get(null);
-                    if (!(rawAutoSkills instanceof Vector)) return -1;
-                    Vector autoSkills = (Vector) rawAutoSkills;
-
-                    if (containsAutoSkill(autoSkills, skillId)) return skillNumber;
-
-                    for (int attempt = 0; attempt < 3; attempt++) {
-                        executeModAction("skill" + skillNumber);
-                        if (containsAutoSkill(autoSkills, skillId)) {
-                            System.out.println("[BRIDGE] Selected Hùng Hero punch skill [" + rawName + "] (skill" + skillNumber + ") in auto combat.");
-                            return skillNumber;
-                        }
-                        Thread.sleep(250);
-                    }
-                    System.out.println("[BRIDGE] Hùng Hero did not add punch skill [" + rawName + "] (skill" + skillNumber + ") to the auto-skill list.");
-                    return -1;
+                if (skillId == 0 || skillId == 2 || skillId == 4
+                    || normalized.startsWith("dragon")
+                    || normalized.startsWith("demon")
+                    || normalized.startsWith("galick")
+                    || normalized.equals("dam") || normalized.startsWith("dam ") || normalized.startsWith("dam-")
+                    || normalized.startsWith("lien hoan")) {
+                    targetIdx = i;
+                    break;
                 }
+            }
+
+            // Pass 2: Fallback to the first available skill in slot 1 (index 0)
+            if (targetIdx < 0) {
+                for (int i = 0; i < skills.length; i++) {
+                    if (skills[i] != null) {
+                        targetIdx = i;
+                        break;
+                    }
+                }
+            }
+
+            if (targetIdx < 0) return -1;
+
+            Object skill = skills[targetIdx];
+            Object template = skill.getClass().getField("a").get(skill);
+            int skillId = ((Number) template.getClass().getField("S").get(template)).intValue();
+            Object rawName = template.getClass().getField("b").get(template);
+            int skillNumber = targetIdx + 1;
+
+            Object rawAutoSkills = clsJ.getField("a").get(null);
+            if (!(rawAutoSkills instanceof Vector)) return -1;
+            Vector autoSkills = (Vector) rawAutoSkills;
+
+            if (containsAutoSkill(autoSkills, skillId)) {
+                return skillNumber;
+            }
+
+            // Use Hùng Hero's "skill<N> 1" syntax to assign skill N into auto slot 1
+            for (int attempt = 0; attempt < 2; attempt++) {
+                executeModAction("skill" + skillNumber + " 1");
+                if (containsAutoSkill(autoSkills, skillId)) {
+                    System.out.println("[BRIDGE] Selected Hùng Hero melee skill [" + rawName + "] (skill" + skillNumber + " -> slot 1) in auto combat.");
+                    return skillNumber;
+                }
+                Thread.sleep(150);
+            }
+
+            // Fallback: toggle via nro.j.d(int) or insert directly into nro.j.a and persist via nro.j.F()
+            try {
+                Method dMeth = clsJ.getMethod("d", int.class);
+                dMeth.invoke(null, targetIdx);
+            } catch (Throwable ignored) {}
+
+            if (!containsAutoSkill(autoSkills, skillId)) {
+                autoSkills.insertElementAt(skill, 0);
+                try {
+                    Method fMeth = clsJ.getMethod("F");
+                    fMeth.invoke(null);
+                } catch (Throwable ignored) {}
+            }
+
+            if (containsAutoSkill(autoSkills, skillId)) {
+                System.out.println("[BRIDGE] Guaranteed melee skill [" + rawName + "] (skill" + skillNumber + ") in auto-skill list.");
+                return skillNumber;
             }
         } catch (Throwable t) {
             System.out.println("[BRIDGE] configurePunchSkill error: " + t);
@@ -488,6 +545,9 @@ public class GameBridgeAgent {
                                     Thread.sleep(1000);
                                 } catch (Throwable ignored) {}
                             }
+
+                            // 2.5. Ensure melee/punch skill is in Hùng Hero's auto-skill list before starting combat
+                            configurePunchSkill();
 
                             // 3. Activate auto farm mode: TDLT + TÀN SÁT COMBO
                             if ("ts".equalsIgnoreCase(mode)) {

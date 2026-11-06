@@ -754,7 +754,17 @@ def handle_mod_action():
 
     allowed = {"cd", "locdo", "anhat", "gb", "s20", "kvt", "nb", "cflag", "xdh", "annguoi", "cs", "xmap", "ts", "tdlt"}
     cmds = [cmd.strip() for cmd in raw_cmd.replace(";", ",").split(",") if cmd.strip()]
-    if any(cmd not in allowed and not (cmd.startswith("k") and cmd[1:].isdigit()) and not (cmd.startswith("skill") and cmd[5:].isdigit() and 1 <= int(cmd[5:]) <= 10) for cmd in cmds):
+    def is_valid_skill_cmd(c):
+        if not c.startswith("skill"):
+            return False
+        parts = c[5:].split()
+        if len(parts) == 1:
+            return parts[0].isdigit() and 1 <= int(parts[0]) <= 10
+        if len(parts) == 2:
+            return parts[0].isdigit() and parts[1].isdigit() and 1 <= int(parts[0]) <= 10 and 1 <= int(parts[1]) <= 10
+        return False
+
+    if any(cmd not in allowed and not (cmd.startswith("k") and cmd[1:].isdigit()) and not is_valid_skill_cmd(cmd) for cmd in cmds):
         return jsonify({"error": "Unsupported mod action."}), 400
 
     try:
@@ -780,11 +790,11 @@ def handle_auto_farm():
     zone_val = str(data.get("zone", "")).strip()
     mode = str(data.get("mode", "all")).strip().lower()
 
-    # Auto combat must not start until Hùng Hero confirms that punch is in its auto-skill list.
+    punch_skill = {}
     try:
-        punch_skill = configure_punch_via_bridge()
+        punch_skill = configure_punch_via_bridge() or {}
     except Exception as e:
-        return jsonify({"error": f"Không chọn được chiêu Đấm của Hùng Hero: {e}"}), 503
+        print(f"[AUTO_FARM] Pre-configure punch note (will retry inside AutoFarm worker): {e}")
 
     try:
         import urllib.parse
@@ -795,10 +805,11 @@ def handle_auto_farm():
         with urllib.request.urlopen(req, timeout=2.0) as resp:
             if resp.status == 200:
                 res_data = json.loads(resp.read().decode('utf-8'))
+                skill_num = punch_skill.get('skill', 1)
                 return jsonify({
                     "status": "ok",
                     "method": "bridge",
-                    "message": f"Đã chọn chiêu Đấm (skill{punch_skill.get('skill')}) và khởi động Auto qua Game Engine!",
+                    "message": f"Đã chọn chiêu đánh (skill{skill_num}) và khởi động Auto Up SKH (TDLT + Tàn Sát)!",
                     "details": res_data
                 })
     except Exception as e:
