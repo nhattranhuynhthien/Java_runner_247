@@ -373,35 +373,45 @@ def auth_status():
         "is_default": is_default
     })
 
+def capture_game_screenshot_bytes(quality=55):
+    """Capture 240x360 game screenshot bytes (X11 ImageGrab primary, JVM Bridge framebuffer fallback)."""
+    try:
+        im = ImageGrab.grab(bbox=(0, MENU_BAR_OFFSET, SCREEN_WIDTH, MENU_BAR_OFFSET + SCREEN_HEIGHT))
+        if im is not None:
+            im = im.convert('RGB')
+            buf = io.BytesIO()
+            im.save(buf, format='JPEG', quality=quality, optimize=True)
+            return buf.getvalue()
+    except Exception:
+        pass
+
+    # Fallback: Direct JVM Canvas Framebuffer Screenshot from GameBridgeAgent
+    try:
+        import urllib.request
+        req = urllib.request.Request("http://127.0.0.1:28888/api/game/screenshot", headers={"User-Agent": "NRO-Server"})
+        with urllib.request.urlopen(req, timeout=1.0) as resp:
+            if resp.status == 200:
+                data = resp.read()
+                if data and len(data) > 200:
+                    return data
+    except Exception:
+        pass
+
+    buf = io.BytesIO()
+    blank = Image.new('RGB', (SCREEN_WIDTH, SCREEN_HEIGHT), color=(15, 20, 30))
+    blank.save(buf, format='JPEG', quality=50)
+    return buf.getvalue()
+
 @app.route('/api/screenshot', methods=['GET'])
 def screenshot():
     if not check_pin(request):
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
 
-    try:
-        im = ImageGrab.grab(bbox=(0, MENU_BAR_OFFSET, SCREEN_WIDTH, MENU_BAR_OFFSET + SCREEN_HEIGHT))
-        if im is None:
-            im = Image.new('RGB', (SCREEN_WIDTH, SCREEN_HEIGHT), color=(10, 15, 25))
-        else:
-            im = im.convert('RGB')
-
-        buf = io.BytesIO()
-        im.save(buf, format='JPEG', quality=55, optimize=True)
-        jpeg_bytes = buf.getvalue()
-
-        response = Response(jpeg_bytes, mimetype='image/jpeg')
-        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
-        response.headers['Pragma'] = 'no-cache'
-        return response
-
-    except Exception:
-        buf = io.BytesIO()
-        blank = Image.new('RGB', (SCREEN_WIDTH, SCREEN_HEIGHT), color=(15, 20, 30))
-        blank.save(buf, format='JPEG', quality=50)
-        response = Response(buf.getvalue(), mimetype='image/jpeg')
-        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
-        response.headers['Pragma'] = 'no-cache'
-        return response
+    jpeg_bytes = capture_game_screenshot_bytes(quality=55)
+    response = Response(jpeg_bytes, mimetype='image/jpeg')
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    return response
 
 @app.route('/api/status', methods=['GET'])
 def server_status():
@@ -1133,6 +1143,26 @@ def handle_open_account_dialog():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+def login_via_bridge(username="", password="", server_num=0):
+    """Đăng nhập / đổi tài khoản hoặc đổi máy chủ trực tiếp trong JVM không cần khởi động lại Emulator."""
+    try:
+        import urllib.parse
+        import urllib.request
+        query = (
+            f"user={urllib.parse.quote(str(username or ''))}"
+            f"&pass={urllib.parse.quote(str(password or ''))}"
+            f"&server={int(server_num or 0)}"
+        )
+        url = f"http://127.0.0.1:28888/api/game/login?{query}"
+        req = urllib.request.Request(url, data=b"", headers={"User-Agent": "NRO-Server"})
+        with urllib.request.urlopen(req, timeout=2.5) as resp:
+            if resp.status == 200:
+                res = json.loads(resp.read().decode("utf-8"))
+                return res.get("status") == "ok"
+    except Exception as e:
+        print(f"[DIRECT_LOGIN] Bridge login fallback note: {e}")
+    return False
+
 @app.route('/api/select_server', methods=['POST'])
 def handle_select_server():
     if not check_pin(request):
@@ -1148,22 +1178,32 @@ def handle_select_server():
         return jsonify({"error": "Vui lòng chọn máy chủ hợp lệ (1 - 13)!"}), 400
 
     try:
-        # Ghi trực tiếp máy chủ vào RMS (vjsvselect.rs)
-        suite_dir = get_rms_suite_dir()
+        # 1. Ghi trực tiếp máy chủ vào tất cả thư mục RMS (vjsvselect.rs)
         sv_idx = server_num - 1
-        sv_path = os.path.join(suite_dir, "vjsvselect.rs")
-        with open(sv_path, "wb") as f:
-            f.write(make_rs_bytes("vjsvselect", {1: sv_idx}))
-        print(f"[RMS] Đã lưu máy chủ {server_num} (index {sv_idx}) vào {sv_path}")
+        for sdir in get_all_suite_dirs():
+            try:
+                sv_path = os.path.join(sdir, "vjsvselect.rs")
+                with open(sv_path, "wb") as f:
+                    f.write(make_rs_bytes("vjsvselect", {1: sv_idx}))
+            except Exception:
+                pass
 
-        # Khởi động lại game để nạp máy chủ mới
+        # 2. Ưu tiên đổi máy chủ & kết nối lại trực tiếp trong JVM (0s downtime)
+        if login_via_bridge("", "", server_num):
+            t = threading.Thread(target=auto_enter_game_worker, daemon=True)
+            t.start()
+            return jsonify({
+                "status": "ok",
+                "method": "direct_jvm",
+                "message": f"Đã chuyển trực tiếp sang Máy chủ: Vũ trụ {server_num} (không cần khởi động lại game)!"
+            })
+
+        # 3. Fallback: Khởi động lại game nếu JVM Bridge chưa sẵn sàng
         restart_emulator()
-
-        # Tự động vào game khi Menu chính sẵn sàng
         t = threading.Thread(target=auto_enter_game_worker, daemon=True)
         t.start()
 
-        return jsonify({"status": "ok", "message": f"Đã chuyển sang Máy chủ: Vũ trụ {server_num} thành công!"})
+        return jsonify({"status": "ok", "method": "restart", "message": f"Đã chuyển sang Máy chủ: Vũ trụ {server_num} thành công!"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1180,29 +1220,459 @@ def handle_quick_login():
     except (ValueError, TypeError):
         server_num = 0
     auto_enter = bool(data.get("auto_enter", True))
+    force_restart = bool(data.get("force_restart", False))
 
     if not username:
         return jsonify({"error": "Vui lòng nhập tài khoản (hoặc SĐT/Email)"}), 400
 
     try:
-        # 1. Ghi trực tiếp thông tin vào RMS của game
-        # Hoàn toàn không phụ thuộc tọa độ, không click nhầm, không lag gõ phím!
+        # 1. Ghi trực tiếp thông tin vào RMS trên đĩa để lưu bền vững
         write_rms_account(username, password, server_num)
 
-        # 2. Khởi động lại game để áp dụng tài khoản & máy chủ mới ngay lập tức
+        # 2. Ưu tiên đăng nhập trực tiếp trong bộ nhớ JVM (không cần restart emulator)
+        if not force_restart and login_via_bridge(username, password, server_num):
+            if auto_enter:
+                t = threading.Thread(target=auto_enter_game_worker, daemon=True)
+                t.start()
+            return jsonify({
+                "status": "ok",
+                "method": "direct_jvm",
+                "message": "Đã nạp tài khoản & đăng nhập trực tiếp trong JVM! Đang vào thế giới..."
+            })
+
+        # 3. Fallback: Khởi động lại game để áp dụng tài khoản & máy chủ mới
         restart_emulator()
 
-        # 3. Kích hoạt worker tự động bấm 'Chơi TK' ngay khi màn hình chính 5 nút xuất hiện
         if auto_enter:
             t = threading.Thread(target=auto_enter_game_worker, daemon=True)
             t.start()
 
         return jsonify({
             "status": "ok",
+            "method": "restart",
             "message": "Đã lưu tài khoản & máy chủ vào hệ thống game! Đang tự động kết nối vào thế giới..."
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+# =========================================================================
+# HẠNG MỤC 4: Hệ Thống Thông Báo Telegram / Discord (Báo Đồ SKH, Đầy Rương)
+# =========================================================================
+
+def _resolve_persistent_path(env_key, filename):
+    custom = os.environ.get(env_key)
+    if custom:
+        return custom
+    if os.path.exists("/data") and os.access("/data", os.W_OK):
+        return os.path.join("/data", filename)
+    return os.path.abspath(filename)
+
+NOTIFY_CONFIG_FILE = _resolve_persistent_path("NOTIFY_CONFIG_FILE", "notify_config.json")
+PROFILES_CONFIG_FILE = _resolve_persistent_path("PROFILES_CONFIG_FILE", "account_profiles.json")
+notify_lock = threading.Lock()
+NOTIFY_HISTORY = []  # Lưu tối đa 20 thông báo gần nhất
+
+DEFAULT_NOTIFY_CONFIG = {
+    "enabled": True,
+    "telegram_bot_token": "",
+    "telegram_chat_id": "",
+    "discord_webhook_url": "",
+    "notify_skh": True,
+    "notify_full_bag": True,
+    "notify_disconnect": False
+}
+
+def load_notify_config():
+    cfg = dict(DEFAULT_NOTIFY_CONFIG)
+    if os.path.exists(NOTIFY_CONFIG_FILE):
+        try:
+            with open(NOTIFY_CONFIG_FILE, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+                if isinstance(saved, dict):
+                    cfg.update(saved)
+        except Exception as e:
+            print(f"[NOTIFY] Lỗi đọc cấu hình: {e}")
+    return cfg
+
+def save_notify_config(cfg):
+    try:
+        os.makedirs(os.path.dirname(NOTIFY_CONFIG_FILE) or ".", exist_ok=True)
+        with open(NOTIFY_CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print(f"[NOTIFY] Lỗi lưu cấu hình: {e}")
+        return False
+
+def _send_telegram(bot_token, chat_id, text, image_bytes=None):
+    import urllib.request
+    import urllib.parse
+    token = str(bot_token or "").strip()
+    cid = str(chat_id or "").strip()
+    if not token or not cid:
+        return False, "Chưa cấu hình Telegram Bot Token hoặc Chat ID"
+
+    try:
+        if image_bytes:
+            boundary = "----NROCloudBoundary" + secrets.token_hex(8)
+            body = bytearray()
+            for k, v in [("chat_id", cid), ("caption", text)]:
+                body += f"--{boundary}\r\n".encode("utf-8")
+                body += f'Content-Disposition: form-data; name="{k}"\r\n\r\n'.encode("utf-8")
+                body += f"{v}\r\n".encode("utf-8")
+            body += f"--{boundary}\r\n".encode("utf-8")
+            body += b'Content-Disposition: form-data; name="photo"; filename="nro_skh.jpg"\r\n'
+            body += b"Content-Type: image/jpeg\r\n\r\n"
+            body += image_bytes + b"\r\n"
+            body += f"--{boundary}--\r\n".encode("utf-8")
+
+            url = f"https://api.telegram.org/bot{token}/sendPhoto"
+            req = urllib.request.Request(
+                url,
+                data=bytes(body),
+                headers={
+                    "Content-Type": f"multipart/form-data; boundary={boundary}",
+                    "User-Agent": "NRO-Cloud-Bot"
+                }
+            )
+            with urllib.request.urlopen(req, timeout=8.0) as resp:
+                return resp.status == 200, "Đã gửi ảnh + tin nhắn Telegram"
+        else:
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
+            payload = urllib.parse.urlencode({"chat_id": cid, "text": text}).encode("utf-8")
+            req = urllib.request.Request(url, data=payload, headers={"User-Agent": "NRO-Cloud-Bot"})
+            with urllib.request.urlopen(req, timeout=8.0) as resp:
+                return resp.status == 200, "Đã gửi tin nhắn Telegram"
+    except Exception as e:
+        return False, f"Lỗi Telegram: {e}"
+
+def _send_discord(webhook_url, text, image_bytes=None):
+    import urllib.request
+    url = str(webhook_url or "").strip()
+    if not url:
+        return False, "Chưa cấu hình Discord Webhook URL"
+
+    try:
+        if image_bytes:
+            boundary = "----NRODiscordBoundary" + secrets.token_hex(8)
+            payload_json = json.dumps({"content": text, "username": "NRO Cloud 24/7"}).encode("utf-8")
+            body = bytearray()
+            body += f"--{boundary}\r\n".encode("utf-8")
+            body += b'Content-Disposition: form-data; name="payload_json"\r\n'
+            body += b"Content-Type: application/json\r\n\r\n"
+            body += payload_json + b"\r\n"
+            body += f"--{boundary}\r\n".encode("utf-8")
+            body += b'Content-Disposition: form-data; name="file"; filename="nro_skh.jpg"\r\n'
+            body += b"Content-Type: image/jpeg\r\n\r\n"
+            body += image_bytes + b"\r\n"
+            body += f"--{boundary}--\r\n".encode("utf-8")
+
+            req = urllib.request.Request(
+                url,
+                data=bytes(body),
+                headers={
+                    "Content-Type": f"multipart/form-data; boundary={boundary}",
+                    "User-Agent": "NRO-Cloud-Bot"
+                }
+            )
+            with urllib.request.urlopen(req, timeout=8.0) as resp:
+                return resp.status in (200, 204), "Đã gửi ảnh + tin nhắn Discord"
+        else:
+            payload = json.dumps({"content": text, "username": "NRO Cloud 24/7"}).encode("utf-8")
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                headers={"Content-Type": "application/json", "User-Agent": "NRO-Cloud-Bot"}
+            )
+            with urllib.request.urlopen(req, timeout=8.0) as resp:
+                return resp.status in (200, 204), "Đã gửi tin nhắn Discord"
+    except Exception as e:
+        return False, f"Lỗi Discord: {e}"
+
+def dispatch_notification(text, include_screenshot=True, cfg_override=None):
+    cfg = cfg_override or load_notify_config()
+    img_bytes = capture_game_screenshot_bytes(quality=65) if include_screenshot else None
+    results = []
+
+    if cfg.get("telegram_bot_token") and cfg.get("telegram_chat_id"):
+        ok, msg = _send_telegram(cfg.get("telegram_bot_token"), cfg.get("telegram_chat_id"), text, img_bytes)
+        results.append({"channel": "telegram", "ok": ok, "detail": msg})
+
+    if cfg.get("discord_webhook_url"):
+        ok, msg = _send_discord(cfg.get("discord_webhook_url"), text, img_bytes)
+        results.append({"channel": "discord", "ok": ok, "detail": msg})
+
+    with notify_lock:
+        NOTIFY_HISTORY.insert(0, {
+            "time": time.strftime("%H:%M:%S %d/%m"),
+            "text": text,
+            "results": results
+        })
+        del NOTIFY_HISTORY[20:]
+
+    return results
+
+def notification_monitor_worker():
+    """Luồng chạy ngầm 24/7 theo dõi đồ SKH mới rớt vào hành trang, đầy rương & mất kết nối."""
+    last_char = None
+    known_skh = set()
+    last_full_bag_alert_ts = 0.0
+    last_disconnect_alert_ts = 0.0
+    offline_since = None
+
+    while True:
+        try:
+            time.sleep(10.0)
+            cfg = load_notify_config()
+            if not cfg.get("enabled", True):
+                continue
+
+            has_channel = bool(
+                (cfg.get("telegram_bot_token") and cfg.get("telegram_chat_id"))
+                or cfg.get("discord_webhook_url")
+            )
+            if not has_channel:
+                continue
+
+            st = get_bridge_status()
+            if not st or not st.get("bridge_online"):
+                continue
+
+            in_game = bool(st.get("in_game"))
+            char_name = str(st.get("char_name") or "").strip()
+
+            if not in_game or not char_name:
+                if st.get("autofarm_active"):
+                    if offline_since is None:
+                        offline_since = time.time()
+                    elif (
+                        cfg.get("notify_disconnect")
+                        and time.time() - offline_since > 180
+                        and time.time() - last_disconnect_alert_ts > 1800
+                    ):
+                        last_disconnect_alert_ts = time.time()
+                        dispatch_notification(
+                            "⚠️ [NRO CLOUD 24/7] Nhân vật đang ở ngoài màn hình chờ hơn 3 phút khi đang bật Auto! Hệ thống Watchdog đang thử kết nối lại.",
+                            include_screenshot=True,
+                            cfg_override=cfg
+                        )
+                continue
+
+            offline_since = None
+            raw_skh = st.get("skh_items") or []
+            current_skh = set(str(x) for x in raw_skh)
+
+            # Nếu mới vào game hoặc vừa đổi nhân vật, đồng bộ danh sách SKH sẵn có để không báo nhầm đồ cũ
+            if char_name != last_char:
+                last_char = char_name
+                known_skh = set(current_skh)
+                continue
+
+            # 1. Phát hiện đồ SKH mới nhặt được
+            new_items = [item for item in raw_skh if item not in known_skh]
+            if new_items:
+                known_skh.update(current_skh)
+                if cfg.get("notify_skh", True):
+                    map_name = st.get("map_name") or f"Map {st.get('map_id', '?')}"
+                    zone = st.get("zone", "?")
+                    items_str = "\n".join(f"✨ {it}" for it in new_items)
+                    msg = (
+                        f"🎉 [NRO CLOUD - NHẶT ĐƯỢC ĐỒ SKH MỚI!]\n"
+                        f"👤 Nhân vật: {char_name}\n"
+                        f"📍 Vị trí: {map_name} (Khu {zone})\n"
+                        f"🎁 Vật phẩm SKH mới:\n{items_str}\n"
+                        f"🎒 Hành trang trống: {st.get('bag_free', '?')}/{st.get('bag_total', '?')} ô"
+                    )
+                    dispatch_notification(msg, include_screenshot=True, cfg_override=cfg)
+            else:
+                known_skh = set(current_skh)
+
+            # 2. Phát hiện đầy hành trang (cooldown 30 phút)
+            bag_total = int(st.get("bag_total") or 0)
+            bag_free = int(st.get("bag_free") if st.get("bag_free") is not None else 99)
+            if (
+                cfg.get("notify_full_bag", True)
+                and bag_total > 0
+                and bag_free == 0
+                and time.time() - last_full_bag_alert_ts > 1800
+            ):
+                last_full_bag_alert_ts = time.time()
+                map_name = st.get("map_name") or f"Map {st.get('map_id', '?')}"
+                msg = (
+                    f"🎒 [NRO CLOUD - ĐẦY HÀNH TRANG!]\n"
+                    f"👤 Nhân vật: {char_name}\n"
+                    f"📍 Vị trí: {map_name} (Khu {st.get('zone', '?')})\n"
+                    f"⚠️ Hành trang đã đầy ({st.get('bag_used')}/{bag_total} ô). Hãy kiểm tra hoặc bật Lọc Đồ (locdo)!"
+                )
+                dispatch_notification(msg, include_screenshot=True, cfg_override=cfg)
+
+        except Exception as e:
+            print(f"[NOTIFY_MONITOR] Error: {e}")
+
+_notify_thread = threading.Thread(target=notification_monitor_worker, daemon=True)
+_notify_thread.start()
+
+@app.route('/api/notify_config', methods=['GET', 'POST'])
+def handle_notify_config():
+    if not check_pin(request):
+        return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
+
+    if request.method == 'GET':
+        cfg = load_notify_config()
+        return jsonify({
+            "status": "ok",
+            "config": cfg,
+            "history": NOTIFY_HISTORY[:10]
+        })
+
+    data = request.get_json(silent=True) or {}
+    cfg = load_notify_config()
+    cfg["enabled"] = bool(data.get("enabled", True))
+    cfg["telegram_bot_token"] = str(data.get("telegram_bot_token", "")).strip()
+    cfg["telegram_chat_id"] = str(data.get("telegram_chat_id", "")).strip()
+    cfg["discord_webhook_url"] = str(data.get("discord_webhook_url", "")).strip()
+    cfg["notify_skh"] = bool(data.get("notify_skh", True))
+    cfg["notify_full_bag"] = bool(data.get("notify_full_bag", True))
+    cfg["notify_disconnect"] = bool(data.get("notify_disconnect", False))
+
+    if save_notify_config(cfg):
+        return jsonify({"status": "ok", "message": "Đã lưu cấu hình thông báo Telegram / Discord!", "config": cfg})
+    return jsonify({"error": "Không thể lưu cấu hình thông báo"}), 500
+
+@app.route('/api/notify_test', methods=['POST'])
+def handle_notify_test():
+    if not check_pin(request):
+        return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
+
+    data = request.get_json(silent=True) or {}
+    cfg = load_notify_config()
+    for k in ("telegram_bot_token", "telegram_chat_id", "discord_webhook_url"):
+        if k in data:
+            cfg[k] = str(data.get(k) or "").strip()
+
+    if not ((cfg.get("telegram_bot_token") and cfg.get("telegram_chat_id")) or cfg.get("discord_webhook_url")):
+        return jsonify({"error": "Vui lòng nhập Telegram (Bot Token + Chat ID) hoặc Discord Webhook URL trước khi gửi thử!"}), 400
+
+    st = get_bridge_status() or {}
+    if st.get("in_game"):
+        msg = (
+            f"✅ [NRO CLOUD 24/7 - TEST THÔNG BÁO]\n"
+            f"👤 Nhân vật: {st.get('char_name')}\n"
+            f"📍 Vị trí: {st.get('map_name', 'Unknown')} [{st.get('map_id')}] - Khu {st.get('zone')}\n"
+            f"💪 Sức mạnh: {st.get('power', 0):,}\n"
+            f"✨ Số món SKH hiện có: {st.get('skh_count', 0)} món"
+        )
+    else:
+        msg = "✅ [NRO CLOUD 24/7 - TEST THÔNG BÁO]\nKết nối thông báo Telegram / Discord hoạt động tốt! Khi nhân vật nhặt được đồ SKH mới, hệ thống sẽ chụp ảnh màn hình và báo về đây ngay lập tức."
+
+    results = dispatch_notification(msg, include_screenshot=True, cfg_override=cfg)
+    any_ok = any(r.get("ok") for r in results)
+    if any_ok:
+        return jsonify({"status": "ok", "message": "Đã gửi tin nhắn & ảnh chụp màn hình thử nghiệm thành công!", "results": results})
+    details = "; ".join(r.get("detail", "") for r in results)
+    return jsonify({"error": f"Gửi thông báo thất bại: {details}", "results": results}), 400
+
+# =========================================================================
+# HẠNG MỤC 5: Quản Lý Danh Sách Tài Khoản (Multi-Account Profiles Manager)
+# =========================================================================
+
+def load_account_profiles():
+    if os.path.exists(PROFILES_CONFIG_FILE):
+        try:
+            with open(PROFILES_CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception as e:
+            print(f"[PROFILES] Lỗi đọc danh sách tài khoản: {e}")
+    return []
+
+def save_account_profiles(profiles):
+    try:
+        os.makedirs(os.path.dirname(PROFILES_CONFIG_FILE) or ".", exist_ok=True)
+        with open(PROFILES_CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(profiles, f, ensure_ascii=False, indent=2)
+        if os.name == "posix":
+            try:
+                os.chmod(PROFILES_CONFIG_FILE, 0o600)
+            except Exception:
+                pass
+        return True
+    except Exception as e:
+        print(f"[PROFILES] Lỗi lưu danh sách tài khoản: {e}")
+        return False
+
+@app.route('/api/profiles', methods=['GET', 'POST', 'DELETE'])
+def handle_profiles():
+    if not check_pin(request):
+        return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
+
+    profiles = load_account_profiles()
+
+    if request.method == 'GET':
+        return jsonify({"status": "ok", "profiles": profiles})
+
+    data = request.get_json(silent=True) or {}
+
+    if request.method == 'DELETE':
+        prof_id = str(data.get("id") or request.args.get("id") or "").strip()
+        if not prof_id:
+            return jsonify({"error": "Thiếu ID tài khoản cần xóa"}), 400
+        new_profiles = [p for p in profiles if str(p.get("id")) != prof_id]
+        save_account_profiles(new_profiles)
+        return jsonify({"status": "ok", "message": "Đã xóa tài khoản khỏi danh sách lưu!", "profiles": new_profiles})
+
+    # POST: Thêm mới hoặc cập nhật tài khoản
+    username = str(data.get("username", "")).strip()
+    password = str(data.get("password", "")).strip()
+    try:
+        server = int(data.get("server", 7))
+    except (ValueError, TypeError):
+        server = 7
+    label = str(data.get("label", "")).strip()
+    fav_map = str(data.get("map", "0")).strip()
+    fav_zone = str(data.get("zone", "5")).strip()
+    prof_id = str(data.get("id", "")).strip()
+
+    if not username:
+        return jsonify({"error": "Vui lòng nhập tài khoản trước khi lưu!"}), 400
+
+    if not label:
+        label = f"{username} (VT{server if server > 0 else 7})"
+
+    updated = False
+    for p in profiles:
+        if (prof_id and str(p.get("id")) == prof_id) or (
+            p.get("username", "").lower() == username.lower() and int(p.get("server", 0)) == server
+        ):
+            p["label"] = label
+            p["username"] = username
+            if password:
+                p["password"] = password
+            p["server"] = server
+            p["map"] = fav_map
+            p["zone"] = fav_zone
+            updated = True
+            break
+
+    if not updated:
+        profiles.append({
+            "id": secrets.token_hex(6),
+            "label": label,
+            "username": username,
+            "password": password,
+            "server": server,
+            "map": fav_map,
+            "zone": fav_zone
+        })
+
+    if save_account_profiles(profiles):
+        return jsonify({
+            "status": "ok",
+            "message": f"Đã lưu cấu hình tài khoản [{label}]!",
+            "profiles": profiles
+        })
+    return jsonify({"error": "Không thể lưu danh sách tài khoản"}), 500
 
 @app.route('/api/restart', methods=['POST'])
 def restart_game():

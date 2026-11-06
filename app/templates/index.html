@@ -263,9 +263,32 @@
                     <div class="flex items-center justify-between text-xs font-bold text-slate-200">
                         <span class="flex items-center gap-1.5">
                             <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
-                            Đăng Nhập Nhanh
+                            Đăng Nhập & Quản Lý Acc
                         </span>
-                        <span class="text-[10px] text-emerald-400/90 font-mono font-medium">Tự động 1 chạm</span>
+                        <span class="text-[10px] text-emerald-400/90 font-mono font-medium">Direct JVM • 1 chạm</span>
+                    </div>
+
+                    <!-- Multi-Account Profile Selector (Hạng mục 5) -->
+                    <div class="bg-slate-950/80 border border-white/10 rounded-lg p-2 flex flex-col gap-1.5">
+                        <div class="flex items-center justify-between text-[10px] text-slate-400">
+                            <span class="font-semibold text-indigo-300">Danh sách Acc đã lưu:</span>
+                            <div class="flex items-center gap-1">
+                                <button type="button" id="btn-save-profile" class="px-1.5 py-0.5 rounded bg-emerald-500/20 hover:bg-emerald-500/35 text-emerald-300 border border-emerald-500/30 font-semibold transition" title="Lưu tài khoản + máy chủ + map/khu hiện tại vào danh sách">
+                                    + Lưu Acc
+                                </button>
+                                <button type="button" id="btn-delete-profile" class="px-1.5 py-0.5 rounded bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 border border-rose-500/25 font-medium transition" title="Xóa tài khoản đang chọn khỏi danh sách">
+                                    Xóa
+                                </button>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            <select id="select-account-profile" class="flex-1 bg-slate-900 border border-white/15 rounded-md px-2 py-1 text-xs text-white focus:outline-none focus:border-indigo-400 font-mono truncate cursor-pointer">
+                                <option value="">-- Chọn Acc đã lưu --</option>
+                            </select>
+                            <button type="button" id="btn-switch-and-farm" class="px-2 py-1 rounded-md bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-bold text-[11px] whitespace-nowrap transition shadow" title="Chuyển ngay sang Acc này và áp dụng Map/Khu đã lưu">
+                                Chuyển Acc
+                            </button>
+                        </div>
                     </div>
 
                     <!-- Account & Password Inputs -->
@@ -646,6 +669,64 @@
                         </div>
                         <div id="stat-skh-list" class="bg-slate-950/80 border border-white/10 rounded-lg p-2 max-h-28 overflow-y-auto text-[11px] font-mono text-slate-400 flex flex-col gap-1">
                             <span>Chưa phát hiện đồ SKH trong hành trang.</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Telegram / Discord SKH Alert Configuration (Hạng mục 4) -->
+                <div class="w-full bg-slate-900/90 border border-white/10 rounded-2xl p-3 flex flex-col gap-2.5 shadow-xl">
+                    <div class="flex items-center justify-between border-b border-white/5 pb-2">
+                        <span class="flex items-center gap-1.5 text-xs font-bold text-slate-200">
+                            <span class="text-amber-400">🔔</span>
+                            Báo Đồ SKH (Telegram / Discord)
+                        </span>
+                        <span id="badge-notify-status" class="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-slate-800 text-slate-400 border border-white/10">
+                            Chưa cài
+                        </span>
+                    </div>
+
+                    <div class="flex flex-col gap-2 text-[11px]">
+                        <div class="grid grid-cols-2 gap-1.5">
+                            <div class="flex flex-col gap-0.5">
+                                <span class="text-[10px] text-slate-400">Telegram Bot Token</span>
+                                <input type="password" id="notify-tg-token" placeholder="123456:ABC-DEF..." autocomplete="off"
+                                    class="w-full bg-slate-950 border border-white/10 rounded-md px-2 py-1 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-indigo-400 font-mono">
+                            </div>
+                            <div class="flex flex-col gap-0.5">
+                                <span class="text-[10px] text-slate-400">Telegram Chat ID</span>
+                                <input type="text" id="notify-tg-chat" placeholder="-100... hoặc ID" autocomplete="off"
+                                    class="w-full bg-slate-950 border border-white/10 rounded-md px-2 py-1 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-indigo-400 font-mono">
+                            </div>
+                        </div>
+
+                        <div class="flex flex-col gap-0.5">
+                            <span class="text-[10px] text-slate-400">Discord Webhook URL (Tùy chọn)</span>
+                            <input type="password" id="notify-discord-webhook" placeholder="https://discord.com/api/webhooks/..." autocomplete="off"
+                                class="w-full bg-slate-950 border border-white/10 rounded-md px-2 py-1 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-indigo-400 font-mono">
+                        </div>
+
+                        <div class="flex flex-wrap items-center justify-between gap-1 pt-0.5 text-[10px] text-slate-300">
+                            <label class="flex items-center gap-1 cursor-pointer select-none">
+                                <input type="checkbox" id="chk-notify-skh" checked class="rounded bg-slate-950 border-white/20 text-emerald-500 focus:ring-0">
+                                <span>Báo đồ SKH mới</span>
+                            </label>
+                            <label class="flex items-center gap-1 cursor-pointer select-none">
+                                <input type="checkbox" id="chk-notify-bag" checked class="rounded bg-slate-950 border-white/20 text-emerald-500 focus:ring-0">
+                                <span>Báo đầy rương</span>
+                            </label>
+                            <label class="flex items-center gap-1 cursor-pointer select-none">
+                                <input type="checkbox" id="chk-notify-disc" class="rounded bg-slate-950 border-white/20 text-emerald-500 focus:ring-0">
+                                <span>Báo mất kết nối</span>
+                            </label>
+                        </div>
+
+                        <div class="flex items-center gap-1.5 pt-1">
+                            <button type="button" id="btn-save-notify" class="flex-1 py-1.5 px-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-bold text-xs transition shadow">
+                                Lưu Cấu Hình
+                            </button>
+                            <button type="button" id="btn-test-notify" class="py-1.5 px-2.5 rounded-lg bg-emerald-600/25 hover:bg-emerald-600/40 active:scale-95 text-emerald-300 border border-emerald-500/35 font-semibold text-xs transition">
+                                Gửi Thử
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -1840,6 +1921,250 @@
                 });
             }
 
+            // =====================================================================
+            // HẠNG MỤC 5: Quản Lý Danh Sách Tài Khoản (Multi-Account Profiles)
+            // =====================================================================
+            const selectAccountProfile = document.getElementById('select-account-profile');
+            const btnSaveProfile = document.getElementById('btn-save-profile');
+            const btnDeleteProfile = document.getElementById('btn-delete-profile');
+            const btnSwitchAndFarm = document.getElementById('btn-switch-and-farm');
+            let savedProfiles = [];
+
+            function renderProfilesList(profiles, selectedId) {
+                savedProfiles = Array.isArray(profiles) ? profiles : [];
+                if (!selectAccountProfile) return;
+                const currentVal = selectedId !== undefined ? selectedId : selectAccountProfile.value;
+                selectAccountProfile.innerHTML = '<option value="">-- Chọn Acc đã lưu (' + savedProfiles.length + ') --</option>';
+                savedProfiles.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.id;
+                    const mapInfo = p.map && p.map !== '0' ? ` • Map ${p.map}` : '';
+                    const zoneInfo = p.zone !== undefined && p.zone !== '' ? `/K${p.zone}` : '';
+                    opt.textContent = `${p.label || p.username}${mapInfo}${zoneInfo}`;
+                    selectAccountProfile.appendChild(opt);
+                });
+                if (currentVal) selectAccountProfile.value = currentVal;
+            }
+
+            function loadProfiles() {
+                fetch('/api/profiles')
+                    .then(r => r.json())
+                    .then(d => {
+                        if (d.status === 'ok') renderProfilesList(d.profiles);
+                    })
+                    .catch(() => {});
+            }
+
+            if (selectAccountProfile) {
+                selectAccountProfile.addEventListener('change', () => {
+                    const id = selectAccountProfile.value;
+                    const prof = savedProfiles.find(p => String(p.id) === String(id));
+                    if (!prof) return;
+                    if (loginUser) loginUser.value = prof.username || '';
+                    if (loginPass && prof.password) loginPass.value = prof.password;
+                    if (loginServer && prof.server) loginServer.value = String(prof.server);
+                    if (selectFarmMap && prof.map) {
+                        selectFarmMap.value = String(prof.map);
+                        try { localStorage.setItem('nro_farm_map', String(prof.map)); } catch (e) {}
+                    }
+                    if (farmZone && prof.zone !== undefined) {
+                        farmZone.value = String(prof.zone);
+                        try { localStorage.setItem('nro_farm_zone', String(prof.zone)); } catch (e) {}
+                    }
+                    showToast(`Đã điền thông tin Acc: ${prof.label || prof.username}`, 'indigo');
+                });
+            }
+
+            if (btnSaveProfile) {
+                btnSaveProfile.addEventListener('click', () => {
+                    const u = loginUser ? loginUser.value.trim() : '';
+                    const p = loginPass ? loginPass.value : '';
+                    const sv = loginServer ? parseInt(loginServer.value, 10) || 7 : 7;
+                    const m = selectFarmMap ? selectFarmMap.value : '0';
+                    const z = farmZone ? farmZone.value : '5';
+
+                    if (!u) {
+                        showToast('Vui lòng nhập Tài khoản trước khi bấm Lưu Acc!', 'amber');
+                        if (loginUser) loginUser.focus();
+                        return;
+                    }
+                    const defaultLabel = `${u.split('@')[0]} (VT${sv})`;
+                    const label = prompt('Nhập tên gợi nhớ cho Acc này (để trống sẽ tự đặt):', defaultLabel);
+                    if (label === null) return;
+
+                    fetch('/api/profiles', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            label: label.trim() || defaultLabel,
+                            username: u,
+                            password: p,
+                            server: sv,
+                            map: m,
+                            zone: z
+                        })
+                    })
+                    .then(r => r.json())
+                    .then(d => {
+                        if (d.status === 'ok') {
+                            renderProfilesList(d.profiles);
+                            showToast(d.message || 'Đã lưu tài khoản vào danh sách!', 'emerald');
+                        } else {
+                            showToast(d.error || 'Không thể lưu tài khoản', 'rose');
+                        }
+                    })
+                    .catch(() => showToast('Lỗi kết nối máy chủ', 'rose'));
+                });
+            }
+
+            if (btnDeleteProfile) {
+                btnDeleteProfile.addEventListener('click', () => {
+                    const id = selectAccountProfile ? selectAccountProfile.value : '';
+                    if (!id) {
+                        showToast('Hãy chọn một Acc trong danh sách để xóa!', 'amber');
+                        return;
+                    }
+                    const prof = savedProfiles.find(p => String(p.id) === String(id));
+                    if (!confirm(`Bạn có chắc muốn xóa Acc [${prof ? prof.label : id}] khỏi danh sách lưu?`)) return;
+
+                    fetch('/api/profiles', {
+                        method: 'DELETE',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ id })
+                    })
+                    .then(r => r.json())
+                    .then(d => {
+                        if (d.status === 'ok') {
+                            renderProfilesList(d.profiles, '');
+                            showToast(d.message || 'Đã xóa tài khoản!', 'emerald');
+                        } else {
+                            showToast(d.error || 'Lỗi xóa tài khoản', 'rose');
+                        }
+                    })
+                    .catch(() => showToast('Lỗi kết nối máy chủ', 'rose'));
+                });
+            }
+
+            if (btnSwitchAndFarm) {
+                btnSwitchAndFarm.addEventListener('click', () => {
+                    const id = selectAccountProfile ? selectAccountProfile.value : '';
+                    const prof = savedProfiles.find(p => String(p.id) === String(id));
+                    if (prof) {
+                        if (loginUser) loginUser.value = prof.username || '';
+                        if (loginPass && prof.password) loginPass.value = prof.password;
+                        if (loginServer && prof.server) loginServer.value = String(prof.server);
+                        if (selectFarmMap && prof.map) selectFarmMap.value = String(prof.map);
+                        if (farmZone && prof.zone !== undefined) farmZone.value = String(prof.zone);
+                    }
+                    executeQuickLogin();
+                });
+            }
+
+            // =====================================================================
+            // HẠNG MỤC 4: Thông Báo Telegram / Discord Khi Nhặt Đồ SKH
+            // =====================================================================
+            const badgeNotifyStatus = document.getElementById('badge-notify-status');
+            const inputTgToken = document.getElementById('notify-tg-token');
+            const inputTgChat = document.getElementById('notify-tg-chat');
+            const inputDiscordWebhook = document.getElementById('notify-discord-webhook');
+            const chkNotifySkh = document.getElementById('chk-notify-skh');
+            const chkNotifyBag = document.getElementById('chk-notify-bag');
+            const chkNotifyDisc = document.getElementById('chk-notify-disc');
+            const btnSaveNotify = document.getElementById('btn-save-notify');
+            const btnTestNotify = document.getElementById('btn-test-notify');
+
+            function updateNotifyBadge(cfg) {
+                if (!badgeNotifyStatus || !cfg) return;
+                const hasChannel = Boolean((cfg.telegram_bot_token && cfg.telegram_chat_id) || cfg.discord_webhook_url);
+                if (cfg.enabled && hasChannel) {
+                    badgeNotifyStatus.textContent = '🟢 Đang bật 24/7';
+                    badgeNotifyStatus.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40';
+                } else {
+                    badgeNotifyStatus.textContent = 'Chưa cài';
+                    badgeNotifyStatus.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-slate-800 text-slate-400 border border-white/10';
+                }
+            }
+
+            function loadNotifyConfig() {
+                fetch('/api/notify_config')
+                    .then(r => r.json())
+                    .then(d => {
+                        if (d.status === 'ok' && d.config) {
+                            const c = d.config;
+                            if (inputTgToken) inputTgToken.value = c.telegram_bot_token || '';
+                            if (inputTgChat) inputTgChat.value = c.telegram_chat_id || '';
+                            if (inputDiscordWebhook) inputDiscordWebhook.value = c.discord_webhook_url || '';
+                            if (chkNotifySkh) chkNotifySkh.checked = c.notify_skh !== false;
+                            if (chkNotifyBag) chkNotifyBag.checked = c.notify_full_bag !== false;
+                            if (chkNotifyDisc) chkNotifyDisc.checked = Boolean(c.notify_disconnect);
+                            updateNotifyBadge(c);
+                        }
+                    })
+                    .catch(() => {});
+            }
+
+            if (btnSaveNotify) {
+                btnSaveNotify.addEventListener('click', () => {
+                    btnSaveNotify.disabled = true;
+                    const payload = {
+                        enabled: true,
+                        telegram_bot_token: inputTgToken ? inputTgToken.value.trim() : '',
+                        telegram_chat_id: inputTgChat ? inputTgChat.value.trim() : '',
+                        discord_webhook_url: inputDiscordWebhook ? inputDiscordWebhook.value.trim() : '',
+                        notify_skh: chkNotifySkh ? chkNotifySkh.checked : true,
+                        notify_full_bag: chkNotifyBag ? chkNotifyBag.checked : true,
+                        notify_disconnect: chkNotifyDisc ? chkNotifyDisc.checked : false
+                    };
+                    fetch('/api/notify_config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    })
+                    .then(r => r.json())
+                    .then(d => {
+                        if (d.status === 'ok') {
+                            updateNotifyBadge(d.config);
+                            showToast(d.message || 'Đã lưu cấu hình thông báo!', 'emerald');
+                        } else {
+                            showToast(d.error || 'Lỗi lưu cấu hình', 'rose');
+                        }
+                    })
+                    .catch(() => showToast('Lỗi kết nối máy chủ', 'rose'))
+                    .finally(() => { btnSaveNotify.disabled = false; });
+                });
+            }
+
+            if (btnTestNotify) {
+                btnTestNotify.addEventListener('click', () => {
+                    btnTestNotify.disabled = true;
+                    btnTestNotify.textContent = 'Đang gửi...';
+                    showToast('Đang gửi tin nhắn & ảnh chụp màn hình thử nghiệm...', 'indigo');
+
+                    fetch('/api/notify_test', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            telegram_bot_token: inputTgToken ? inputTgToken.value.trim() : '',
+                            telegram_chat_id: inputTgChat ? inputTgChat.value.trim() : '',
+                            discord_webhook_url: inputDiscordWebhook ? inputDiscordWebhook.value.trim() : ''
+                        })
+                    })
+                    .then(r => r.json())
+                    .then(d => {
+                        if (d.status === 'ok') {
+                            showToast(d.message || 'Đã gửi thông báo thử nghiệm thành công!', 'emerald');
+                        } else {
+                            showToast(d.error || 'Không gửi được thông báo', 'rose');
+                        }
+                    })
+                    .catch(() => showToast('Lỗi kết nối máy chủ', 'rose'))
+                    .finally(() => {
+                        btnTestNotify.disabled = false;
+                        btnTestNotify.textContent = 'Gửi Thử';
+                    });
+                });
+            }
+
             // Check Master Auth Status
             function checkAuthStatus() {
                 fetch('/api/auth/status')
@@ -1855,6 +2180,8 @@
                     .catch(() => {});
             }
             checkAuthStatus();
+            loadProfiles();
+            loadNotifyConfig();
 
             // Auto-run on start
             restartTimer();

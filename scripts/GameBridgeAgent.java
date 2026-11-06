@@ -4,6 +4,12 @@ import java.lang.reflect.*;
 import java.lang.instrument.Instrumentation;
 import java.text.Normalizer;
 import java.util.*;
+import java.awt.Component;
+import java.awt.Container;
+import java.awt.Graphics2D;
+import java.awt.Window;
+import java.awt.image.BufferedImage;
+import javax.imageio.ImageIO;
 
 public class GameBridgeAgent {
     private static Instrumentation instrumentation;
@@ -283,6 +289,152 @@ public class GameBridgeAgent {
             System.out.println("[BRIDGE] stopXmap error: " + t);
         }
         return false;
+    }
+
+    // Direct JVM Login & Server Switch (No emulator restart required)
+    public static boolean directLogin(final String username, final String password, final int serverNum) {
+        try {
+            final Class<?> clsAg = getGameClass("nro.ag");
+            final Class<?> clsAk = getGameClass("nro.ak");
+            final Class<?> clsCr = getGameClass("nro.cr");
+            final Class<?> clsCJ = getGameClass("nro.cJ");
+            final Class<?> clsE = getGameClass("nro.e");
+            if (clsAg == null || clsAk == null || clsE == null) {
+                return false;
+            }
+
+            final String cleanUser = (username != null) ? username.trim().toLowerCase(Locale.ROOT) : "";
+            final String cleanPass = (password != null) ? password.trim() : "";
+
+            // 1. Persist credentials & server index inside active JVM RecordStore via nro.ag
+            Method saveStr = clsAg.getMethod("b", String.class, String.class);
+            Method saveInt = clsAg.getMethod("a", String.class, int.class);
+            if (!cleanUser.isEmpty()) {
+                saveStr.invoke(null, "acc", cleanUser);
+            }
+            if (!cleanPass.isEmpty()) {
+                saveStr.invoke(null, "pass", cleanPass);
+            }
+            saveInt.invoke(null, "check", 1);
+
+            if (serverNum >= 1 && serverNum <= 13) {
+                int svIdx = serverNum - 1;
+                clsAk.getField("dn").setInt(null, svIdx);
+                saveInt.invoke(null, "svselect", svIdx);
+            }
+
+            // 2. Spawn asynchronous worker inside JVM to disconnect old session and trigger LoginScr login
+            Thread loginWorker = new Thread(new Runnable() {
+                public void run() {
+                    try {
+                        stopXmap();
+                        // Disconnect active session & switch to LoginScr
+                        clsE.getMethod("h").invoke(null);
+                        Thread.sleep(350);
+
+                        // Populate LoginScr TFields (b=user, e=pass) if present
+                        if (clsCr != null && clsCJ != null) {
+                            Object loginScr = clsCr.getField("a").get(null);
+                            if (loginScr == null) {
+                                loginScr = clsCJ.getDeclaredConstructor().newInstance();
+                                clsCr.getField("a").set(null, loginScr);
+                            }
+                            if (!cleanUser.isEmpty()) {
+                                Object tfUser = clsCJ.getField("b").get(loginScr);
+                                if (tfUser != null) {
+                                    tfUser.getClass().getMethod("t", String.class).invoke(tfUser, cleanUser);
+                                }
+                            }
+                            if (!cleanPass.isEmpty()) {
+                                Object tfPass = clsCJ.getField("e").get(loginScr);
+                                if (tfPass != null) {
+                                    tfPass.getClass().getMethod("t", String.class).invoke(tfPass, cleanPass);
+                                }
+                            }
+                        }
+
+                        // Trigger LoginScr.cR() + LoginScr.hS() via nro.e.j()
+                        clsE.getMethod("j").invoke(null);
+                        System.out.println("[BRIDGE] Direct JVM Login triggered for user=" + cleanUser + ", server=" + serverNum);
+
+                        // Wait up to 4.5s; if still not in_game, trigger hS() once more
+                        for (int i = 0; i < 9; i++) {
+                            Thread.sleep(500);
+                            Map<String, Object> st = getStatus();
+                            if (Boolean.TRUE.equals(st.get("in_game"))) {
+                                return;
+                            }
+                        }
+                        clsE.getMethod("j").invoke(null);
+                    } catch (Throwable t) {
+                        System.out.println("[BRIDGE] DirectLogin-Worker error: " + t);
+                    }
+                }
+            }, "NRO-DirectLogin-Worker");
+            loginWorker.setDaemon(true);
+            loginWorker.start();
+            return true;
+        } catch (Throwable t) {
+            System.out.println("[BRIDGE] directLogin error: " + t);
+            return false;
+        }
+    }
+
+    // Direct JVM Canvas Framebuffer Screenshot (240x360 JPEG)
+    private static volatile Component cachedCanvasComp = null;
+
+    private static Component findDisplayCanvas(Container root) {
+        if (root == null) return null;
+        String clsName = root.getClass().getName();
+        if (clsName.contains("SwingDisplayComponent") || (root.getWidth() == 240 && root.getHeight() == 360)) {
+            return root;
+        }
+        Component[] children = root.getComponents();
+        for (int i = 0; i < children.length; i++) {
+            Component c = children[i];
+            String cName = c.getClass().getName();
+            if (cName.contains("SwingDisplayComponent") || (c.getWidth() == 240 && c.getHeight() == 360)) {
+                return c;
+            }
+            if (c instanceof Container) {
+                Component found = findDisplayCanvas((Container) c);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    public static byte[] captureScreenshotJpeg() {
+        try {
+            Component comp = cachedCanvasComp;
+            if (comp == null || !comp.isDisplayable() || comp.getWidth() <= 0 || comp.getHeight() <= 0) {
+                Window[] windows = Window.getWindows();
+                for (int i = 0; i < windows.length; i++) {
+                    if (windows[i].isShowing()) {
+                        comp = findDisplayCanvas(windows[i]);
+                        if (comp != null) {
+                            cachedCanvasComp = comp;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (comp == null) return null;
+
+            int w = Math.max(240, comp.getWidth());
+            int h = Math.max(360, comp.getHeight());
+            BufferedImage img = new BufferedImage(240, 360, BufferedImage.TYPE_INT_RGB);
+            Graphics2D g2 = img.createGraphics();
+            comp.paint(g2);
+            g2.dispose();
+
+            ByteArrayOutputStream baos = new ByteArrayOutputStream(16384);
+            ImageIO.write(img, "jpg", baos);
+            byte[] bytes = baos.toByteArray();
+            return (bytes != null && bytes.length > 200) ? bytes : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     // Execute a supported mod action directly without opening the game's chat UI.
@@ -1011,6 +1163,38 @@ public class GameBridgeAgent {
                 setModFlag("xdh", false);
                 setModFlag("annguoi", false);
                 jsonResp = "{\"status\": \"ok\", \"message\": \"Auto farm stopped & graphics restored\"}";
+            } else if (path.equals("/api/game/login")) {
+                String u = params.get("user");
+                String p = params.get("pass");
+                String svStr = params.get("server");
+                int sv = 0;
+                if (svStr != null && !svStr.trim().isEmpty()) {
+                    try { sv = Integer.parseInt(svStr.trim()); } catch (Throwable ignored) {}
+                }
+                boolean ok = directLogin(u, p, sv);
+                if (ok) {
+                    jsonResp = "{\"status\": \"ok\", \"method\": \"direct_jvm\", \"server\": " + sv + "}";
+                } else {
+                    statusCode = 500;
+                    jsonResp = "{\"status\": \"error\", \"error\": \"Could not invoke direct JVM login\"}";
+                }
+            } else if (path.equals("/api/game/screenshot")) {
+                byte[] imgBytes = captureScreenshotJpeg();
+                if (imgBytes != null) {
+                    String imgHeader = "HTTP/1.1 200 OK\r\n" +
+                                       "Content-Type: image/jpeg\r\n" +
+                                       "Content-Length: " + imgBytes.length + "\r\n" +
+                                       "Cache-Control: no-store, no-cache\r\n" +
+                                       "Connection: close\r\n\r\n";
+                    out.write(imgHeader.getBytes("UTF-8"));
+                    out.write(imgBytes);
+                    out.flush();
+                    socket.close();
+                    return;
+                } else {
+                    statusCode = 503;
+                    jsonResp = "{\"error\": \"Canvas not ready\"}";
+                }
             } else {
                 statusCode = 404;
                 jsonResp = "{\"error\": \"Not found\"}";
