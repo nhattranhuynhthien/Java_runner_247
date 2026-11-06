@@ -3,57 +3,119 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Xác Thực Quản Trị • UP NRO PRO</title>
+    <title>Cổng Xác Thực • NRO CYBER CLOUD 24/7</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap');
+        
+        * { font-family: 'Plus Jakarta Sans', sans-serif; box-sizing: border-box; }
+        .font-cyber { font-family: 'Orbitron', monospace; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+
         body {
-            background-color: #080c14;
-            background-image: radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.12) 0%, rgba(8, 12, 20, 1) 75%);
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #030712;
+            background-image: 
+                radial-gradient(at 50% 0%, rgba(6, 182, 212, 0.15) 0px, transparent 55%),
+                radial-gradient(at 100% 100%, rgba(236, 72, 153, 0.12) 0px, transparent 50%),
+                radial-gradient(at 0% 100%, rgba(168, 85, 247, 0.12) 0px, transparent 50%);
             min-height: 100vh;
+        }
+
+        .cyber-grid {
+            background-size: 32px 32px;
+            background-image: 
+                linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+        }
+
+        .neon-card {
+            background: rgba(10, 15, 29, 0.82);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(6, 182, 212, 0.25);
+            box-shadow: 0 0 35px -5px rgba(6, 182, 212, 0.2), 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+            position: relative;
+        }
+
+        .neon-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #06b6d4, #ec4899, #8b5cf6, transparent);
+        }
+
+        .cyber-btn {
+            background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 50%, #8b5cf6 100%);
+            box-shadow: 0 0 20px rgba(6, 182, 212, 0.4);
+            transition: all 0.2s ease;
+        }
+        .cyber-btn:hover {
+            box-shadow: 0 0 30px rgba(6, 182, 212, 0.7);
+            filter: brightness(1.1);
+        }
+        .cyber-btn:active {
+            transform: scale(0.97);
+        }
+
+        @keyframes scanline {
+            0% { transform: translateY(-100%); }
+            100% { transform: translateY(1000%); }
+        }
+        .scanline {
+            position: absolute;
+            top: 0; left: 0; right: 0; height: 12px;
+            background: linear-gradient(to bottom, transparent, rgba(6, 182, 212, 0.15), transparent);
+            animation: scanline 8s linear infinite;
+            pointer-events: none;
         }
     </style>
 </head>
-<body class="flex items-center justify-center p-4 selection:bg-indigo-500 selection:text-white">
+<body class="flex items-center justify-center p-4 cyber-grid relative overflow-hidden selection:bg-cyan-500 selection:text-black">
 
-    <div class="w-full max-w-sm flex flex-col items-center">
-        <!-- Logo & Branding -->
-        <div class="flex items-center gap-2.5 mb-6">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-blue-700 flex items-center justify-center font-black text-sm tracking-wider text-white shadow-lg shadow-indigo-600/30 border border-white/10">
-                NR
+    <div class="scanline"></div>
+
+    <div class="w-full max-w-sm flex flex-col items-center relative z-10">
+        <!-- Brand / Header -->
+        <div class="flex items-center gap-3 mb-6">
+            <div class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-cyan-500 via-indigo-600 to-fuchsia-500 p-[1.5px] shadow-lg shadow-cyan-500/30">
+                <div class="w-full h-full bg-slate-950 rounded-2xl flex items-center justify-center font-cyber text-lg font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-fuchsia-400">
+                    NR
+                </div>
             </div>
             <div class="flex flex-col">
-                <div class="flex items-center gap-1.5">
-                    <span class="font-extrabold text-base tracking-tight text-white">UP NRO PRO</span>
-                    <span class="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">Bảo Mật Cấp Cao</span>
+                <div class="flex items-center gap-2">
+                    <span class="font-cyber font-black text-base tracking-wider text-white">NRO CLOUD</span>
+                    <span class="text-[9px] font-mono font-bold uppercase tracking-widest px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 flex items-center gap-1">
+                        <span class="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping"></span> CYBER
+                    </span>
                 </div>
-                <span class="text-[10px] text-slate-400 font-mono">Private Cloud Runner 24/7</span>
+                <span class="text-[10px] text-slate-400 font-mono tracking-wide">PRIVATE RUNNER 24/7 • RGB PRO</span>
             </div>
         </div>
 
         <!-- Security Card -->
-        <div class="w-full bg-slate-900/90 border border-white/10 rounded-2xl p-6 shadow-2xl backdrop-blur-xl flex flex-col gap-4">
+        <div class="w-full neon-card rounded-2xl p-6 flex flex-col gap-5">
             
-            <div class="flex flex-col items-center text-center gap-1.5 pb-2 border-b border-white/5">
-                <div class="w-10 h-10 rounded-full bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 mb-1">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-                    </svg>
+            <div class="flex flex-col items-center text-center gap-1 pb-3 border-b border-white/10">
+                <div class="w-11 h-11 rounded-xl bg-cyan-500/10 border border-cyan-500/25 flex items-center justify-center text-cyan-400 mb-1 text-base shadow-inner">
+                    <i class="fa-solid fa-shield-halved"></i>
                 </div>
-                <h1 class="text-base font-bold text-white tracking-tight">Cổng Xác Thực Quản Trị</h1>
-                <p class="text-xs text-slate-400 max-w-[270px] leading-relaxed">
-                    Chỉ người có tài khoản & mật khẩu hợp lệ mới được quyền xem và điều khiển hệ thống treo game.
+                <h1 class="text-sm font-cyber font-bold text-slate-100 tracking-wide uppercase">Cổng Xác Thực Quản Trị</h1>
+                <p class="text-[11px] text-slate-400 max-w-[270px] leading-relaxed">
+                    Vui lòng xác thực tài khoản quản trị để mở khóa quyền điều khiển game.
                 </p>
             </div>
 
             <!-- Error Banner -->
-            <div id="error-banner" class="hidden p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2">
-                <svg class="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                </svg>
+            <div id="error-banner" class="hidden p-3 rounded-xl bg-rose-500/15 border border-rose-500/35 text-rose-300 text-xs flex items-start gap-2 backdrop-blur">
+                <i class="fa-solid fa-triangle-exclamation text-rose-400 mt-0.5"></i>
                 <div class="flex flex-col gap-0.5">
                     <span id="error-text" class="leading-tight font-medium">Tài khoản hoặc mật khẩu không đúng.</span>
-                    <span id="error-subtext" class="text-[11px] text-rose-400"></span>
+                    <span id="error-subtext" class="text-[11px] text-rose-400 font-mono"></span>
                 </div>
             </div>
 
@@ -62,44 +124,56 @@
                 <!-- Username -->
                 <div class="flex flex-col gap-1.5">
                     <label for="username-input" class="text-xs font-semibold text-slate-300 flex items-center justify-between">
-                        <span>Tài Khoản Quản Trị</span>
+                        <span class="flex items-center gap-1.5 text-cyan-300">
+                            <i class="fa-solid fa-user-astronaut text-[10px]"></i> Tài Khoản Quản Trị
+                        </span>
                         <span class="text-[10px] text-slate-500 font-mono">Bắt buộc</span>
                     </label>
-                    <input type="text" id="username-input" required autofocus placeholder="Nhập tài khoản quản trị..."
-                        class="w-full bg-slate-950 border border-white/15 rounded-xl px-3.5 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 font-mono transition">
+                    <input type="text" id="username-input" required autofocus placeholder="admin"
+                        class="w-full bg-slate-950/80 border border-white/15 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 font-mono transition">
                 </div>
 
                 <!-- Password -->
                 <div class="flex flex-col gap-1.5">
                     <label for="password-input" class="text-xs font-semibold text-slate-300 flex items-center justify-between">
-                        <span>Mật Khẩu</span>
+                        <span class="flex items-center gap-1.5 text-fuchsia-300">
+                            <i class="fa-solid fa-key text-[10px]"></i> Mật Khẩu
+                        </span>
                         <span class="text-[10px] text-slate-500 font-mono">Bảo mật</span>
                     </label>
                     <div class="relative">
                         <input type="password" id="password-input" required placeholder="Nhập mật khẩu..."
-                            class="w-full bg-slate-950 border border-white/15 rounded-xl pl-3.5 pr-14 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 font-mono tracking-wider transition">
-                        <button type="button" id="btn-toggle-pass" class="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800 border border-white/10 font-mono">
+                            class="w-full bg-slate-950/80 border border-white/15 rounded-xl pl-3.5 pr-14 py-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-fuchsia-400 focus:ring-1 focus:ring-fuchsia-400 font-mono tracking-wider transition">
+                        <button type="button" id="btn-toggle-pass" class="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-900 border border-white/10 font-mono transition">
                             Hiện
                         </button>
                     </div>
                 </div>
 
                 <!-- Submit Button -->
-                <button type="submit" id="btn-submit" class="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 active:scale-95 text-white font-bold text-xs shadow-lg shadow-indigo-600/30 transition flex items-center justify-center gap-2 mt-1">
+                <button type="submit" id="btn-submit" class="w-full py-2.5 px-4 rounded-xl cyber-btn text-white font-cyber font-bold text-xs tracking-wider transition flex items-center justify-center gap-2 mt-1">
                     <span id="btn-text">ĐĂNG NHẬP HỆ THỐNG</span>
                     <div id="btn-spinner" class="hidden w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                 </button>
             </form>
+
+            <div class="flex items-center justify-between text-[10px] text-slate-500 pt-2 border-t border-white/5 font-mono">
+                <span class="flex items-center gap-1">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Server Socket: ONLINE
+                </span>
+                <span>Port: 8080</span>
+            </div>
         </div>
 
         <!-- Strict Security Note -->
-        <div class="mt-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-center max-w-sm">
+        <div class="mt-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 text-center max-w-sm backdrop-blur">
             <p class="text-[11px] text-amber-300 font-medium leading-relaxed">
-                ⚠️ Hệ thống giới hạn <strong>5 lần đăng nhập sai trong 5 phút</strong>. Hết thời gian chờ, bạn có thể thử lại.
+                <i class="fa-solid fa-triangle-exclamation mr-1"></i> Giới hạn <strong>5 lần đăng nhập sai / 5 phút</strong>. Quá số lần hệ thống sẽ tự động khóa để bảo vệ acc.
             </p>
         </div>
     </div>
 
+    <!-- Script Handling -->
     <script>
         const form = document.getElementById('login-form');
         const usernameInput = document.getElementById('username-input');
@@ -112,7 +186,7 @@
         const btnText = document.getElementById('btn-text');
         const btnSpinner = document.getElementById('btn-spinner');
 
-        // Toggle Password Mask
+        // Toggle mask
         btnTogglePass.addEventListener('click', () => {
             if (passwordInput.type === 'password') {
                 passwordInput.type = 'text';
@@ -133,7 +207,7 @@
 
             errorBanner.classList.add('hidden');
             btnSubmit.disabled = true;
-            btnText.textContent = "Đang xác thực...";
+            btnText.textContent = "ĐANG XÁC THỰC...";
             btnSpinner.classList.remove('hidden');
 
             try {
@@ -148,7 +222,7 @@
 
                 const data = await res.json();
                 if (res.ok && data.status === 'ok') {
-                    btnText.textContent = "Xác thực thành công!";
+                    btnText.textContent = "XÁC THỰC THÀNH CÔNG!";
                     setTimeout(() => {
                         window.location.reload();
                     }, 300);
@@ -178,7 +252,7 @@
             }
         });
 
-        // Anti-Inspection & DevTools Protection (Blocks F12, Right-Click, Ctrl+Shift+I/J/C, Ctrl+U)
+        // Anti-Inspection & DevTools Protection
         document.addEventListener('contextmenu', e => e.preventDefault());
         window.addEventListener('keydown', e => {
             if (
