@@ -156,6 +156,17 @@
             border-color: #38bdf8;
         }
 
+        /* Fast touch response without double-tap delay */
+        button, .key-btn, .dpad-btn, .mod-chip {
+            touch-action: manipulation;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        button i, button span, .key-btn i, .dpad-btn i, .mod-chip i {
+            pointer-events: none;
+        }
+
         /* Scrollbar */
         ::-webkit-scrollbar { width: 4px; height: 4px; }
         ::-webkit-scrollbar-track { background: #030712; }
@@ -229,70 +240,6 @@
                 <!-- Upload ROM -->
                 <button id="btn-open-upload" class="h-7 px-2.5 rounded-lg bg-gradient-to-r from-cyan-600/30 to-fuchsia-600/30 hover:from-cyan-600/50 hover:to-fuchsia-600/50 text-cyan-200 border border-cyan-500/40 text-xs font-bold flex items-center transition" title="Đổi file mod JAR">
                     <i class="fa-solid fa-file-arrow-up mr-1 text-[10px]"></i> Đổi Mod
-                </button>
-            </div>
-        </div>
-    </header>
-                <div class="w-7 h-7 rounded-lg bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-300 font-mono text-xs font-bold tracking-tight">
-                    NR
-                </div>
-                <div>
-                    <div class="flex items-center gap-1.5">
-                        <span class="font-bold text-xs sm:text-sm text-slate-100 tracking-tight">NRO CLOUD</span>
-                        <span class="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500/15 text-indigo-400 font-semibold border border-indigo-500/25 uppercase tracking-wider font-mono">Private</span>
-                    </div>
-                    <div class="flex items-center gap-2 text-[10px] text-slate-400 font-mono">
-                        <span id="badge-running" class="flex items-center gap-1 text-emerald-400 font-sans">
-                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                            <span id="txt-status">Trực tuyến</span>
-                        </span>
-                        <span>•</span>
-                        <span id="txt-uptime">0m</span>
-                        <span>•</span>
-                        <span id="txt-ram" class="text-slate-400">RAM: --</span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Header Controls -->
-            <div class="flex items-center gap-1.5 sm:gap-2">
-                <!-- Security / Change Credentials -->
-                <button id="btn-open-change-auth" class="h-7 px-2.5 rounded-lg bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 text-xs text-slate-300 flex items-center justify-center font-medium gap-1" title="Quản lý tài khoản & mật khẩu đăng nhập">
-                    <svg class="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-                    </svg>
-                    <span>Bảo Mật</span>
-                </button>
-
-                <!-- Logout / Lock -->
-                <button id="btn-logout" class="h-7 px-2.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 active:scale-95 border border-rose-500/30 text-xs text-rose-300 flex items-center justify-center font-semibold gap-1" title="Khóa màn hình và đăng xuất an toàn">
-                    <svg class="w-3.5 h-3.5 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
-                    </svg>
-                    <span>Khóa</span>
-                </button>
-
-                <!-- Stream Mode -->
-                <select id="select-fps" class="bg-slate-900 border border-white/10 rounded-lg text-xs px-2 py-1 text-slate-300 focus:outline-none">
-                    <option value="350">0.35s (Cực nhanh)</option>
-                    <option value="700" selected>0.7s (Nhanh)</option>
-                    <option value="1500">1.5s (Tiết kiệm)</option>
-                    <option value="0">Tạm dừng (Eco)</option>
-                </select>
-
-                <!-- Refresh frame -->
-                <button id="btn-refresh" class="h-7 px-2.5 rounded-lg bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 text-xs text-slate-300 flex items-center justify-center font-medium" title="Làm mới khung hình">
-                    Làm mới
-                </button>
-
-                <!-- Download Screen -->
-                <button id="btn-download-shot" class="h-7 px-2.5 rounded-lg bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 text-xs text-slate-300 flex items-center justify-center font-medium" title="Tải ảnh màn hình HD">
-                    Tải ảnh
-                </button>
-
-                <!-- Upload ROM -->
-                <button id="btn-open-upload" class="h-7 px-2.5 rounded-lg bg-indigo-600/25 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/35 text-xs font-semibold flex items-center" title="Đổi file mod JAR">
-                    Đổi Mod
                 </button>
             </div>
         </div>
@@ -1237,6 +1184,8 @@
                 const key = btn.getAttribute('data-key');
                 btn.addEventListener('click', (e) => {
                     e.preventDefault();
+                    btn.classList.add('scale-90', 'brightness-125');
+                    setTimeout(() => btn.classList.remove('scale-90', 'brightness-125'), 120);
                     sendInput({ action: 'key', value: key });
                 });
             });
@@ -1246,7 +1195,7 @@
                 return fetch('/api/mod_action', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pin: state.pin, cmd })
+                    body: JSON.stringify({ cmd })
                 }).then(async response => {
                     const data = await response.json().catch(() => ({}));
                     if (!response.ok || data.status !== 'ok') {
@@ -1258,7 +1207,10 @@
 
             document.querySelectorAll('[data-cmd]').forEach(btn => {
                 const cmd = btn.getAttribute('data-cmd');
-                btn.addEventListener('click', () => {
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    btn.classList.add('scale-90', 'ring-2', 'ring-cyan-400');
+                    setTimeout(() => btn.classList.remove('scale-90', 'ring-2', 'ring-cyan-400'), 150);
                     showToast(`Đang thực thi: ${cmd}`, 'indigo');
                     sendModAction(cmd).then(() => {
                         showToast(`Đã thực thi: ${cmd}`, 'emerald');
@@ -1278,7 +1230,7 @@
                 fetch('/api/quick_cmd', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pin: state.pin, cmd: text })
+                    body: JSON.stringify({ cmd: text })
                 }).then(r => r.json()).then(res => {
                     inputCmd.value = '';
                     if (res.error) {
@@ -1291,8 +1243,8 @@
                     showToast('Lỗi kết nối', 'rose');
                 });
             }
-            btnSendCmd.addEventListener('click', handleSendCmd);
-            inputCmd.addEventListener('keydown', (e) => {
+            if (btnSendCmd) btnSendCmd.addEventListener('click', handleSendCmd);
+            if (inputCmd) inputCmd.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') handleSendCmd();
             });
 
@@ -1415,7 +1367,6 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        pin: state.pin,
                         map: mapVal,
                         zone: !isNaN(z) ? z.toString() : "",
                         mode: mode
@@ -1456,7 +1407,7 @@
                     fetch('/api/stop_farm', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ pin: state.pin })
+                        body: JSON.stringify({})
                     }).then(r => r.json()).then(res => {
                         if (res.error) {
                             showToast(res.error, "rose");
@@ -1471,10 +1422,15 @@
 
             // Anti-Stuck Button
             function triggerAntiStuck() {
-                sendInput({ action: 'anti_stuck' });
+                showToast("Đang gửi lệnh chống kẹt & đóng hộp thoại...", "indigo");
+                sendInput({ action: 'anti_stuck' }).then(() => {
+                    showToast("Đã xử lý chống kẹt!", "emerald");
+                });
             }
-            document.getElementById('btn-anti-stuck').addEventListener('click', triggerAntiStuck);
-            document.getElementById('btn-fix-stuck').addEventListener('click', triggerAntiStuck);
+            const btnAntiStuck = document.getElementById('btn-anti-stuck');
+            if (btnAntiStuck) btnAntiStuck.addEventListener('click', triggerAntiStuck);
+            const btnFixStuck = document.getElementById('btn-fix-stuck');
+            if (btnFixStuck) btnFixStuck.addEventListener('click', triggerAntiStuck);
 
             // Restart Button
             document.getElementById('btn-restart').addEventListener('click', () => {
@@ -2301,21 +2257,6 @@
                     statusTimer = setInterval(fetchStatus, 4000);
                 }
             });
-
-            // Anti-Inspection & DevTools Protection (Blocks F12, Right-Click, Ctrl+Shift+I/J/C, Ctrl+U)
-            document.addEventListener('contextmenu', e => e.preventDefault());
-            window.addEventListener('keydown', e => {
-                if (
-                    e.key === 'F12' ||
-                    (e.ctrlKey && e.shiftKey && ['I', 'i', 'J', 'j', 'C', 'c'].includes(e.key)) ||
-                    (e.ctrlKey && ['U', 'u', 'S', 's'].includes(e.key))
-                ) {
-                    e.preventDefault();
-                    return false;
-                }
-            });
-            console.clear();
-            console.log = console.info = console.warn = console.debug = () => {};
         })();
     </script>
 </body>

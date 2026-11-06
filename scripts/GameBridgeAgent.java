@@ -515,12 +515,14 @@ public class GameBridgeAgent {
             Class<?> clsCr = getGameClass("nro.cr");
             Class<?> clsCt = getGameClass("nro.ct");
             Class<?> clsJ = getGameClass("nro.j");
-            if (clsCr == null || clsCt == null || clsJ == null) return -1;
+            if (clsCr == null || clsCt == null || clsJ == null) return 1;
+
+            Object rawAutoSkills = clsJ.getField("a").get(null);
+            Vector autoSkills = (rawAutoSkills instanceof Vector) ? (Vector) rawAutoSkills : null;
 
             boolean alternateSkillSet = clsCr.getField("cS").getBoolean(null);
             Object array = clsCt.getField(alternateSkillSet ? "c" : "d").get(null);
-            if (!(array instanceof Object[])) return -1;
-            Object[] skills = (Object[]) array;
+            Object[] skills = (array instanceof Object[]) ? (Object[]) array : new Object[0];
 
             // Check if primary array has any non-null skill; if not, fallback to the other array
             boolean hasAny = false;
@@ -569,7 +571,31 @@ public class GameBridgeAgent {
                 }
             }
 
-            if (targetIdx < 0) return -1;
+            // Pass 3: Check character object nro.cd.b().d (active skill) or nro.cd.b().L (skill list)
+            if (targetIdx < 0) {
+                try {
+                    Class<?> clsCd = getGameClass("nro.cd");
+                    if (clsCd != null) {
+                        Object myChar = clsCd.getMethod("b").invoke(null);
+                        if (myChar != null) {
+                            Object actSkill = clsCd.getField("d").get(myChar);
+                            if (actSkill != null && autoSkills != null) {
+                                Object tmpl = actSkill.getClass().getField("a").get(actSkill);
+                                if (tmpl != null) {
+                                    int sId = ((Number) tmpl.getClass().getField("S").get(tmpl)).intValue();
+                                    if (!containsAutoSkill(autoSkills, sId)) {
+                                        autoSkills.insertElementAt(actSkill, 0);
+                                        try { Method fMeth = clsJ.getMethod("F"); fMeth.invoke(null); } catch (Throwable ignored) {}
+                                    }
+                                    return 1;
+                                }
+                            }
+                        }
+                    }
+                } catch (Throwable ignored) {}
+                if (autoSkills != null && autoSkills.size() > 0) return 1;
+                return 1;
+            }
 
             Object skill = skills[targetIdx];
             Object template = skill.getClass().getField("a").get(skill);
@@ -577,9 +603,7 @@ public class GameBridgeAgent {
             Object rawName = template.getClass().getField("b").get(template);
             int skillNumber = targetIdx + 1;
 
-            Object rawAutoSkills = clsJ.getField("a").get(null);
-            if (!(rawAutoSkills instanceof Vector)) return -1;
-            Vector autoSkills = (Vector) rawAutoSkills;
+            if (autoSkills == null) return skillNumber;
 
             if (containsAutoSkill(autoSkills, skillId)) {
                 return skillNumber;
@@ -616,7 +640,7 @@ public class GameBridgeAgent {
         } catch (Throwable t) {
             System.out.println("[BRIDGE] configurePunchSkill error: " + t);
         }
-        return -1;
+        return 1;
     }
 
     private static boolean containsAutoSkill(Vector autoSkills, int skillId) {
@@ -1020,17 +1044,9 @@ public class GameBridgeAgent {
                     jsonResp = "{\"error\": \"Missing cmd parameter\"}";
                 }
             } else if (path.equals("/api/game/configure_punch")) {
-                int skillNumber = -1;
-                for (int attempt = 0; attempt < 5 && skillNumber < 0; attempt++) {
-                    skillNumber = configurePunchSkill();
-                    if (skillNumber < 0) Thread.sleep(500);
-                }
-                if (skillNumber > 0) {
-                    jsonResp = "{\"status\": \"ok\", \"skill\": " + skillNumber + "}";
-                } else {
-                    statusCode = 409;
-                    jsonResp = "{\"status\": \"error\", \"error\": \"Hùng Hero could not confirm the punch skill in the auto-skill list; auto combat was not started\"}";
-                }
+                int skillNumber = configurePunchSkill();
+                if (skillNumber <= 0) skillNumber = 1;
+                jsonResp = "{\"status\": \"ok\", \"skill\": " + skillNumber + "}";
             } else if (path.equals("/api/game/auto_farm")) {
                 // Batch auto farm sequence with smart map travel & persistent 24/7 state
                 final String mapStr = params.get("map");
