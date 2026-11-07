@@ -24,6 +24,7 @@ public class GameBridgeAgent {
     private static volatile String autoFarmMode = "all";
     private static volatile long lastWatchdogTravelMs = 0L;
     private static volatile long buyingTdltSinceMs = 0L;
+    private static volatile long lastTdltBuyAttemptMs = 0L;
 
     private static File getStateFile() {
         File dataDir = new File("/data");
@@ -142,11 +143,31 @@ public class GameBridgeAgent {
         return null;
     }
 
+    private static boolean isDeviceReady() {
+        try {
+            ClassLoader cl = findMidletClassLoader();
+            Class<?> dfCls = (cl != null)
+                ? Class.forName("org.microemu.device.DeviceFactory", false, cl)
+                : Class.forName("org.microemu.device.DeviceFactory", false, ClassLoader.getSystemClassLoader());
+            Method mGet = dfCls.getMethod("getDevice");
+            Object dev = mGet.invoke(null);
+            if (dev == null) return false;
+            Method mUi = dev.getClass().getMethod("getUIFactory");
+            Method mDisp = dev.getClass().getMethod("getDeviceDisplay");
+            return mUi.invoke(dev) != null && mDisp.invoke(dev) != null;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
     private static Class<?> getGameClass(String name) {
+        if ("nro.F".equals(name) && !isDeviceReady()) {
+            return null;
+        }
         ClassLoader cl = findMidletClassLoader();
         if (cl != null) {
             try {
-                return cl.loadClass(name);
+                return Class.forName(name, false, cl);
             } catch (Throwable ignored) {}
         }
         if (instrumentation != null) {
@@ -155,7 +176,7 @@ public class GameBridgeAgent {
             }
         }
         try {
-            return Class.forName(name);
+            return Class.forName(name, false, ClassLoader.getSystemClassLoader());
         } catch (Throwable ignored) {}
         return null;
     }
@@ -253,37 +274,39 @@ public class GameBridgeAgent {
         return null;
     }
 
-    // Safely retrieve myCharZ singleton (static nro.cd b() or static field nro.cd l)
+    // Safely retrieve myCharZ singleton (static field nro.cd m or static nro.cd b())
     private static Object getMyChar() {
         try {
             Class<?> clsCd = getGameClass("nro.cd");
             if (clsCd == null) return null;
+            Field fM = getTypedFieldByTypeName(clsCd, "m", "nro.cd");
+            if (fM != null) {
+                Object c = fM.get(null);
+                if (c != null) return c;
+            }
             Method mB = getTypedMethodByReturnName(clsCd, "b", true, "nro.cd");
             if (mB != null) {
                 Object c = mB.invoke(null);
                 if (c != null) return c;
             }
-            Field fL = getTypedFieldByTypeName(clsCd, "l", "nro.cd");
-            if (fL != null) {
-                return fL.get(null);
-            }
         } catch (Throwable ignored) {}
         return null;
     }
 
-    // Safely retrieve myPet singleton (static nro.cd c() or static field nro.cd c)
+    // Safely retrieve myPet singleton (static field nro.cd l or static nro.cd c())
     private static Object getMyPet() {
         try {
             Class<?> clsCd = getGameClass("nro.cd");
             if (clsCd == null) return null;
+            Field fL = getTypedFieldByTypeName(clsCd, "l", "nro.cd");
+            if (fL != null) {
+                Object p = fL.get(null);
+                if (p != null) return p;
+            }
             Method mC = getTypedMethodByReturnName(clsCd, "c", true, "nro.cd");
             if (mC != null) {
                 Object p = mC.invoke(null);
                 if (p != null) return p;
-            }
-            Field fC = getTypedFieldByTypeName(clsCd, "c", "nro.cd");
-            if (fC != null) {
-                return fC.get(null);
             }
         } catch (Throwable ignored) {}
         return null;
@@ -326,6 +349,53 @@ public class GameBridgeAgent {
         }
     }
 
+    // Returns int[]{slot, remainingMinutes} for item 521 (Tự động luyện tập) in character's bag
+    private static int[] findTdltItemInBag() {
+        int slot = -1;
+        int itemMins = 0;
+        try {
+            Class<?> clsCD = getGameClass("nro.cD");
+            if (clsCD != null) {
+                Method mFindSlot = getTypedMethod(clsCD, "b", true, int.class, short.class);
+                if (mFindSlot != null) {
+                    Object sObj = mFindSlot.invoke(null, (short) 521);
+                    if (sObj instanceof Number) slot = ((Number) sObj).intValue();
+                }
+                Method mFindItem = getTypedMethod(clsCD, "a", true, clsCD, short.class);
+                Object itemObj = (mFindItem != null) ? mFindItem.invoke(null, (short) 521) : null;
+                if (itemObj != null) {
+                    Field fOpts = getTypedFieldByTypeName(itemObj.getClass(), "b", "nro.cF[]");
+                    Object rawOpts = (fOpts != null) ? fOpts.get(itemObj) : null;
+                    if (rawOpts instanceof Object[]) {
+                        Object[] opts = (Object[]) rawOpts;
+                        boolean foundTimeOpt = false;
+                        for (int i = 0; i < opts.length; i++) {
+                            Object opt = opts[i];
+                            if (opt == null) continue;
+                            Field fOptTpl = getTypedFieldByTypeName(opt.getClass(), "a", "nro.cG");
+                            Object optTpl = (fOptTpl != null) ? fOptTpl.get(opt) : null;
+                            if (optTpl == null) continue;
+                            Field fHq = getTypedField(optTpl.getClass(), "hQ", int.class);
+                            if (fHq != null && fHq.getInt(optTpl) == 1) {
+                                foundTimeOpt = true;
+                                Field fBa = getTypedField(opt.getClass(), "bA", int.class);
+                                if (fBa != null) itemMins = fBa.getInt(opt);
+                                break;
+                            }
+                        }
+                        if (!foundTimeOpt) {
+                            itemMins = 60;
+                        }
+                    } else {
+                        // Options not populated on bag item yet; treat as usable
+                        itemMins = 60;
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
+        return new int[]{slot, itemMins};
+    }
+
     // Set or clear in-game TDLT flag (nro.ct.cT), use TDLT item 521 from bag, or trigger auto-buy at Map 5 (Đảo Kame)
     private static void syncInGameTdltState(boolean enable) {
         try {
@@ -344,11 +414,15 @@ public class GameBridgeAgent {
                 return;
             }
 
-            // Ensure nro.F.aL >= 1 so nro.p.ad() also auto-renews TDLT when <= 1 minute remains
+            // Ensure nro.F.aL >= 1 (auto-renew threshold) and nro.F.aQ >= 1 (Santa purchase quantity)
             if (clsF != null) {
                 Field fAl = getTypedField(clsF, "aL", int.class);
                 if (fAl != null && fAl.getInt(null) < 1) {
                     fAl.setInt(null, 1);
+                }
+                Field fAq = getTypedField(clsF, "aQ", int.class);
+                if (fAq != null && fAq.getInt(null) < 1) {
+                    fAq.setInt(null, 1);
                 }
             }
 
@@ -360,7 +434,7 @@ public class GameBridgeAgent {
                 }
             }
 
-            // Check if TDLT buff icon is active via nro.p.b()
+            // Check if TDLT buff icon is active via nro.p.b() or server already enabled canAutoPlay (nro.ct.cG)
             int tdltMinutes = -1;
             if (clsP != null) {
                 try {
@@ -371,89 +445,152 @@ public class GameBridgeAgent {
                     }
                 } catch (Throwable ignored) {}
             }
+            boolean canAutoPlayAlready = false;
+            if (clsCt != null) {
+                Field fCg = getTypedField(clsCt, "cG", boolean.class);
+                if (fCg != null) canAutoPlayAlready = fCg.getBoolean(null);
+            }
 
-            // If TDLT buff is not active yet (tdltMinutes == -1), try using item 521 from bag or auto-buying at Map 5
-            if (tdltMinutes == -1) {
-                int slot = -1;
+            // Case 1: Active TDLT buff already running (tdltMinutes > 0)
+            if (tdltMinutes > 0) {
+                if (clsCt != null) {
+                    Field fCt = getTypedField(clsCt, "cT", boolean.class);
+                    if (fCt != null) fCt.setBoolean(null, true);
+                }
+                return;
+            }
+
+            // Case 2: No active TDLT buff icon (tdltMinutes == -1). Check bag for item 521 with > 0 minutes
+            int[] bagTdlt = findTdltItemInBag();
+            int slot = bagTdlt[0];
+            int itemMins = bagTdlt[1];
+
+            if (slot != -1 && itemMins > 0) {
                 try {
-                    Class<?> clsCD = getGameClass("nro.cD");
                     Class<?> clsX = getGameClass("nro.X");
-                    if (clsCD != null && clsX != null) {
-                        Method mFind = getTypedMethod(clsCD, "b", true, int.class, short.class);
-                        if (mFind != null) {
-                            slot = ((Number) mFind.invoke(null, (short) 521)).intValue();
-                        }
-                        if (slot != -1) {
-                            Method mUse = getTypedMethod(clsX, "k", true, void.class, int.class);
-                            if (mUse != null) {
-                                mUse.invoke(null, slot);
-                                System.out.println("[BRIDGE] Activated TDLT item 521 from bag slot " + slot);
-                            }
+                    if (clsX != null) {
+                        Method mUse = getTypedMethod(clsX, "k", true, void.class, int.class);
+                        if (mUse != null) {
+                            mUse.invoke(null, slot);
+                            System.out.println("[BRIDGE] Activated TDLT item 521 from bag slot " + slot + " (" + itemMins + " mins)");
                         }
                     }
                 } catch (Throwable ignored) {}
-
-                // If no item 521 in bag (slot == -1), check if character has gems (myChar.F() > 0) to auto-buy at Map 5 (Đảo Kame)
-                if (slot == -1) {
-                    Object myChar = getMyChar();
-                    Class<?> clsCd = getGameClass("nro.cd");
-                    int totalGems = 0;
-                    if (myChar != null && clsCd != null) {
-                        try {
-                            Method mGems = getTypedMethod(clsCd, "F", false, int.class);
-                            if (mGems != null) {
-                                Object gObj = mGems.invoke(myChar);
-                                if (gObj instanceof Number) totalGems = ((Number) gObj).intValue();
-                            }
-                        } catch (Throwable ignored) {}
-                    }
-
-                    if (totalGems > 0 && clsP != null) {
-                        updateGobackTarget(autoFarmMap, autoFarmZone);
-                        Field fB = getTypedField(clsP, "B", boolean.class);
-                        Field fC = getTypedField(clsP, "C", boolean.class);
-                        Field fP = getTypedField(clsP, "P", int.class);
-                        if (fB != null) fB.setBoolean(null, true);
-                        if (fC != null) fC.setBoolean(null, false);
-                        if (fP != null) fP.setInt(null, 0);
-                        buyingTdltSinceMs = System.currentTimeMillis();
-
-                        if (clsCt != null) {
-                            Field fCt = getTypedField(clsCt, "cT", boolean.class);
-                            if (fCt != null) fCt.setBoolean(null, false);
-                            Method mInstCt = getTypedMethodByReturnName(clsCt, "a", true, "nro.ct");
-                            if (mInstCt != null) {
-                                Object instCt = mInstCt.invoke(null);
-                                if (instCt != null) {
-                                    Field fIt = getTypedField(clsCt, "iT", int.class);
-                                    if (fIt != null) fIt.setInt(instCt, 0);
-                                }
-                            }
-                        }
-
-                        Class<?> cls_f = getGameClass("nro.f");
-                        if (cls_f != null) {
-                            Field fF = getTypedField(cls_f, "f", boolean.class);
-                            if (fF != null) fF.setBoolean(null, false);
-                            Field fG = getTypedField(cls_f, "g", boolean.class);
-                            if (fG != null) fG.setBoolean(null, false);
-                            Field fH = getTypedField(cls_f, "h", boolean.class);
-                            if (fH != null) fH.setBoolean(null, false);
-                            Field fDelay = getTypedField(cls_f, "c", long.class);
-                            if (fDelay != null) fDelay.setLong(null, 0L);
-                            Method bMeth = getTypedMethod(cls_f, "b", true, void.class, int.class);
-                            if (bMeth != null) bMeth.invoke(null, 5);
-                        }
-                        System.out.println("[BRIDGE] No TDLT buff or item 521 in bag (gems=" + totalGems + "). Flying to Map 5 (Đảo Kame) to auto-buy TDLT!");
-                        return;
-                    }
+                if (clsCt != null) {
+                    Field fCt = getTypedField(clsCt, "cT", boolean.class);
+                    if (fCt != null) fCt.setBoolean(null, true);
                 }
+                return;
             }
 
+            // If server already set canAutoPlay (cG == true) even without icon 4387 or bag item, just enable cT without flying to Map 5
+            if (canAutoPlayAlready) {
+                if (clsP != null) {
+                    Field fZ = getTypedField(clsP, "z", boolean.class);
+                    if (fZ != null) fZ.setBoolean(null, false);
+                }
+                if (clsCt != null) {
+                    Field fCt = getTypedField(clsCt, "cT", boolean.class);
+                    if (fCt != null) fCt.setBoolean(null, true);
+                }
+                return;
+            }
+
+            // Case 3: No usable item 521 in bag (slot == -1 or itemMins <= 0).
+            // Check if character can auto-buy TDLT at Map 5 (Đảo Kame): needs gems > 0, taskId >= 3, path to Map 5, and cooldown elapsed
+            Object myChar = getMyChar();
+            Class<?> clsCd = getGameClass("nro.cd");
+            int totalGems = 0;
+            short taskId = 0;
+            if (myChar != null && clsCd != null) {
+                try {
+                    Method mGems = getTypedMethod(clsCd, "F", false, int.class);
+                    if (mGems != null) {
+                        Object gObj = mGems.invoke(myChar);
+                        if (gObj instanceof Number) totalGems = ((Number) gObj).intValue();
+                    }
+                    Field fTask = getTypedFieldByTypeName(clsCd, "a", "nro.cU");
+                    Object taskObj = (fTask != null) ? fTask.get(myChar) : null;
+                    if (taskObj != null) {
+                        Field fTaskId = getTypedField(taskObj.getClass(), "i", short.class);
+                        if (fTaskId != null) taskId = fTaskId.getShort(taskObj);
+                    }
+                } catch (Throwable ignored) {}
+            }
+
+            boolean canReachKame = false;
+            Class<?> cls_f = getGameClass("nro.f");
+            if (cls_f != null && taskId >= 3) {
+                try {
+                    Method mPath = getTypedMethod(cls_f, "a", true, int[].class, int.class);
+                    if (mPath != null) {
+                        Object pathObj = mPath.invoke(null, 5);
+                        canReachKame = (pathObj != null);
+                    }
+                } catch (Throwable ignored) {}
+            }
+
+            long now = System.currentTimeMillis();
+            if (totalGems > 0 && canReachKame && clsP != null && (now - lastTdltBuyAttemptMs > 180000L)) {
+                lastTdltBuyAttemptMs = now;
+                buyingTdltSinceMs = now;
+                updateGobackTarget(autoFarmMap, autoFarmZone);
+
+                Field fB = getTypedField(clsP, "B", boolean.class);
+                Field fC = getTypedField(clsP, "C", boolean.class);
+                Field fP = getTypedField(clsP, "P", int.class);
+                if (fB != null) fB.setBoolean(null, true);
+                if (fC != null) fC.setBoolean(null, false);
+                if (fP != null) fP.setInt(null, 0);
+
+                if (clsCt != null) {
+                    Field fCt = getTypedField(clsCt, "cT", boolean.class);
+                    if (fCt != null) fCt.setBoolean(null, false);
+                    try {
+                        Field fE = getTypedFieldByTypeName(clsCt, "e", "nro.ct");
+                        Object instCt = (fE != null) ? fE.get(null) : null;
+                        if (instCt != null) {
+                            Field fIt = getTypedField(clsCt, "iT", int.class);
+                            if (fIt != null) fIt.setInt(instCt, 0);
+                        }
+                    } catch (Throwable ignored) {}
+                }
+
+                if (cls_f != null) {
+                    Field fF = getTypedField(cls_f, "f", boolean.class);
+                    if (fF != null) fF.setBoolean(null, false);
+                    Field fG = getTypedField(cls_f, "g", boolean.class);
+                    if (fG != null) fG.setBoolean(null, false);
+                    Field fH = getTypedField(cls_f, "h", boolean.class);
+                    if (fH != null) fH.setBoolean(null, false);
+                    Field fDelay = getTypedField(cls_f, "c", long.class);
+                    if (fDelay != null) fDelay.setLong(null, 0L);
+                    Method bMeth = getTypedMethod(cls_f, "b", true, void.class, int.class);
+                    if (bMeth != null) bMeth.invoke(null, 5);
+                }
+                System.out.println("[BRIDGE] No usable TDLT in bag (slot=" + slot + ", itemMins=" + itemMins + ", gems=" + totalGems + "). Flying to Map 5 (Đảo Kame) to auto-buy TDLT!");
+                return;
+            }
+
+            // Fallback when character has no TDLT and cannot buy at Map 5:
+            // Prevent nro.p.ad() from hijacking Xmap to Map 5 every tick, and enable Tàn Sát (nro.j.n) so character still attacks!
+            if (clsP != null) {
+                Field fZ = getTypedField(clsP, "z", boolean.class);
+                if (fZ != null) fZ.setBoolean(null, false);
+                Field fB = getTypedField(clsP, "B", boolean.class);
+                if (fB != null) fB.setBoolean(null, false);
+            }
             if (clsCt != null) {
                 Field fCt = getTypedField(clsCt, "cT", boolean.class);
-                if (fCt != null) fCt.setBoolean(null, true);
+                if (fCt != null) fCt.setBoolean(null, false);
             }
+            configurePunchSkill();
+            Class<?> clsJ = getGameClass("nro.j");
+            if (clsJ != null) {
+                Field fN = getTypedField(clsJ, "n", boolean.class);
+                if (fN != null) fN.setBoolean(null, true);
+            }
+            System.out.println("[BRIDGE] TDLT unavailable (slot=" + slot + ", mins=" + itemMins + ", gems=" + totalGems + ", canReachKame=" + canReachKame + "); enabled Tàn Sát fallback so character attacks immediately.");
         } catch (Throwable t) {
             System.out.println("[BRIDGE] syncInGameTdltState error: " + t);
         }
@@ -473,21 +610,15 @@ public class GameBridgeAgent {
                 configurePunchSkill();
             }
 
-            Boolean cur = getModFlag(c);
-            if (cur != null && cur.booleanValue() != desired) {
-                executeModAction(c);
-            }
-
-            // Verify and enforce directly on the typed boolean static field
+            // Set directly on the typed boolean static field
             String[] target = resolveModFlagTarget(c);
-            if (target != null) {
-                Class<?> cls = getGameClass(target[0]);
-                if (cls != null) {
-                    Field f = getTypedField(cls, target[1], boolean.class);
-                    if (f != null && f.getBoolean(null) != desired) {
-                        f.setBoolean(null, desired);
-                    }
-                }
+            if (target == null) return false;
+            Class<?> cls = getGameClass(target[0]);
+            if (cls == null) return false;
+            Field f = getTypedField(cls, target[1], boolean.class);
+            if (f == null) return false;
+            if (f.getBoolean(null) != desired) {
+                f.setBoolean(null, desired);
             }
 
             // If enabling gb, always lock in the goback map & zone
@@ -537,6 +668,12 @@ public class GameBridgeAgent {
     // Pause conflicting combat/TDLT/goback loops so Xmap can walk/teleport through portals unobstructed
     public static void pauseAutoForTravel(int targetMapId) {
         try {
+            // 0. Dismiss any open NPC/confirm dialog that could block movement
+            Class<?> clsQ = getGameClass("nro.Q");
+            if (clsQ != null) {
+                Method mBo = getTypedMethod(clsQ, "bo", true, void.class);
+                if (mBo != null) mBo.invoke(null);
+            }
             // 1. Pause Tàn Sát (nro.j.n = false)
             Class<?> clsJ = getGameClass("nro.j");
             if (clsJ != null) {
@@ -597,10 +734,37 @@ public class GameBridgeAgent {
         }
     }
 
+    // Prevent Xmap from deadlocking if Capsule menu (nro.cr.b.g) fails to open within 1.8 seconds
+    public static void checkAndUnstickXmap() {
+        try {
+            Class<?> cls_f = getGameClass("nro.f");
+            if (cls_f == null) return;
+            Field fE = getTypedField(cls_f, "e", boolean.class);
+            Field fH = getTypedField(cls_f, "h", boolean.class);
+            Field fG = getTypedField(cls_f, "g", boolean.class);
+            Field fB = getTypedField(cls_f, "b", long.class);
+            if (fE != null && fE.getBoolean(null) && fH != null && fH.getBoolean(null) && fG != null && !fG.getBoolean(null)) {
+                long capStart = (fB != null) ? fB.getLong(null) : 0L;
+                if (capStart > 0L && System.currentTimeMillis() - capStart > 1800L) {
+                    fG.setBoolean(null, true);
+                    System.out.println("[BRIDGE] Unstuck Xmap capsule wait (falling back to portal travel)");
+                }
+            }
+        } catch (Throwable ignored) {}
+    }
+
     // Call Xmap travel to mapId
     public static boolean travelToMap(int mapId) {
         try {
             pauseAutoForTravel(mapId);
+            // Speed up Xmap step interval (nro.F.J = 350ms instead of 1000ms)
+            Class<?> clsF = getGameClass("nro.F");
+            if (clsF != null) {
+                Field fStepDelay = getTypedField(clsF, "J", long.class);
+                if (fStepDelay != null && fStepDelay.getLong(null) > 400L) {
+                    fStepDelay.setLong(null, 350L);
+                }
+            }
             Class<?> cls_f = getGameClass("nro.f");
             if (cls_f != null) {
                 // Reset any stale Xmap error/capsule/delay flags before starting new route
@@ -897,25 +1061,30 @@ public class GameBridgeAgent {
             Boolean beforeFlag = getModFlag(lower);
 
             // 7. Invoke the Hùng Hero command handler (nro.F.a().d(cmd) / e(cmd))
-            Class<?> clsF = getGameClass("nro.F");
-            if (clsF != null) {
-                Method aMeth = getTypedMethodByReturnName(clsF, "a", true, "nro.F");
-                Object instF = (aMeth != null) ? aMeth.invoke(null) : null;
-                if (instF != null) {
-                    Method dMeth = getTypedMethod(clsF, "d", false, boolean.class, String.class);
-                    Object resD = (dMeth != null) ? dMeth.invoke(instF, lower) : null;
-                    if (Boolean.TRUE.equals(resD)) {
-                        handled = true;
-                    } else {
+            try {
+                Class<?> clsF = getGameClass("nro.F");
+                if (clsF != null) {
+                    Method aMeth = getTypedMethodByReturnName(clsF, "a", true, "nro.F");
+                    Object instF = (aMeth != null) ? aMeth.invoke(null) : null;
+                    if (instF != null) {
                         try {
-                            Method eMeth = getTypedMethod(clsF, "e", false, boolean.class, String.class);
-                            Object resE = (eMeth != null) ? eMeth.invoke(instF, lower) : null;
-                            if (Boolean.TRUE.equals(resE)) handled = true;
+                            Method dMeth = getTypedMethod(clsF, "d", false, boolean.class, String.class);
+                            Object resD = (dMeth != null) ? dMeth.invoke(instF, lower) : null;
+                            if (Boolean.TRUE.equals(resD)) {
+                                handled = true;
+                            }
                         } catch (Throwable ignored) {}
+                        if (!handled) {
+                            try {
+                                Method eMeth = getTypedMethod(clsF, "e", false, boolean.class, String.class);
+                                Object resE = (eMeth != null) ? eMeth.invoke(instF, lower) : null;
+                                if (Boolean.TRUE.equals(resE)) handled = true;
+                            } catch (Throwable ignored) {}
+                        }
+                        System.out.println("[BRIDGE] Executed nro.F cmd [" + lower + "] -> " + handled);
                     }
-                    System.out.println("[BRIDGE] Executed nro.F cmd [" + lower + "] -> " + handled);
                 }
-            }
+            } catch (Throwable ignored) {}
 
             // Guarantee toggle for known boolean mod flags even if nro.ct.b chat popup threw an exception
             if (beforeFlag != null) {
@@ -1054,6 +1223,15 @@ public class GameBridgeAgent {
             Class<?> clsCd = getGameClass("nro.cd");
             if (clsCr == null || clsCt == null || clsJ == null) return 1;
 
+            // 0. Ensure nro.F singleton is initialized first so nro.F.aE() -> nro.j.I() has already run
+            try {
+                Class<?> clsF = getGameClass("nro.F");
+                if (clsF != null) {
+                    Method mFa = getTypedMethodByReturnName(clsF, "a", true, "nro.F");
+                    if (mFa != null) mFa.invoke(null);
+                }
+            } catch (Throwable ignored) {}
+
             // 1. Drain nro.j.b via nro.j.E() first so nro.j.E() never overwrites nro.j.a with nulls later
             try {
                 Method mE = getTypedMethod(clsJ, "E", true, void.class);
@@ -1079,6 +1257,18 @@ public class GameBridgeAgent {
             while (autoSkills.size() > 10) {
                 autoSkills.removeElementAt(autoSkills.size() - 1);
             }
+
+            // Clear stuck Auto-Pick moving flag (nro.i.m) if Auto-Pick is off so nro.j.H() is never blocked
+            try {
+                Class<?> clsI = getGameClass("nro.i");
+                if (clsI != null) {
+                    Field fIl = getTypedField(clsI, "l", boolean.class);
+                    Field fIm = getTypedField(clsI, "m", boolean.class);
+                    if (fIm != null && (fIl == null || !fIl.getBoolean(null))) {
+                        fIm.setBoolean(null, false);
+                    }
+                }
+            } catch (Throwable ignored) {}
 
             Field fCs = getTypedField(clsCr, "cS", boolean.class);
             boolean alternateSkillSet = (fCs != null) && fCs.getBoolean(null);
@@ -1191,6 +1381,16 @@ public class GameBridgeAgent {
                     Method mF = getTypedMethod(clsJ, "F", true, void.class);
                     if (mF != null) mF.invoke(null);
                 } catch (Throwable ignored) {}
+                try {
+                    Field fChatPopup = getTypedFieldByTypeName(clsCt, "b", "nro.by");
+                    Object chatPopup = (fChatPopup != null) ? fChatPopup.get(null) : null;
+                    if (chatPopup != null) {
+                        Method mPopup = getTypedMethod(chatPopup.getClass(), "e", false, void.class, String.class, int.class);
+                        if (mPopup != null) {
+                            mPopup.invoke(chatPopup, "Đã gán chiêu " + skillName + " vào Auto!", 0);
+                        }
+                    }
+                } catch (Throwable ignored) {}
                 System.out.println("[BRIDGE] Configured melee skill [" + skillName + "] (id=" + skillId + ") in nro.j.a[0]");
             }
 
@@ -1240,11 +1440,6 @@ public class GameBridgeAgent {
                         Thread.sleep(6000);
                         if (!autoFarmActive) continue;
 
-                        // Always keep Hùng Hero's built-in Auto-Login (nro.e.c) and Save-Zone (nro.e.d) active
-                        setModFlag("alogin", true);
-                        setModFlag("sz", true);
-                        setModFlag("checklag", true);
-
                         // If an explicit farmThread is currently executing travel/setup, let it finish
                         if (farmThread != null && farmThread.isAlive()) continue;
 
@@ -1254,21 +1449,31 @@ public class GameBridgeAgent {
                             continue;
                         }
 
+                        // Always keep Hùng Hero's built-in Auto-Login (nro.e.c) and Save-Zone (nro.e.d) active once in-game
+                        setModFlag("alogin", true);
+                        setModFlag("sz", true);
+                        setModFlag("checklag", true);
+
                         // Ensure melee skill is in auto list
                         configurePunchSkill();
 
-                        // If currently flying to Map 5 (Đảo Kame) to auto-buy TDLT from Santa, do not interrupt!
+                        // If currently flying to Map 5 (Đảo Kame) to auto-buy TDLT from Santa, bound wait to 20s max
                         Class<?> clsP = getGameClass("nro.p");
                         if (clsP != null) {
                             Field fBuyingTdlt = getTypedField(clsP, "B", boolean.class);
                             if (fBuyingTdlt != null && fBuyingTdlt.getBoolean(null)) {
+                                checkAndUnstickXmap();
                                 if (buyingTdltSinceMs == 0L) buyingTdltSinceMs = System.currentTimeMillis();
-                                if (System.currentTimeMillis() - buyingTdltSinceMs < 90000L) {
+                                if (System.currentTimeMillis() - buyingTdltSinceMs < 20000L) {
                                     continue;
                                 } else {
-                                    // Safety timeout after 90s so character never gets stuck
+                                    // Safety timeout after 20s so character never gets stuck trying to reach Map 5
                                     fBuyingTdlt.setBoolean(null, false);
+                                    Field fZ = getTypedField(clsP, "z", boolean.class);
+                                    if (fZ != null) fZ.setBoolean(null, false);
                                     buyingTdltSinceMs = 0L;
+                                    stopXmap();
+                                    System.out.println("[WATCHDOG] Auto-buy TDLT at Map 5 timed out after 20s; resuming farm with Tàn Sát.");
                                 }
                             } else {
                                 buyingTdltSinceMs = 0L;
@@ -1276,7 +1481,10 @@ public class GameBridgeAgent {
                         }
 
                         Boolean xmapRun = (Boolean) st.get("xmap_running");
-                        if (Boolean.TRUE.equals(xmapRun)) continue;
+                        if (Boolean.TRUE.equals(xmapRun)) {
+                            checkAndUnstickXmap();
+                            continue;
+                        }
 
                         Integer curMap = (Integer) st.get("map_id");
                         Integer curZone = (Integer) st.get("zone");
@@ -1327,7 +1535,7 @@ public class GameBridgeAgent {
             for (int i = 0; i < items.length; i++) {
                 Object item = items[i];
                 if (item == null) continue;
-                Field fTpl = getTypedFieldByTypeName(item.getClass(), "a", "nro.cE");
+                Field fTpl = getTypedFieldByTypeName(item.getClass(), "a", "nro.cH");
                 Object template = (fTpl != null) ? fTpl.get(item) : null;
                 if (template == null) continue;
 
@@ -1390,16 +1598,6 @@ public class GameBridgeAgent {
         status.put("autofarm_map", autoFarmMap);
         status.put("autofarm_zone", autoFarmZone);
         status.put("autofarm_mode", autoFarmMode);
-
-        try {
-            Class<?> cls_f = getGameClass("nro.f");
-            if (cls_f != null) {
-                Field fE = getTypedField(cls_f, "e", boolean.class);
-                Field fL = getTypedField(cls_f, "l", int.class);
-                if (fE != null) status.put("xmap_running", fE.getBoolean(null));
-                if (fL != null) status.put("target_map", fL.getInt(null));
-            }
-        } catch (Throwable ignored) {}
 
         int currentMapId = -1;
         int currentZoneId = -1;
@@ -1476,28 +1674,30 @@ public class GameBridgeAgent {
                     } catch (Throwable ignored) {}
                 }
 
-                // Scan bag and body for SKH items and slot usage
-                List<String> skhList = new ArrayList<String>();
-                Field fBody = getTypedFieldByTypeName(cCls, "a", "nro.cD[]");
-                Object rawBody = (fBody != null) ? fBody.get(charObj) : null;
-                if (rawBody instanceof Object[]) {
-                    scanItemsForSkh((Object[]) rawBody, "Đang mặc", skhList);
-                }
-                Field fBag = getTypedFieldByTypeName(cCls, "b", "nro.cD[]");
-                Object rawBag = (fBag != null) ? fBag.get(charObj) : null;
-                if (rawBag instanceof Object[]) {
-                    Object[] bag = (Object[]) rawBag;
-                    int used = 0;
-                    for (int i = 0; i < bag.length; i++) {
-                        if (bag[i] != null) used++;
+                // Scan bag and body for SKH items and slot usage (only when inGame is true)
+                if (inGame) {
+                    List<String> skhList = new ArrayList<String>();
+                    Field fBody = getTypedFieldByTypeName(cCls, "a", "nro.cD[]");
+                    Object rawBody = (fBody != null) ? fBody.get(charObj) : null;
+                    if (rawBody instanceof Object[]) {
+                        scanItemsForSkh((Object[]) rawBody, "Đang mặc", skhList);
                     }
-                    status.put("bag_total", bag.length);
-                    status.put("bag_used", used);
-                    status.put("bag_free", Math.max(0, bag.length - used));
-                    scanItemsForSkh(bag, "Hành trang", skhList);
+                    Field fBag = getTypedFieldByTypeName(cCls, "b", "nro.cD[]");
+                    Object rawBag = (fBag != null) ? fBag.get(charObj) : null;
+                    if (rawBag instanceof Object[]) {
+                        Object[] bag = (Object[]) rawBag;
+                        int used = 0;
+                        for (int i = 0; i < bag.length; i++) {
+                            if (bag[i] != null) used++;
+                        }
+                        status.put("bag_total", bag.length);
+                        status.put("bag_used", used);
+                        status.put("bag_free", Math.max(0, bag.length - used));
+                        scanItemsForSkh(bag, "Hành trang", skhList);
+                    }
+                    status.put("skh_count", skhList.size());
+                    status.put("skh_items", skhList);
                 }
-                status.put("skh_count", skhList.size());
-                status.put("skh_items", skhList);
             }
         } catch (Throwable t) {
             System.out.println("[BRIDGE] getStatus char telemetry error: " + t);
@@ -1505,28 +1705,47 @@ public class GameBridgeAgent {
 
         status.put("in_game", inGame);
 
-        // Real-time mod boolean flags
+        // Only read mod classes (nro.F, nro.f, nro.p, nro.j, etc.) when inGame is true so we never trigger <clinit> before GameScr is ready!
         String[] trackedFlags = new String[]{"ts", "tdlt", "gb", "anhat", "locdo", "xdh", "annguoi", "alogin", "sz", "kvt", "nb", "cflag"};
-        for (int i = 0; i < trackedFlags.length; i++) {
-            String fName = trackedFlags[i];
-            Boolean val = getModFlag(fName);
-            status.put("mod_" + fName, Boolean.TRUE.equals(val));
-        }
+        if (inGame) {
+            try {
+                Class<?> cls_f = getGameClass("nro.f");
+                if (cls_f != null) {
+                    Field fE = getTypedField(cls_f, "e", boolean.class);
+                    Field fL = getTypedField(cls_f, "l", int.class);
+                    if (fE != null) status.put("xmap_running", fE.getBoolean(null));
+                    if (fL != null) status.put("target_map", fL.getInt(null));
+                }
+            } catch (Throwable ignored) {}
 
-        // Also expose in-game TDLT status (nro.ct.cT) and remaining TDLT minutes (nro.p.b())
-        try {
-            Class<?> clsCt = getGameClass("nro.ct");
-            if (clsCt != null) {
-                Field fCt = getTypedField(clsCt, "cT", boolean.class);
-                if (fCt != null) status.put("ingame_tdlt", fCt.getBoolean(null));
+            for (int i = 0; i < trackedFlags.length; i++) {
+                String fName = trackedFlags[i];
+                Boolean val = getModFlag(fName);
+                status.put("mod_" + fName, Boolean.TRUE.equals(val));
             }
-            Class<?> clsP = getGameClass("nro.p");
-            if (clsP != null) {
-                Method mB = getTypedMethod(clsP, "b", true, int.class);
-                Object mins = (mB != null) ? mB.invoke(null) : null;
-                if (mins instanceof Number) status.put("tdlt_minutes", ((Number) mins).intValue());
+
+            try {
+                Class<?> clsCt = getGameClass("nro.ct");
+                if (clsCt != null) {
+                    Field fCt = getTypedField(clsCt, "cT", boolean.class);
+                    if (fCt != null) status.put("ingame_tdlt", fCt.getBoolean(null));
+                }
+                Class<?> clsP = getGameClass("nro.p");
+                if (clsP != null) {
+                    Method mB = getTypedMethod(clsP, "b", true, int.class);
+                    Object mins = (mB != null) ? mB.invoke(null) : null;
+                    if (mins instanceof Number) status.put("tdlt_minutes", ((Number) mins).intValue());
+                }
+            } catch (Throwable ignored) {}
+        } else {
+            status.put("xmap_running", false);
+            status.put("target_map", -1);
+            for (int i = 0; i < trackedFlags.length; i++) {
+                status.put("mod_" + trackedFlags[i], false);
             }
-        } catch (Throwable ignored) {}
+            status.put("ingame_tdlt", false);
+            status.put("tdlt_minutes", -1);
+        }
 
         return status;
     }
@@ -1720,8 +1939,8 @@ public class GameBridgeAgent {
                     // Pause conflicting auto loops and start Xmap immediately on this request
                     lastWatchdogTravelMs = System.currentTimeMillis();
                     travelToMap(autoFarmMap);
-                } else if (autoFarmZone < 0) {
-                    // Already at target map (or keeping current map) and no zone switch needed: apply flags immediately
+                } else {
+                    // Already at target map (or keeping current map): apply flags immediately
                     applyFarmModeFlags(mode);
                     setModFlag("locdo", true);
                     setModFlag("anhat", true);
@@ -1741,6 +1960,7 @@ public class GameBridgeAgent {
 
                                 while (System.currentTimeMillis() - startWait < 60000L) {
                                     Thread.sleep(600);
+                                    checkAndUnstickXmap();
                                     // Keep in-game TDLT (nro.ct.cT) off while traveling across maps
                                     try {
                                         Class<?> clsCt = getGameClass("nro.ct");
@@ -1793,10 +2013,14 @@ public class GameBridgeAgent {
                                 }
                             }
 
-                            // 2. Switch zone if explicitly specified
+                            // 2. Switch zone only if explicitly specified AND character is not already in that zone
                             if (autoFarmZone >= 0) {
-                                executeModAction("k" + autoFarmZone);
-                                Thread.sleep(600);
+                                Map<String, Object> stAfter = getStatus();
+                                Integer cz = (Integer) stAfter.get("zone");
+                                if (cz == null || cz.intValue() != autoFarmZone) {
+                                    executeModAction("k" + autoFarmZone);
+                                    Thread.sleep(600);
+                                }
                             }
 
                             // 3. Configure melee skill and apply exact farming mode
