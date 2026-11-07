@@ -817,10 +817,16 @@ def handle_auto_farm():
             if resp.status == 200:
                 res_data = json.loads(resp.read().decode('utf-8'))
                 skill_num = punch_skill.get('skill', 1)
+                if mode == "tdlt":
+                    mode_desc = "Chỉ TDLT (đã tắt Tàn Sát, tự dùng vé TĐLT + Goback + Auto Reconnect)"
+                elif mode == "ts":
+                    mode_desc = "Chỉ Tàn Sát (đã tắt TDLT, đánh liên tục + Goback + Auto Reconnect)"
+                else:
+                    mode_desc = "Combo TDLT + Tàn Sát 24/7 (Goback + TDLT + Tàn Sát + Auto Reconnect)"
                 return jsonify({
                     "status": "ok",
                     "method": "bridge",
-                    "message": f"Đã chọn chiêu đánh (skill{skill_num}) và khởi động Auto Up SKH 24/7 (Goback + TDLT + Tàn Sát + Auto Reconnect)!",
+                    "message": f"Đã gán chiêu đánh (skill{skill_num}) và bật {mode_desc}!",
                     "details": res_data
                 })
     except Exception as e:

@@ -502,7 +502,7 @@
                         <div class="flex items-center justify-between gap-2 pt-0.5">
                             <div class="flex items-center gap-1.5 flex-1">
                                 <span class="text-[10px] text-slate-400 whitespace-nowrap">2. Khu (Zone):</span>
-                                <input type="number" id="farm-zone" min="0" max="29" value="5" placeholder="Số khu"
+                                <input type="number" id="farm-zone" min="0" max="29" value="" placeholder="Hiện tại"
                                     class="w-16 bg-slate-900 border border-white/15 rounded-lg px-2 py-1 text-xs text-center text-white focus:outline-none focus:border-cyan-400 font-mono font-bold">
                             </div>
                             <button type="button" id="btn-quick-switch-zone" class="px-3 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 active:scale-95 text-cyan-300 font-bold text-[11px] border border-cyan-500/30 whitespace-nowrap transition shadow-sm" title="Gửi lệnh đổi sang khu này ngay">
@@ -1086,11 +1086,28 @@
                     }
                 });
 
-                if (txtAutoTdlt) {
-                    txtAutoTdlt.textContent = game.mod_tdlt ? '🟢 TDLT: ĐANG BẬT' : 'Chỉ TDLT';
+                const tdltActive = Boolean(game.mod_tdlt || game.ingame_tdlt);
+                const tsActive = Boolean(game.mod_ts);
+                if (txtAutoFarm && !btnAutoFarm?.disabled) {
+                    if (tdltActive && tsActive) {
+                        txtAutoFarm.textContent = '🟢 COMBO TDLT + TÀN SÁT: ĐANG CHẠY';
+                    } else {
+                        txtAutoFarm.textContent = 'COMBO TDLT + TÀN SÁT (24/7)';
+                    }
                 }
-                if (txtAutoTs) {
-                    txtAutoTs.textContent = game.mod_ts ? '🟢 Tàn Sát: ĐANG BẬT' : 'Chỉ Tàn Sát';
+                if (txtAutoTdlt && !btnAutoTdlt?.disabled) {
+                    txtAutoTdlt.textContent = tdltActive ? '🟢 TDLT: ĐANG BẬT' : 'Chỉ TDLT';
+                }
+                if (btnAutoTdlt) {
+                    btnAutoTdlt.classList.toggle('ring-1', tdltActive && !tsActive);
+                    btnAutoTdlt.classList.toggle('ring-emerald-400', tdltActive && !tsActive);
+                }
+                if (txtAutoTs && !btnAutoTs?.disabled) {
+                    txtAutoTs.textContent = tsActive ? '🟢 Tàn Sát: ĐANG BẬT' : 'Chỉ Tàn Sát';
+                }
+                if (btnAutoTs) {
+                    btnAutoTs.classList.toggle('ring-1', tsActive && !tdltActive);
+                    btnAutoTs.classList.toggle('ring-cyan-400', tsActive && !tdltActive);
                 }
             }
 
