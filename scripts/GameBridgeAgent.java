@@ -23,6 +23,7 @@ public class GameBridgeAgent {
     private static volatile int autoFarmZone = -1;
     private static volatile String autoFarmMode = "all";
     private static volatile long lastWatchdogTravelMs = 0L;
+    private static volatile long buyingTdltSinceMs = 0L;
 
     private static File getStateFile() {
         File dataDir = new File("/data");
@@ -198,6 +199,96 @@ public class GameBridgeAgent {
         return null;
     }
 
+    private static boolean paramsMatch(Class<?>[] actual, Class<?>[] expected) {
+        int aLen = (actual == null) ? 0 : actual.length;
+        int eLen = (expected == null) ? 0 : expected.length;
+        if (aLen != eLen) return false;
+        for (int i = 0; i < aLen; i++) {
+            if (!actual[i].equals(expected[i])) return false;
+        }
+        return true;
+    }
+
+    // Type-and-static-safe method lookup to handle ProGuard -overloadaggressively method collisions in NRO.jar
+    private static Method getTypedMethod(Class<?> cls, String name, boolean wantStatic, Class<?> expectedReturnType, Class<?>... paramTypes) {
+        if (cls == null || name == null) return null;
+        Class<?> cur = cls;
+        while (cur != null) {
+            Method[] methods = cur.getDeclaredMethods();
+            for (int i = 0; i < methods.length; i++) {
+                Method m = methods[i];
+                if (name.equals(m.getName())
+                    && Modifier.isStatic(m.getModifiers()) == wantStatic
+                    && (expectedReturnType == null || expectedReturnType.equals(m.getReturnType()))
+                    && paramsMatch(m.getParameterTypes(), paramTypes)) {
+                    m.setAccessible(true);
+                    return m;
+                }
+            }
+            cur = cur.getSuperclass();
+        }
+        return null;
+    }
+
+    private static Method getTypedMethodByReturnName(Class<?> cls, String name, boolean wantStatic, String expectedReturnTypeName, Class<?>... paramTypes) {
+        if (cls == null || name == null || expectedReturnTypeName == null) return null;
+        Class<?> cur = cls;
+        while (cur != null) {
+            Method[] methods = cur.getDeclaredMethods();
+            for (int i = 0; i < methods.length; i++) {
+                Method m = methods[i];
+                if (name.equals(m.getName())
+                    && Modifier.isStatic(m.getModifiers()) == wantStatic
+                    && paramsMatch(m.getParameterTypes(), paramTypes)) {
+                    String rTypeName = m.getReturnType().getTypeName();
+                    String rClassName = m.getReturnType().getName();
+                    if (expectedReturnTypeName.equals(rTypeName) || expectedReturnTypeName.equals(rClassName)) {
+                        m.setAccessible(true);
+                        return m;
+                    }
+                }
+            }
+            cur = cur.getSuperclass();
+        }
+        return null;
+    }
+
+    // Safely retrieve myCharZ singleton (static nro.cd b() or static field nro.cd l)
+    private static Object getMyChar() {
+        try {
+            Class<?> clsCd = getGameClass("nro.cd");
+            if (clsCd == null) return null;
+            Method mB = getTypedMethodByReturnName(clsCd, "b", true, "nro.cd");
+            if (mB != null) {
+                Object c = mB.invoke(null);
+                if (c != null) return c;
+            }
+            Field fL = getTypedFieldByTypeName(clsCd, "l", "nro.cd");
+            if (fL != null) {
+                return fL.get(null);
+            }
+        } catch (Throwable ignored) {}
+        return null;
+    }
+
+    // Safely retrieve myPet singleton (static nro.cd c() or static field nro.cd c)
+    private static Object getMyPet() {
+        try {
+            Class<?> clsCd = getGameClass("nro.cd");
+            if (clsCd == null) return null;
+            Method mC = getTypedMethodByReturnName(clsCd, "c", true, "nro.cd");
+            if (mC != null) {
+                Object p = mC.invoke(null);
+                if (p != null) return p;
+            }
+            Field fC = getTypedFieldByTypeName(clsCd, "c", "nro.cd");
+            if (fC != null) {
+                return fC.get(null);
+            }
+        } catch (Throwable ignored) {}
+        return null;
+    }
+
     private static String[] resolveModFlagTarget(String cmd) {
         if (cmd == null) return null;
         String c = cmd.trim().toLowerCase(Locale.ROOT);
@@ -235,11 +326,12 @@ public class GameBridgeAgent {
         }
     }
 
-    // Set or clear in-game TDLT flag (nro.ct.cT) and use TDLT item 521 if enabling
+    // Set or clear in-game TDLT flag (nro.ct.cT), use TDLT item 521 from bag, or trigger auto-buy at Map 5 (Đảo Kame)
     private static void syncInGameTdltState(boolean enable) {
         try {
             Class<?> clsCt = getGameClass("nro.ct");
             Class<?> clsP = getGameClass("nro.p");
+            Class<?> clsF = getGameClass("nro.F");
             if (!enable) {
                 if (clsP != null) {
                     Field fB = getTypedField(clsP, "B", boolean.class);
@@ -252,28 +344,110 @@ public class GameBridgeAgent {
                 return;
             }
 
-            // When enabling TDLT: check if TDLT buff icon is active via nro.p.b()
+            // Ensure nro.F.aL >= 1 so nro.p.ad() also auto-renews TDLT when <= 1 minute remains
+            if (clsF != null) {
+                Field fAl = getTypedField(clsF, "aL", int.class);
+                if (fAl != null && fAl.getInt(null) < 1) {
+                    fAl.setInt(null, 1);
+                }
+            }
+
+            // If nro.p.B is already true (currently flying to Map 5 Đảo Kame to buy TDLT from Santa), let it finish
+            if (clsP != null) {
+                Field fB = getTypedField(clsP, "B", boolean.class);
+                if (fB != null && fB.getBoolean(null)) {
+                    return;
+                }
+            }
+
+            // Check if TDLT buff icon is active via nro.p.b()
             int tdltMinutes = -1;
             if (clsP != null) {
                 try {
-                    Object res = clsP.getMethod("b").invoke(null);
-                    if (res instanceof Number) tdltMinutes = ((Number) res).intValue();
+                    Method mB = getTypedMethod(clsP, "b", true, int.class);
+                    if (mB != null) {
+                        Object res = mB.invoke(null);
+                        if (res instanceof Number) tdltMinutes = ((Number) res).intValue();
+                    }
                 } catch (Throwable ignored) {}
             }
 
-            // If TDLT buff is not active yet, try using item 521 (Tự động luyện tập) from bag immediately
+            // If TDLT buff is not active yet (tdltMinutes == -1), try using item 521 from bag or auto-buying at Map 5
             if (tdltMinutes == -1) {
+                int slot = -1;
                 try {
                     Class<?> clsCD = getGameClass("nro.cD");
                     Class<?> clsX = getGameClass("nro.X");
                     if (clsCD != null && clsX != null) {
-                        int slot = ((Number) clsCD.getMethod("b", short.class).invoke(null, (short) 521)).intValue();
+                        Method mFind = getTypedMethod(clsCD, "b", true, int.class, short.class);
+                        if (mFind != null) {
+                            slot = ((Number) mFind.invoke(null, (short) 521)).intValue();
+                        }
                         if (slot != -1) {
-                            clsX.getMethod("k", int.class).invoke(null, slot);
-                            System.out.println("[BRIDGE] Activated TDLT item 521 from bag slot " + slot);
+                            Method mUse = getTypedMethod(clsX, "k", true, void.class, int.class);
+                            if (mUse != null) {
+                                mUse.invoke(null, slot);
+                                System.out.println("[BRIDGE] Activated TDLT item 521 from bag slot " + slot);
+                            }
                         }
                     }
                 } catch (Throwable ignored) {}
+
+                // If no item 521 in bag (slot == -1), check if character has gems (myChar.F() > 0) to auto-buy at Map 5 (Đảo Kame)
+                if (slot == -1) {
+                    Object myChar = getMyChar();
+                    Class<?> clsCd = getGameClass("nro.cd");
+                    int totalGems = 0;
+                    if (myChar != null && clsCd != null) {
+                        try {
+                            Method mGems = getTypedMethod(clsCd, "F", false, int.class);
+                            if (mGems != null) {
+                                Object gObj = mGems.invoke(myChar);
+                                if (gObj instanceof Number) totalGems = ((Number) gObj).intValue();
+                            }
+                        } catch (Throwable ignored) {}
+                    }
+
+                    if (totalGems > 0 && clsP != null) {
+                        updateGobackTarget(autoFarmMap, autoFarmZone);
+                        Field fB = getTypedField(clsP, "B", boolean.class);
+                        Field fC = getTypedField(clsP, "C", boolean.class);
+                        Field fP = getTypedField(clsP, "P", int.class);
+                        if (fB != null) fB.setBoolean(null, true);
+                        if (fC != null) fC.setBoolean(null, false);
+                        if (fP != null) fP.setInt(null, 0);
+                        buyingTdltSinceMs = System.currentTimeMillis();
+
+                        if (clsCt != null) {
+                            Field fCt = getTypedField(clsCt, "cT", boolean.class);
+                            if (fCt != null) fCt.setBoolean(null, false);
+                            Method mInstCt = getTypedMethodByReturnName(clsCt, "a", true, "nro.ct");
+                            if (mInstCt != null) {
+                                Object instCt = mInstCt.invoke(null);
+                                if (instCt != null) {
+                                    Field fIt = getTypedField(clsCt, "iT", int.class);
+                                    if (fIt != null) fIt.setInt(instCt, 0);
+                                }
+                            }
+                        }
+
+                        Class<?> cls_f = getGameClass("nro.f");
+                        if (cls_f != null) {
+                            Field fF = getTypedField(cls_f, "f", boolean.class);
+                            if (fF != null) fF.setBoolean(null, false);
+                            Field fG = getTypedField(cls_f, "g", boolean.class);
+                            if (fG != null) fG.setBoolean(null, false);
+                            Field fH = getTypedField(cls_f, "h", boolean.class);
+                            if (fH != null) fH.setBoolean(null, false);
+                            Field fDelay = getTypedField(cls_f, "c", long.class);
+                            if (fDelay != null) fDelay.setLong(null, 0L);
+                            Method bMeth = getTypedMethod(cls_f, "b", true, void.class, int.class);
+                            if (bMeth != null) bMeth.invoke(null, 5);
+                        }
+                        System.out.println("[BRIDGE] No TDLT buff or item 521 in bag (gems=" + totalGems + "). Flying to Map 5 (Đảo Kame) to auto-buy TDLT!");
+                        return;
+                    }
+                }
             }
 
             if (clsCt != null) {
@@ -401,7 +575,8 @@ public class GameBridgeAgent {
                 Field fCt = getTypedField(clsCt, "cT", boolean.class);
                 if (fCt != null) fCt.setBoolean(null, false);
                 try {
-                    Object instCt = clsCt.getMethod("a").invoke(null);
+                    Method mInstCt = getTypedMethodByReturnName(clsCt, "a", true, "nro.ct");
+                    Object instCt = (mInstCt != null) ? mInstCt.invoke(null) : null;
                     if (instCt != null) {
                         Field fIt = getTypedField(clsCt, "iT", int.class);
                         if (fIt != null) fIt.setInt(instCt, 0);
@@ -410,14 +585,12 @@ public class GameBridgeAgent {
             }
             // 6. Clear active character auto-move target (nro.cQ a) and mob focus (nro.cN e)
             Class<?> clsCd = getGameClass("nro.cd");
-            if (clsCd != null) {
-                Object myChar = clsCd.getMethod("b").invoke(null);
-                if (myChar != null) {
-                    Field fMove = getTypedFieldByTypeName(clsCd, "a", "nro.cQ");
-                    if (fMove != null) fMove.set(myChar, null);
-                    Field fMob = getTypedFieldByTypeName(clsCd, "e", "nro.cN");
-                    if (fMob != null) fMob.set(myChar, null);
-                }
+            Object myChar = getMyChar();
+            if (clsCd != null && myChar != null) {
+                Field fMove = getTypedFieldByTypeName(clsCd, "a", "nro.cQ");
+                if (fMove != null) fMove.set(myChar, null);
+                Field fMob = getTypedFieldByTypeName(clsCd, "e", "nro.cN");
+                if (fMob != null) fMob.set(myChar, null);
             }
         } catch (Throwable t) {
             System.out.println("[BRIDGE] pauseAutoForTravel error: " + t);
@@ -430,21 +603,22 @@ public class GameBridgeAgent {
             pauseAutoForTravel(mapId);
             Class<?> cls_f = getGameClass("nro.f");
             if (cls_f != null) {
-                // Reset any stale Xmap state before starting new route
-                try {
-                    cls_f.getMethod("m").invoke(null);
-                } catch (Throwable ignored) {}
-                Field fH = getTypedField(cls_f, "h", boolean.class);
-                if (fH != null) fH.setBoolean(null, false);
+                // Reset any stale Xmap error/capsule/delay flags before starting new route
+                Field fF = getTypedField(cls_f, "f", boolean.class);
+                if (fF != null) fF.setBoolean(null, false);
                 Field fG = getTypedField(cls_f, "g", boolean.class);
                 if (fG != null) fG.setBoolean(null, false);
+                Field fH = getTypedField(cls_f, "h", boolean.class);
+                if (fH != null) fH.setBoolean(null, false);
                 Field fC = getTypedField(cls_f, "c", long.class);
                 if (fC != null) fC.setLong(null, 0L);
 
-                Method bMeth = cls_f.getMethod("b", int.class);
-                bMeth.invoke(null, mapId);
-                System.out.println("[BRIDGE] Travel to map " + mapId + " triggered via nro.f.b(" + mapId + ")");
-                return true;
+                Method bMeth = getTypedMethod(cls_f, "b", true, void.class, int.class);
+                if (bMeth != null) {
+                    bMeth.invoke(null, mapId);
+                    System.out.println("[BRIDGE] Travel to map " + mapId + " triggered via nro.f.b(" + mapId + ")");
+                    return true;
+                }
             }
         } catch (Throwable t) {
             System.out.println("[BRIDGE] travelToMap error: " + t);
@@ -457,9 +631,21 @@ public class GameBridgeAgent {
         try {
             Class<?> cls_f = getGameClass("nro.f");
             if (cls_f != null) {
-                Method mMeth = cls_f.getMethod("m");
-                mMeth.invoke(null);
-                System.out.println("[BRIDGE] Stop Xmap triggered via nro.f.m()");
+                Field fE = getTypedField(cls_f, "e", boolean.class);
+                if (fE != null) fE.setBoolean(null, false);
+                Field fF = getTypedField(cls_f, "f", boolean.class);
+                if (fF != null) fF.setBoolean(null, false);
+                Field fG = getTypedField(cls_f, "g", boolean.class);
+                if (fG != null) fG.setBoolean(null, false);
+                Field fH = getTypedField(cls_f, "h", boolean.class);
+                if (fH != null) fH.setBoolean(null, false);
+                Object myChar = getMyChar();
+                Class<?> clsCd = getGameClass("nro.cd");
+                if (clsCd != null && myChar != null) {
+                    Field fMove = getTypedFieldByTypeName(clsCd, "a", "nro.cQ");
+                    if (fMove != null) fMove.set(myChar, null);
+                }
+                System.out.println("[BRIDGE] Stop Xmap triggered");
                 return true;
             }
         } catch (Throwable t) {
@@ -484,21 +670,23 @@ public class GameBridgeAgent {
             final String cleanPass = (password != null) ? password.trim() : "";
 
             // 1. Persist credentials & server index inside active JVM RecordStore via nro.ag
-            Method saveStr = clsAg.getMethod("b", String.class, String.class);
-            Method saveInt = clsAg.getMethod("a", String.class, int.class);
-            if (!cleanUser.isEmpty()) {
+            Method saveStr = getTypedMethod(clsAg, "b", true, void.class, String.class, String.class);
+            Method saveInt = getTypedMethod(clsAg, "a", true, void.class, String.class, int.class);
+            if (!cleanUser.isEmpty() && saveStr != null) {
                 saveStr.invoke(null, "acc", cleanUser);
             }
-            if (!cleanPass.isEmpty()) {
+            if (!cleanPass.isEmpty() && saveStr != null) {
                 saveStr.invoke(null, "pass", cleanPass);
             }
-            saveInt.invoke(null, "check", 1);
+            if (saveInt != null) {
+                saveInt.invoke(null, "check", 1);
+            }
 
             if (serverNum >= 1 && serverNum <= 13) {
                 int svIdx = serverNum - 1;
                 Field fDn = getTypedField(clsAk, "dn", int.class);
                 if (fDn != null) fDn.setInt(null, svIdx);
-                saveInt.invoke(null, "svselect", svIdx);
+                if (saveInt != null) saveInt.invoke(null, "svselect", svIdx);
             }
 
             // 2. Spawn asynchronous worker inside JVM to disconnect old session and trigger LoginScr login
@@ -507,7 +695,8 @@ public class GameBridgeAgent {
                     try {
                         stopXmap();
                         // Disconnect active session & switch to LoginScr
-                        clsE.getMethod("h").invoke(null);
+                        Method mH = getTypedMethod(clsE, "h", true, void.class);
+                        if (mH != null) mH.invoke(null);
                         Thread.sleep(350);
 
                         // Populate LoginScr TFields (b=user, e=pass) using type-safe reflection
@@ -523,21 +712,24 @@ public class GameBridgeAgent {
                                     Field fUser = getTypedFieldByTypeName(clsCJ, "b", "nro.au");
                                     Object tfUser = (fUser != null) ? fUser.get(loginScr) : null;
                                     if (tfUser != null) {
-                                        tfUser.getClass().getMethod("t", String.class).invoke(tfUser, cleanUser);
+                                        Method mT = getTypedMethod(tfUser.getClass(), "t", false, void.class, String.class);
+                                        if (mT != null) mT.invoke(tfUser, cleanUser);
                                     }
                                 }
                                 if (!cleanPass.isEmpty()) {
                                     Field fPass = getTypedFieldByTypeName(clsCJ, "e", "nro.au");
                                     Object tfPass = (fPass != null) ? fPass.get(loginScr) : null;
                                     if (tfPass != null) {
-                                        tfPass.getClass().getMethod("t", String.class).invoke(tfPass, cleanPass);
+                                        Method mT = getTypedMethod(tfPass.getClass(), "t", false, void.class, String.class);
+                                        if (mT != null) mT.invoke(tfPass, cleanPass);
                                     }
                                 }
                             }
                         }
 
                         // Trigger LoginScr.cR() + LoginScr.hS() via nro.e.j()
-                        clsE.getMethod("j").invoke(null);
+                        Method mJ = getTypedMethod(clsE, "j", true, void.class);
+                        if (mJ != null) mJ.invoke(null);
                         System.out.println("[BRIDGE] Direct JVM Login triggered for user=" + cleanUser + ", server=" + serverNum);
 
                         // Wait up to 4.5s; if still not in_game, trigger hS() once more
@@ -548,7 +740,7 @@ public class GameBridgeAgent {
                                 return;
                             }
                         }
-                        clsE.getMethod("j").invoke(null);
+                        if (mJ != null) mJ.invoke(null);
                     } catch (Throwable t) {
                         System.out.println("[BRIDGE] DirectLogin-Worker error: " + t);
                     }
@@ -629,9 +821,11 @@ public class GameBridgeAgent {
             if ("xmap".equals(lower)) {
                 Class<?> cls_f = getGameClass("nro.f");
                 if (cls_f != null) {
-                    Object inst_f = cls_f.getMethod("a").invoke(null);
+                    Method mA = getTypedMethodByReturnName(cls_f, "a", true, "nro.f");
+                    Object inst_f = (mA != null) ? mA.invoke(null) : null;
                     if (inst_f != null) {
-                        cls_f.getMethod("o").invoke(inst_f);
+                        Method mO = getTypedMethod(cls_f, "o", false, void.class);
+                        if (mO != null) mO.invoke(inst_f);
                         System.out.println("[BRIDGE] Opened Xmap menu via nro.f.a().o()");
                         return true;
                     }
@@ -642,9 +836,11 @@ public class GameBridgeAgent {
             if ("cd".equals(lower) || "menu".equals(lower)) {
                 Class<?> clsG = getGameClass("nro.G");
                 if (clsG != null) {
-                    Object instG = clsG.getMethod("a").invoke(null);
+                    Method mA = getTypedMethodByReturnName(clsG, "a", true, "nro.G");
+                    Object instG = (mA != null) ? mA.invoke(null) : null;
                     if (instG != null) {
-                        clsG.getMethod("aK").invoke(instG);
+                        Method mAk = getTypedMethod(clsG, "aK", false, void.class);
+                        if (mAk != null) mAk.invoke(instG);
                         System.out.println("[BRIDGE] Opened Hùng Hero Mod Menu via nro.G.a().aK()");
                         return true;
                     }
@@ -655,9 +851,11 @@ public class GameBridgeAgent {
             if ("cs".equals(lower)) {
                 Class<?> clsG = getGameClass("nro.G");
                 if (clsG != null) {
-                    Object instG = clsG.getMethod("a").invoke(null);
+                    Method mA = getTypedMethodByReturnName(clsG, "a", true, "nro.G");
+                    Object instG = (mA != null) ? mA.invoke(null) : null;
                     if (instG != null) {
-                        clsG.getMethod("a", int.class, Object.class).invoke(instG, 2, null);
+                        Method mAct = getTypedMethod(clsG, "a", false, void.class, int.class, Object.class);
+                        if (mAct != null) mAct.invoke(instG, 2, null);
                         System.out.println("[BRIDGE] Used Capsule via nro.G.a().a(2, null)");
                         return true;
                     }
@@ -668,9 +866,11 @@ public class GameBridgeAgent {
             if ("bt".equals(lower) || "bongtai".equals(lower)) {
                 Class<?> clsG = getGameClass("nro.G");
                 if (clsG != null) {
-                    Object instG = clsG.getMethod("a").invoke(null);
+                    Method mA = getTypedMethodByReturnName(clsG, "a", true, "nro.G");
+                    Object instG = (mA != null) ? mA.invoke(null) : null;
                     if (instG != null) {
-                        clsG.getMethod("a", int.class, Object.class).invoke(instG, 3, null);
+                        Method mAct = getTypedMethod(clsG, "a", false, void.class, int.class, Object.class);
+                        if (mAct != null) mAct.invoke(instG, 3, null);
                         System.out.println("[BRIDGE] Used Porata via nro.G.a().a(3, null)");
                         return true;
                     }
@@ -699,17 +899,17 @@ public class GameBridgeAgent {
             // 7. Invoke the Hùng Hero command handler (nro.F.a().d(cmd) / e(cmd))
             Class<?> clsF = getGameClass("nro.F");
             if (clsF != null) {
-                Method aMeth = clsF.getMethod("a");
-                Object instF = aMeth.invoke(null);
+                Method aMeth = getTypedMethodByReturnName(clsF, "a", true, "nro.F");
+                Object instF = (aMeth != null) ? aMeth.invoke(null) : null;
                 if (instF != null) {
-                    Method dMeth = clsF.getMethod("d", String.class);
-                    Object resD = dMeth.invoke(instF, lower);
+                    Method dMeth = getTypedMethod(clsF, "d", false, boolean.class, String.class);
+                    Object resD = (dMeth != null) ? dMeth.invoke(instF, lower) : null;
                     if (Boolean.TRUE.equals(resD)) {
                         handled = true;
                     } else {
                         try {
-                            Method eMeth = clsF.getMethod("e", String.class);
-                            Object resE = eMeth.invoke(instF, lower);
+                            Method eMeth = getTypedMethod(clsF, "e", false, boolean.class, String.class);
+                            Object resE = (eMeth != null) ? eMeth.invoke(instF, lower) : null;
                             if (Boolean.TRUE.equals(resE)) handled = true;
                         } catch (Throwable ignored) {}
                     }
@@ -744,8 +944,8 @@ public class GameBridgeAgent {
                     Class<?> clsH = getGameClass("nro.h");
                     Class<?> clsAv = getGameClass("nro.av");
                     Class<?> clsCd = getGameClass("nro.cd");
+                    Object myChar = getMyChar();
                     if (clsH != null && clsAv != null && clsCd != null) {
-                        Object myChar = clsCd.getMethod("b").invoke(null);
                         Field fMap = getTypedField(clsAv, "h", int.class);
                         Field fQ = getTypedField(clsH, "q", int.class);
                         Field fO = getTypedField(clsH, "o", int.class);
@@ -780,13 +980,15 @@ public class GameBridgeAgent {
         try {
             Class<?> clsAm = getGameClass("nro.am");
             if (clsAm != null) {
-                Method aMeth = clsAm.getMethod("a");
-                Object instAm = aMeth.invoke(null);
+                Method aMeth = getTypedMethodByReturnName(clsAm, "a", true, "nro.am");
+                Object instAm = (aMeth != null) ? aMeth.invoke(null) : null;
                 if (instAm != null) {
-                    Method pMeth = clsAm.getMethod("p", String.class);
-                    pMeth.invoke(instAm, cmd.trim());
-                    System.out.println("[BRIDGE] Executed via nro.am.a().p [" + cmd + "]");
-                    return true;
+                    Method pMeth = getTypedMethod(clsAm, "p", false, void.class, String.class);
+                    if (pMeth != null) {
+                        pMeth.invoke(instAm, cmd.trim());
+                        System.out.println("[BRIDGE] Executed via nro.am.a().p [" + cmd + "]");
+                        return true;
+                    }
                 }
             }
         } catch (Throwable t) {
@@ -854,7 +1056,8 @@ public class GameBridgeAgent {
 
             // 1. Drain nro.j.b via nro.j.E() first so nro.j.E() never overwrites nro.j.a with nulls later
             try {
-                clsJ.getMethod("E").invoke(null);
+                Method mE = getTypedMethod(clsJ, "E", true, void.class);
+                if (mE != null) mE.invoke(null);
             } catch (Throwable ignored) {}
 
             Field fAutoA = getTypedField(clsJ, "a", Vector.class);
@@ -917,8 +1120,8 @@ public class GameBridgeAgent {
             }
 
             // Fallback: character's learned skill list (nro.cd.b().L) or active skill (nro.cd.b().d)
-            Object myChar = (clsCd != null) ? clsCd.getMethod("b").invoke(null) : null;
-            if (chosenSkill == null && myChar != null) {
+            Object myChar = getMyChar();
+            if (chosenSkill == null && myChar != null && clsCd != null) {
                 Field fL = getTypedFieldByTypeName(clsCd, "L", "nro.cS");
                 if (fL != null) {
                     Vector learned = (Vector) fL.get(myChar);
@@ -974,7 +1177,7 @@ public class GameBridgeAgent {
             }
 
             // Ensure character's selected skill (nro.cd.b().d) is non-null
-            if (myChar != null) {
+            if (myChar != null && clsCd != null) {
                 Field fCharSkill = getTypedFieldByTypeName(clsCd, "d", "nro.ao");
                 if (fCharSkill != null && fCharSkill.get(myChar) == null) {
                     fCharSkill.set(myChar, chosenSkill);
@@ -985,7 +1188,8 @@ public class GameBridgeAgent {
             if (!containsAutoSkill(autoSkills, skillId)) {
                 autoSkills.setElementAt(chosenSkill, 0);
                 try {
-                    clsJ.getMethod("F").invoke(null);
+                    Method mF = getTypedMethod(clsJ, "F", true, void.class);
+                    if (mF != null) mF.invoke(null);
                 } catch (Throwable ignored) {}
                 System.out.println("[BRIDGE] Configured melee skill [" + skillName + "] (id=" + skillId + ") in nro.j.a[0]");
             }
@@ -1053,6 +1257,24 @@ public class GameBridgeAgent {
                         // Ensure melee skill is in auto list
                         configurePunchSkill();
 
+                        // If currently flying to Map 5 (Đảo Kame) to auto-buy TDLT from Santa, do not interrupt!
+                        Class<?> clsP = getGameClass("nro.p");
+                        if (clsP != null) {
+                            Field fBuyingTdlt = getTypedField(clsP, "B", boolean.class);
+                            if (fBuyingTdlt != null && fBuyingTdlt.getBoolean(null)) {
+                                if (buyingTdltSinceMs == 0L) buyingTdltSinceMs = System.currentTimeMillis();
+                                if (System.currentTimeMillis() - buyingTdltSinceMs < 90000L) {
+                                    continue;
+                                } else {
+                                    // Safety timeout after 90s so character never gets stuck
+                                    fBuyingTdlt.setBoolean(null, false);
+                                    buyingTdltSinceMs = 0L;
+                                }
+                            } else {
+                                buyingTdltSinceMs = 0L;
+                            }
+                        }
+
                         Boolean xmapRun = (Boolean) st.get("xmap_running");
                         if (Boolean.TRUE.equals(xmapRun)) continue;
 
@@ -1062,7 +1284,8 @@ public class GameBridgeAgent {
                         // Check if character is dead (let Goback handle healing & returning)
                         Class<?> clsF = getGameClass("nro.F");
                         if (clsF != null) {
-                            Boolean isDead = (Boolean) clsF.getMethod("d").invoke(null);
+                            Method mDead = getTypedMethod(clsF, "d", true, boolean.class);
+                            Boolean isDead = (mDead != null) ? (Boolean) mDead.invoke(null) : Boolean.FALSE;
                             if (Boolean.TRUE.equals(isDead)) continue;
                         }
 
@@ -1099,7 +1322,7 @@ public class GameBridgeAgent {
         if (items == null) return;
         try {
             Class<?> clsCD = getGameClass("nro.cD");
-            Method isSkhMeth = (clsCD != null) ? clsCD.getMethod("b", clsCD) : null;
+            Method isSkhMeth = (clsCD != null) ? getTypedMethod(clsCD, "b", true, boolean.class, clsCD) : null;
 
             for (int i = 0; i < items.length; i++) {
                 Object item = items[i];
@@ -1133,7 +1356,8 @@ public class GameBridgeAgent {
                         if (optId >= 127 && optId <= 144) {
                             isSkh = true;
                             try {
-                                Object formatted = opt.getClass().getMethod("e").invoke(opt);
+                                Method mE = getTypedMethod(opt.getClass(), "e", false, String.class);
+                                Object formatted = (mE != null) ? mE.invoke(opt) : null;
                                 if (formatted != null) {
                                     if (skhDesc.length() > 0) skhDesc.append(", ");
                                     skhDesc.append(formatted.toString());
@@ -1158,7 +1382,7 @@ public class GameBridgeAgent {
         } catch (Throwable ignored) {}
     }
 
-    // Get current game status & live character telemetry using type-safe field reflection
+    // Get current game status & live character telemetry using type-safe field & method reflection
     public static Map<String, Object> getStatus() {
         Map<String, Object> status = new LinkedHashMap<String, Object>();
         status.put("bridge_online", true);
@@ -1197,87 +1421,83 @@ public class GameBridgeAgent {
 
         boolean inGame = false;
         try {
-            Class<?> cls_cd = getGameClass("nro.cd");
-            if (cls_cd != null) {
-                Method bMeth = cls_cd.getMethod("b");
-                Object charObj = bMeth.invoke(null);
-                if (charObj != null) {
-                    Class<?> cCls = charObj.getClass();
-                    Field fGu = getTypedField(cCls, "gu", String.class);
-                    Field fAn = getTypedField(cCls, "aN", long.class);
-                    Field fAz = getTypedField(cCls, "az", long.class);
-                    Field fAx = getTypedField(cCls, "ax", long.class);
-                    Field fAs = getTypedField(cCls, "as", long.class);
-                    Field fAq = getTypedField(cCls, "aQ", long.class);
-                    Field fAo = getTypedField(cCls, "aO", long.class);
-                    Field fAw = getTypedField(cCls, "aw", long.class);
-                    Field fAv = getTypedField(cCls, "av", long.class);
-                    Field fBq = getTypedField(cCls, "bQ", boolean.class);
-                    Field fGv = getTypedField(cCls, "gv", int.class);
-                    Field fGa = getTypedField(cCls, "gA", int.class);
+            Object charObj = getMyChar();
+            if (charObj != null) {
+                Class<?> cCls = charObj.getClass();
+                Field fGu = getTypedField(cCls, "gu", String.class);
+                Field fAn = getTypedField(cCls, "aN", long.class);
+                Field fAz = getTypedField(cCls, "az", long.class);
+                Field fAx = getTypedField(cCls, "ax", long.class);
+                Field fAs = getTypedField(cCls, "as", long.class);
+                Field fAq = getTypedField(cCls, "aQ", long.class);
+                Field fAo = getTypedField(cCls, "aO", long.class);
+                Field fAw = getTypedField(cCls, "aw", long.class);
+                Field fAv = getTypedField(cCls, "av", long.class);
+                Field fBq = getTypedField(cCls, "bQ", boolean.class);
+                Field fGv = getTypedField(cCls, "gv", int.class);
+                Field fGa = getTypedField(cCls, "gA", int.class);
 
-                    String charName = (fGu != null) ? (String) fGu.get(charObj) : "";
-                    long hp = (fAn != null) ? fAn.getLong(charObj) : 0L;
-                    long hpMax = (fAz != null) ? fAz.getLong(charObj) : 0L;
-                    long mp = (fAx != null) ? fAx.getLong(charObj) : 0L;
-                    long mpMax = (fAs != null) ? fAs.getLong(charObj) : 0L;
-                    long power = (fAq != null) ? fAq.getLong(charObj) : 0L;
-                    long potential = (fAo != null) ? fAo.getLong(charObj) : 0L;
-                    long damage = (fAw != null) ? fAw.getLong(charObj) : 0L;
-                    long gold = (fAv != null) ? fAv.getLong(charObj) : 0L;
-                    boolean hasPet = (fBq != null) && fBq.getBoolean(charObj);
-                    int cx = (fGv != null) ? fGv.getInt(charObj) : 0;
-                    int cy = (fGa != null) ? fGa.getInt(charObj) : 0;
+                String charName = (fGu != null) ? (String) fGu.get(charObj) : "";
+                long hp = (fAn != null) ? fAn.getLong(charObj) : 0L;
+                long hpMax = (fAz != null) ? fAz.getLong(charObj) : 0L;
+                long mp = (fAx != null) ? fAx.getLong(charObj) : 0L;
+                long mpMax = (fAs != null) ? fAs.getLong(charObj) : 0L;
+                long power = (fAq != null) ? fAq.getLong(charObj) : 0L;
+                long potential = (fAo != null) ? fAo.getLong(charObj) : 0L;
+                long damage = (fAw != null) ? fAw.getLong(charObj) : 0L;
+                long gold = (fAv != null) ? fAv.getLong(charObj) : 0L;
+                boolean hasPet = (fBq != null) && fBq.getBoolean(charObj);
+                int cx = (fGv != null) ? fGv.getInt(charObj) : 0;
+                int cy = (fGa != null) ? fGa.getInt(charObj) : 0;
 
-                    inGame = (charName != null && !charName.trim().isEmpty() && currentMapId >= 0 && hpMax > 0);
-                    status.put("char_name", charName != null ? charName : "");
-                    status.put("hp", hp);
-                    status.put("hp_max", hpMax);
-                    status.put("mp", mp);
-                    status.put("mp_max", mpMax);
-                    status.put("power", power);
-                    status.put("potential", potential);
-                    status.put("damage", damage);
-                    status.put("gold", gold);
-                    status.put("has_pet", hasPet);
-                    status.put("cx", cx);
-                    status.put("cy", cy);
+                inGame = (charName != null && !charName.trim().isEmpty() && currentMapId >= 0 && hpMax > 0);
+                status.put("char_name", charName != null ? charName : "");
+                status.put("hp", hp);
+                status.put("hp_max", hpMax);
+                status.put("mp", mp);
+                status.put("mp_max", mpMax);
+                status.put("power", power);
+                status.put("potential", potential);
+                status.put("damage", damage);
+                status.put("gold", gold);
+                status.put("has_pet", hasPet);
+                status.put("cx", cx);
+                status.put("cy", cy);
 
-                    if (hasPet) {
-                        try {
-                            Object petObj = cls_cd.getMethod("c").invoke(null);
-                            if (petObj != null) {
-                                Field fPetAq = getTypedField(petObj.getClass(), "aQ", long.class);
-                                Field fPetAo = getTypedField(petObj.getClass(), "aO", long.class);
-                                if (fPetAq != null) status.put("pet_power", fPetAq.getLong(petObj));
-                                if (fPetAo != null) status.put("pet_potential", fPetAo.getLong(petObj));
-                            }
-                        } catch (Throwable ignored) {}
-                    }
-
-                    // Scan bag and body for SKH items and slot usage
-                    List<String> skhList = new ArrayList<String>();
-                    Field fBody = getTypedFieldByTypeName(cCls, "a", "nro.cD[]");
-                    Object rawBody = (fBody != null) ? fBody.get(charObj) : null;
-                    if (rawBody instanceof Object[]) {
-                        scanItemsForSkh((Object[]) rawBody, "Đang mặc", skhList);
-                    }
-                    Field fBag = getTypedFieldByTypeName(cCls, "b", "nro.cD[]");
-                    Object rawBag = (fBag != null) ? fBag.get(charObj) : null;
-                    if (rawBag instanceof Object[]) {
-                        Object[] bag = (Object[]) rawBag;
-                        int used = 0;
-                        for (int i = 0; i < bag.length; i++) {
-                            if (bag[i] != null) used++;
+                if (hasPet) {
+                    try {
+                        Object petObj = getMyPet();
+                        if (petObj != null) {
+                            Field fPetAq = getTypedField(petObj.getClass(), "aQ", long.class);
+                            Field fPetAo = getTypedField(petObj.getClass(), "aO", long.class);
+                            if (fPetAq != null) status.put("pet_power", fPetAq.getLong(petObj));
+                            if (fPetAo != null) status.put("pet_potential", fPetAo.getLong(petObj));
                         }
-                        status.put("bag_total", bag.length);
-                        status.put("bag_used", used);
-                        status.put("bag_free", Math.max(0, bag.length - used));
-                        scanItemsForSkh(bag, "Hành trang", skhList);
-                    }
-                    status.put("skh_count", skhList.size());
-                    status.put("skh_items", skhList);
+                    } catch (Throwable ignored) {}
                 }
+
+                // Scan bag and body for SKH items and slot usage
+                List<String> skhList = new ArrayList<String>();
+                Field fBody = getTypedFieldByTypeName(cCls, "a", "nro.cD[]");
+                Object rawBody = (fBody != null) ? fBody.get(charObj) : null;
+                if (rawBody instanceof Object[]) {
+                    scanItemsForSkh((Object[]) rawBody, "Đang mặc", skhList);
+                }
+                Field fBag = getTypedFieldByTypeName(cCls, "b", "nro.cD[]");
+                Object rawBag = (fBag != null) ? fBag.get(charObj) : null;
+                if (rawBag instanceof Object[]) {
+                    Object[] bag = (Object[]) rawBag;
+                    int used = 0;
+                    for (int i = 0; i < bag.length; i++) {
+                        if (bag[i] != null) used++;
+                    }
+                    status.put("bag_total", bag.length);
+                    status.put("bag_used", used);
+                    status.put("bag_free", Math.max(0, bag.length - used));
+                    scanItemsForSkh(bag, "Hành trang", skhList);
+                }
+                status.put("skh_count", skhList.size());
+                status.put("skh_items", skhList);
             }
         } catch (Throwable t) {
             System.out.println("[BRIDGE] getStatus char telemetry error: " + t);
@@ -1302,7 +1522,8 @@ public class GameBridgeAgent {
             }
             Class<?> clsP = getGameClass("nro.p");
             if (clsP != null) {
-                Object mins = clsP.getMethod("b").invoke(null);
+                Method mB = getTypedMethod(clsP, "b", true, int.class);
+                Object mins = (mB != null) ? mB.invoke(null) : null;
                 if (mins instanceof Number) status.put("tdlt_minutes", ((Number) mins).intValue());
             }
         } catch (Throwable ignored) {}
@@ -1407,7 +1628,10 @@ public class GameBridgeAgent {
                 stopXmap();
                 try {
                     Class<?> clsQ = getGameClass("nro.Q");
-                    if (clsQ != null) clsQ.getMethod("bo").invoke(null);
+                    if (clsQ != null) {
+                        Method mBo = getTypedMethod(clsQ, "bo", true, void.class);
+                        if (mBo != null) mBo.invoke(null);
+                    }
                 } catch (Throwable ignored) {}
                 jsonResp = "{\"status\": \"ok\"}";
             } else if (path.equals("/api/game/cmd")) {
