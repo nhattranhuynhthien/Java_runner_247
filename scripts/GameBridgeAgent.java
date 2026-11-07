@@ -19,7 +19,7 @@ public class GameBridgeAgent {
     // Keep track of background farm task & persistent 24/7 state
     private static Thread farmThread = null;
     private static volatile boolean autoFarmActive = false;
-    private static volatile int autoFarmMap = 0;
+    private static volatile int autoFarmMap = -1;
     private static volatile int autoFarmZone = -1;
     private static volatile String autoFarmMode = "all";
     private static volatile long lastWatchdogTravelMs = 0L;
@@ -60,7 +60,7 @@ public class GameBridgeAgent {
             br.close();
             String s = sb.toString();
             autoFarmActive = s.contains("\"active\":true") || s.contains("\"active\": true");
-            autoFarmMap = extractIntJson(s, "map", 0);
+            autoFarmMap = extractIntJson(s, "map", -1);
             autoFarmZone = extractIntJson(s, "zone", -1);
             String m = extractStrJson(s, "mode", "all");
             autoFarmMode = (m != null && !m.isEmpty()) ? m : "all";
@@ -338,7 +338,7 @@ public class GameBridgeAgent {
             if (clsA == null) return;
 
             int mapToSave = prefMap;
-            if (mapToSave <= 0 && clsAv != null) {
+            if (mapToSave < 0 && clsAv != null) {
                 Field fH = getTypedField(clsAv, "h", int.class);
                 if (fH != null) mapToSave = fH.getInt(null);
             }
@@ -360,11 +360,81 @@ public class GameBridgeAgent {
         }
     }
 
+    // Pause conflicting combat/TDLT/goback loops so Xmap can walk/teleport through portals unobstructed
+    public static void pauseAutoForTravel(int targetMapId) {
+        try {
+            // 1. Pause Tàn Sát (nro.j.n = false)
+            Class<?> clsJ = getGameClass("nro.j");
+            if (clsJ != null) {
+                Field fN = getTypedField(clsJ, "n", boolean.class);
+                if (fN != null) fN.setBoolean(null, false);
+            }
+            // 2. Pause Mod TDLT (nro.p.z = false, nro.p.B = false) so nro.p.ad() doesn't re-enable cT or hijack Xmap to Map 5
+            Class<?> clsP = getGameClass("nro.p");
+            if (clsP != null) {
+                Field fZ = getTypedField(clsP, "z", boolean.class);
+                if (fZ != null) fZ.setBoolean(null, false);
+                Field fB = getTypedField(clsP, "B", boolean.class);
+                if (fB != null) fB.setBoolean(null, false);
+            }
+            // 3. Pause Goback during transit (nro.A.J = false, nro.A.I = false) and pre-set new target map (nro.A.aj)
+            Class<?> clsA = getGameClass("nro.A");
+            if (clsA != null) {
+                Field fJ = getTypedField(clsA, "J", boolean.class);
+                if (fJ != null) fJ.setBoolean(null, false);
+                Field fI = getTypedField(clsA, "I", boolean.class);
+                if (fI != null) fI.setBoolean(null, false);
+                if (targetMapId >= 0) {
+                    Field fAj = getTypedField(clsA, "aj", int.class);
+                    if (fAj != null) fAj.setInt(null, targetMapId);
+                }
+            }
+            // 4. Turn off in-game TDLT (nro.ct.cT = false, nro.ct.a().iT = 0) so GameScr stops pulling char to mobs
+            Class<?> clsCt = getGameClass("nro.ct");
+            if (clsCt != null) {
+                Field fCt = getTypedField(clsCt, "cT", boolean.class);
+                if (fCt != null) fCt.setBoolean(null, false);
+                try {
+                    Object instCt = clsCt.getMethod("a").invoke(null);
+                    if (instCt != null) {
+                        Field fIt = getTypedField(clsCt, "iT", int.class);
+                        if (fIt != null) fIt.setInt(instCt, 0);
+                    }
+                } catch (Throwable ignored) {}
+            }
+            // 5. Clear active character auto-move target (nro.cQ a) and mob focus (nro.cN e)
+            Class<?> clsCd = getGameClass("nro.cd");
+            if (clsCd != null) {
+                Object myChar = clsCd.getMethod("b").invoke(null);
+                if (myChar != null) {
+                    Field fMove = getTypedFieldByTypeName(clsCd, "a", "nro.cQ");
+                    if (fMove != null) fMove.set(myChar, null);
+                    Field fMob = getTypedFieldByTypeName(clsCd, "e", "nro.cN");
+                    if (fMob != null) fMob.set(myChar, null);
+                }
+            }
+        } catch (Throwable t) {
+            System.out.println("[BRIDGE] pauseAutoForTravel error: " + t);
+        }
+    }
+
     // Call Xmap travel to mapId
     public static boolean travelToMap(int mapId) {
         try {
+            pauseAutoForTravel(mapId);
             Class<?> cls_f = getGameClass("nro.f");
             if (cls_f != null) {
+                // Reset any stale Xmap state before starting new route
+                try {
+                    cls_f.getMethod("m").invoke(null);
+                } catch (Throwable ignored) {}
+                Field fH = getTypedField(cls_f, "h", boolean.class);
+                if (fH != null) fH.setBoolean(null, false);
+                Field fG = getTypedField(cls_f, "g", boolean.class);
+                if (fG != null) fG.setBoolean(null, false);
+                Field fC = getTypedField(cls_f, "c", long.class);
+                if (fC != null) fC.setLong(null, 0L);
+
                 Method bMeth = cls_f.getMethod("b", int.class);
                 bMeth.invoke(null, mapId);
                 System.out.println("[BRIDGE] Travel to map " + mapId + " triggered via nro.f.b(" + mapId + ")");
@@ -945,7 +1015,7 @@ public class GameBridgeAgent {
                         }
 
                         // 1. If target map is configured and we are not there, trigger Xmap travel (with 20s cooldown)
-                        if (autoFarmMap > 0 && (curMap == null || curMap.intValue() != autoFarmMap)) {
+                        if (autoFarmMap >= 0 && (curMap == null || curMap.intValue() != autoFarmMap)) {
                             long now = System.currentTimeMillis();
                             if (now - lastWatchdogTravelMs > 20000L) {
                                 lastWatchdogTravelMs = now;
@@ -1329,9 +1399,12 @@ public class GameBridgeAgent {
                 final String zoneStr = params.get("zone");
                 final String mode = params.get("mode") != null ? params.get("mode") : "all";
 
-                int parsedMap = 0;
-                if (mapStr != null && !mapStr.equals("xmap") && !mapStr.equals("0")) {
-                    try { parsedMap = Integer.parseInt(mapStr.trim()); } catch (Throwable ignored) {}
+                int parsedMap = -1;
+                if (mapStr != null) {
+                    String ms = mapStr.trim();
+                    if (!ms.isEmpty() && !ms.equalsIgnoreCase("xmap") && !ms.equalsIgnoreCase("keep") && !ms.equals("-1")) {
+                        try { parsedMap = Integer.parseInt(ms); } catch (Throwable ignored) {}
+                    }
                 }
                 int parsedZone = -1;
                 if (zoneStr != null && !zoneStr.trim().isEmpty()) {
@@ -1353,14 +1426,19 @@ public class GameBridgeAgent {
 
                 // Check if we need to travel to another map first
                 Map<String, Object> curStat = getStatus();
-                Integer curMap = (Integer) curStat.get("map_id");
-                final boolean needMapTravel = (autoFarmMap > 0 && (curMap == null || curMap.intValue() != autoFarmMap));
+                final Integer initialCurMap = (Integer) curStat.get("map_id");
+                final boolean needMapTravel = (autoFarmMap >= 0 && (initialCurMap == null || initialCurMap.intValue() != autoFarmMap));
 
-                // If already at target map (or keeping current map) and no zone switch needed, apply flags immediately!
-                if (!needMapTravel && autoFarmZone < 0) {
-                    setModFlag("alogin", true);
-                    setModFlag("sz", true);
-                    setModFlag("checklag", true);
+                setModFlag("alogin", true);
+                setModFlag("sz", true);
+                setModFlag("checklag", true);
+
+                if (needMapTravel) {
+                    // Pause conflicting auto loops and start Xmap immediately on this request
+                    lastWatchdogTravelMs = System.currentTimeMillis();
+                    travelToMap(autoFarmMap);
+                } else if (autoFarmZone < 0) {
+                    // Already at target map (or keeping current map) and no zone switch needed: apply flags immediately
                     applyFarmModeFlags(mode);
                     setModFlag("locdo", true);
                     setModFlag("anhat", true);
@@ -1370,37 +1448,66 @@ public class GameBridgeAgent {
                 farmThread = new Thread(new Runnable() {
                     public void run() {
                         try {
-                            setModFlag("alogin", true);
-                            setModFlag("sz", true);
-                            setModFlag("checklag", true);
-
-                            // 1. If target map specified and not there yet, travel via Xmap
+                            // 1. If target map specified and not there yet, monitor Xmap travel until arrival
                             if (needMapTravel) {
-                                System.out.println("[BRIDGE] AutoFarm: Traveling to map " + autoFarmMap + "...");
-                                if (!travelToMap(autoFarmMap)) {
-                                    System.out.println("[BRIDGE] AutoFarm: Could not start travel to map " + autoFarmMap + ".");
-                                    return;
-                                }
-
-                                // Wait until arrived at target map (or max 60 seconds)
+                                System.out.println("[BRIDGE] AutoFarm: Traveling from map " + initialCurMap + " to map " + autoFarmMap + "...");
                                 long startWait = System.currentTimeMillis();
                                 boolean arrived = false;
-                                while (System.currentTimeMillis() - startWait < 60000) {
-                                    Thread.sleep(1000);
+                                int retryCount = 0;
+                                Integer lastProgressMap = initialCurMap;
+
+                                while (System.currentTimeMillis() - startWait < 60000L) {
+                                    Thread.sleep(600);
+                                    // Keep in-game TDLT (nro.ct.cT) off while traveling across maps
+                                    try {
+                                        Class<?> clsCt = getGameClass("nro.ct");
+                                        if (clsCt != null) {
+                                            Field fCt = getTypedField(clsCt, "cT", boolean.class);
+                                            if (fCt != null && fCt.getBoolean(null)) {
+                                                fCt.setBoolean(null, false);
+                                            }
+                                        }
+                                    } catch (Throwable ignored) {}
+
                                     Map<String, Object> st = getStatus();
                                     Integer cm = (Integer) st.get("map_id");
                                     Boolean xmapRun = (Boolean) st.get("xmap_running");
-                                    if (cm != null && cm.intValue() == autoFarmMap && (xmapRun == null || !xmapRun)) {
+
+                                    if (cm != null && cm.intValue() == autoFarmMap) {
+                                        if (Boolean.TRUE.equals(xmapRun)) {
+                                            stopXmap();
+                                        }
                                         System.out.println("[BRIDGE] AutoFarm: Arrived at target map " + autoFarmMap + "!");
                                         arrived = true;
                                         break;
                                     }
+
+                                    if (cm != null && (lastProgressMap == null || cm.intValue() != lastProgressMap.intValue())) {
+                                        lastProgressMap = cm;
+                                        retryCount = 0;
+                                    }
+
+                                    // If Xmap stopped before reaching autoFarmMap, retry up to 2 times
+                                    if (!Boolean.TRUE.equals(xmapRun)) {
+                                        if (retryCount < 2) {
+                                            retryCount++;
+                                            System.out.println("[BRIDGE] AutoFarm: Xmap paused at map " + cm + ", retrying travel to " + autoFarmMap + " (" + retryCount + "/2)...");
+                                            lastWatchdogTravelMs = System.currentTimeMillis();
+                                            travelToMap(autoFarmMap);
+                                            Thread.sleep(1000);
+                                        } else {
+                                            System.out.println("[BRIDGE] AutoFarm: Map " + autoFarmMap + " unreachable from map " + cm + "; farming at current map " + cm);
+                                            if (cm != null && cm.intValue() >= 0) {
+                                                autoFarmMap = cm.intValue();
+                                                saveAutoFarmState();
+                                            }
+                                            break;
+                                        }
+                                    }
                                 }
-                                if (!arrived) {
-                                    System.out.println("[BRIDGE] AutoFarm: Timed out waiting for map " + autoFarmMap + "; Watchdog will retry.");
-                                    return;
+                                if (arrived) {
+                                    Thread.sleep(600);
                                 }
-                                Thread.sleep(800);
                             }
 
                             // 2. Switch zone if explicitly specified
@@ -1429,7 +1536,7 @@ public class GameBridgeAgent {
                 farmThread.setDaemon(true);
                 farmThread.start();
 
-                jsonResp = "{\"status\": \"ok\", \"message\": \"Auto farm started\", \"map\": \"" + mapStr + "\", \"zone\": \"" + zoneStr + "\", \"mode\": \"" + mode + "\"}";
+                jsonResp = "{\"status\": \"ok\", \"message\": \"Auto farm started\", \"map\": \"" + autoFarmMap + "\", \"traveling\": " + needMapTravel + ", \"zone\": \"" + zoneStr + "\", \"mode\": \"" + mode + "\"}";
             } else if (path.equals("/api/game/stop_farm")) {
                 autoFarmActive = false;
                 saveAutoFarmState();

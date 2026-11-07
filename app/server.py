@@ -817,18 +817,47 @@ def handle_auto_farm():
             if resp.status == 200:
                 res_data = json.loads(resp.read().decode('utf-8'))
                 skill_num = punch_skill.get('skill', 1)
+                traveling = bool(res_data.get('traveling'))
+                target_map = res_data.get('map', map_val)
                 if mode == "tdlt":
                     mode_desc = "Chỉ TDLT (đã tắt Tàn Sát, tự dùng vé TĐLT + Goback + Auto Reconnect)"
                 elif mode == "ts":
                     mode_desc = "Chỉ Tàn Sát (đã tắt TDLT, đánh liên tục + Goback + Auto Reconnect)"
                 else:
                     mode_desc = "Combo TDLT + Tàn Sát 24/7 (Goback + TDLT + Tàn Sát + Auto Reconnect)"
+                prefix = f"🚀 Đang bay Xmap tới Map {target_map} rồi tự động bật " if traveling else f"Đã gán chiêu đánh (skill{skill_num}) và bật "
                 return jsonify({
                     "status": "ok",
                     "method": "bridge",
-                    "message": f"Đã gán chiêu đánh (skill{skill_num}) và bật {mode_desc}!",
+                    "traveling": traveling,
+                    "message": f"{prefix}{mode_desc}!",
                     "details": res_data
                 })
+    except Exception as e:
+        return jsonify({"error": f"GameBridge chưa sẵn sàng: {e}"}), 503
+
+@app.route('/api/xmap', methods=['POST'])
+def handle_xmap():
+    if not check_pin(request):
+        return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
+    data = request.get_json(silent=True) or {}
+    map_val = str(data.get("map", "")).strip()
+    if map_val == "" or map_val in ("-1", "keep", "xmap") or not map_val.lstrip("-").isdigit():
+        return jsonify({"error": "Vui lòng chọn một Map cụ thể trong danh sách để bay!"}), 400
+    try:
+        import urllib.parse
+        import urllib.request
+        url = f"http://127.0.0.1:28888/api/game/xmap?map={urllib.parse.quote(map_val)}"
+        req = urllib.request.Request(url, data=b"", headers={"User-Agent": "NRO-Server"})
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
+            res_data = json.loads(resp.read().decode("utf-8"))
+            if resp.status == 200 and res_data.get("status") == "ok":
+                return jsonify({
+                    "status": "ok",
+                    "map": int(map_val),
+                    "message": f"🚀 Đã kích hoạt Xmap bay tới Map {map_val}!"
+                })
+            return jsonify({"error": "Không thể kích hoạt Xmap"}), 500
     except Exception as e:
         return jsonify({"error": f"GameBridge chưa sẵn sàng: {e}"}), 503
 
