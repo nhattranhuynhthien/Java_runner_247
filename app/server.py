@@ -333,8 +333,8 @@ def auth_change_credentials():
     if not new_user:
         return jsonify({"error": "Tài khoản mới không được để trống!"}), 400
 
-    if len(new_pass) < 12:
-        return jsonify({"error": "Mật khẩu mới phải có ít nhất 12 ký tự!"}), 400
+    if len(new_pass) < 4:
+        return jsonify({"error": "Mật khẩu mới phải có ít nhất 4 ký tự!"}), 400
 
     try:
         update_credentials(new_user, new_pass)
@@ -577,7 +577,14 @@ def handle_input():
                 run_input_command(cmd, timeout=3)
 
             elif action == "anti_stuck":
-                # Đóng mọi hộp thoại đang mở: hộp thoại chat (80, 274), thông báo giữa (120, 245/255), thông báo dưới (120, 285)
+                # 1. Xử lý chống kẹt bên trong JVM (dừng Xmap đang treo, đóng hộp thoại in-game nro.Q.bo)
+                try:
+                    import urllib.request
+                    req_as = urllib.request.Request("http://127.0.0.1:28888/api/game/anti_stuck", data=b"", headers={"User-Agent": "NRO-Server"})
+                    urllib.request.urlopen(req_as, timeout=1.5).close()
+                except Exception:
+                    pass
+                # 2. Đóng mọi hộp thoại đang mở trên X11: hộp thoại chat (80, 274), thông báo giữa (120, 245/255), thông báo dưới (120, 285)
                 run_input_command(["xdotool", "mousemove", "80", str(274 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
                 run_input_command(["xdotool", "mousemove", "120", str(255 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
                 run_input_command(["xdotool", "mousemove", "120", str(245 + MENU_BAR_OFFSET), "click", "1"], timeout=1)

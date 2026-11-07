@@ -1985,8 +1985,8 @@
                         authChangeError.classList.remove('hidden');
                         return;
                     }
-                    if (newPass.length < 12) {
-                        authChangeError.textContent = "Mật khẩu mới phải có ít nhất 12 ký tự";
+                    if (newPass.length < 4) {
+                        authChangeError.textContent = "Mật khẩu mới phải có ít nhất 4 ký tự";
                         authChangeError.classList.remove('hidden');
                         return;
                     }
@@ -2048,7 +2048,7 @@
                 savedProfiles.forEach(p => {
                     const opt = document.createElement('option');
                     opt.value = p.id;
-                    const mapInfo = p.map && p.map !== '0' ? ` • Map ${p.map}` : '';
+                    const mapInfo = p.map && p.map !== '-1' ? ` • Map ${p.map}` : '';
                     const zoneInfo = p.zone !== undefined && p.zone !== '' ? `/K${p.zone}` : '';
                     opt.textContent = `${p.label || p.username}${mapInfo}${zoneInfo}`;
                     selectAccountProfile.appendChild(opt);
@@ -2073,9 +2073,9 @@
                     if (loginUser) loginUser.value = prof.username || '';
                     if (loginPass && prof.password) loginPass.value = prof.password;
                     if (loginServer && prof.server) loginServer.value = String(prof.server);
-                    if (selectFarmMap && prof.map) {
+                    if (selectFarmMap && prof.map !== undefined) {
                         selectFarmMap.value = String(prof.map);
-                        try { localStorage.setItem('nro_farm_map', String(prof.map)); } catch (e) {}
+                        try { localStorage.setItem('nro_farm_map_v2', String(prof.map)); } catch (e) {}
                     }
                     if (farmZone && prof.zone !== undefined) {
                         farmZone.value = String(prof.zone);
@@ -2090,7 +2090,7 @@
                     const u = loginUser ? loginUser.value.trim() : '';
                     const p = loginPass ? loginPass.value : '';
                     const sv = loginServer ? parseInt(loginServer.value, 10) || 7 : 7;
-                    const m = selectFarmMap ? selectFarmMap.value : '0';
+                    const m = selectFarmMap ? selectFarmMap.value : '-1';
                     const z = farmZone ? farmZone.value : '5';
 
                     if (!u) {

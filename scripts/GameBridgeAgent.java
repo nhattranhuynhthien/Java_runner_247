@@ -389,7 +389,13 @@ public class GameBridgeAgent {
                     if (fAj != null) fAj.setInt(null, targetMapId);
                 }
             }
-            // 4. Turn off in-game TDLT (nro.ct.cT = false, nro.ct.a().iT = 0) so GameScr stops pulling char to mobs
+            // 4. Turn off Khóa Vị Trí (nro.h.j = false) so nro.h.w() doesn't teleport char back to old X/Y on starting map
+            Class<?> clsH = getGameClass("nro.h");
+            if (clsH != null) {
+                Field fKvt = getTypedField(clsH, "j", boolean.class);
+                if (fKvt != null) fKvt.setBoolean(null, false);
+            }
+            // 5. Turn off in-game TDLT (nro.ct.cT = false, nro.ct.a().iT = 0) so GameScr stops pulling char to mobs
             Class<?> clsCt = getGameClass("nro.ct");
             if (clsCt != null) {
                 Field fCt = getTypedField(clsCt, "cT", boolean.class);
@@ -402,7 +408,7 @@ public class GameBridgeAgent {
                     }
                 } catch (Throwable ignored) {}
             }
-            // 5. Clear active character auto-move target (nro.cQ a) and mob focus (nro.cN e)
+            // 6. Clear active character auto-move target (nro.cQ a) and mob focus (nro.cN e)
             Class<?> clsCd = getGameClass("nro.cd");
             if (clsCd != null) {
                 Object myChar = clsCd.getMethod("b").invoke(null);
@@ -688,6 +694,8 @@ public class GameBridgeAgent {
                 }
             }
 
+            Boolean beforeFlag = getModFlag(lower);
+
             // 7. Invoke the Hùng Hero command handler (nro.F.a().d(cmd) / e(cmd))
             Class<?> clsF = getGameClass("nro.F");
             if (clsF != null) {
@@ -707,6 +715,50 @@ public class GameBridgeAgent {
                     }
                     System.out.println("[BRIDGE] Executed nro.F cmd [" + lower + "] -> " + handled);
                 }
+            }
+
+            // Guarantee toggle for known boolean mod flags even if nro.ct.b chat popup threw an exception
+            if (beforeFlag != null) {
+                Boolean afterFlag = getModFlag(lower);
+                if (!handled || beforeFlag.equals(afterFlag)) {
+                    String[] target = resolveModFlagTarget(lower);
+                    if (target != null) {
+                        Class<?> tCls = getGameClass(target[0]);
+                        if (tCls != null) {
+                            Field f = getTypedField(tCls, target[1], boolean.class);
+                            if (f != null) {
+                                f.setBoolean(null, !beforeFlag.booleanValue());
+                                handled = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (handled && "gb".equals(lower) && Boolean.TRUE.equals(getModFlag("gb"))) {
+                updateGobackTarget(-1, -1);
+            }
+
+            if (handled && "kvt".equals(lower) && Boolean.TRUE.equals(getModFlag("kvt"))) {
+                try {
+                    Class<?> clsH = getGameClass("nro.h");
+                    Class<?> clsAv = getGameClass("nro.av");
+                    Class<?> clsCd = getGameClass("nro.cd");
+                    if (clsH != null && clsAv != null && clsCd != null) {
+                        Object myChar = clsCd.getMethod("b").invoke(null);
+                        Field fMap = getTypedField(clsAv, "h", int.class);
+                        Field fQ = getTypedField(clsH, "q", int.class);
+                        Field fO = getTypedField(clsH, "o", int.class);
+                        Field fP = getTypedField(clsH, "p", int.class);
+                        if (fMap != null && fQ != null) fQ.setInt(null, fMap.getInt(null));
+                        if (myChar != null && fO != null && fP != null) {
+                            Field fCx = getTypedField(clsCd, "gv", int.class);
+                            Field fCy = getTypedField(clsCd, "gA", int.class);
+                            if (fCx != null) fO.setInt(null, fCx.getInt(myChar));
+                            if (fCy != null) fP.setInt(null, fCy.getInt(myChar));
+                        }
+                    }
+                } catch (Throwable ignored) {}
             }
 
             // Sync in-game TDLT flag if "tdlt" was toggled
@@ -1351,6 +1403,13 @@ public class GameBridgeAgent {
             } else if (path.equals("/api/game/stop_xmap")) {
                 boolean ok = stopXmap();
                 jsonResp = "{\"status\": \"" + (ok ? "ok" : "error") + "\"}";
+            } else if (path.equals("/api/game/anti_stuck")) {
+                stopXmap();
+                try {
+                    Class<?> clsQ = getGameClass("nro.Q");
+                    if (clsQ != null) clsQ.getMethod("bo").invoke(null);
+                } catch (Throwable ignored) {}
+                jsonResp = "{\"status\": \"ok\"}";
             } else if (path.equals("/api/game/cmd")) {
                 String cmd = params.get("cmd");
                 if (cmd != null && !cmd.trim().isEmpty()) {
