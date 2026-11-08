@@ -773,7 +773,7 @@ def handle_mod_action():
     if not raw_cmd:
         return jsonify({"error": "Missing mod action."}), 400
 
-    allowed = {"cd", "locdo", "anhat", "gb", "s20", "kvt", "nb", "cflag", "xdh", "annguoi", "anquai", "anitem", "alogin", "sz", "checklag", "ahs", "cs", "xmap", "ts", "tdlt"}
+    allowed = {"cd", "locdo", "anhat", "gb", "s20", "kvt", "nb", "cflag", "xdh", "annguoi", "anquai", "anitem", "alogin", "sz", "checklag", "ahs", "cs", "xmap", "ts", "tdlt", "ats"}
     cmds = [cmd.strip() for cmd in raw_cmd.replace(";", ",").split(",") if cmd.strip()]
     def is_valid_skill_cmd(c):
         if not c.startswith("skill"):

@@ -735,6 +735,19 @@
                             <span>Chưa phát hiện đồ SKH trong hành trang.</span>
                         </div>
                     </div>
+
+                    <!-- Character Skills & Hotbar Telemetry -->
+                    <div class="flex flex-col gap-1 pt-1 border-t border-white/5">
+                        <div class="flex items-center justify-between text-[10px]">
+                            <span class="text-slate-300 font-bold font-cyber flex items-center gap-1">
+                                <i class="fa-solid fa-wand-magic-sparkles text-cyan-400 text-[10px]"></i> Bộ Chiêu Thức (Skills):
+                            </span>
+                            <span id="stat-skill-count" class="px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-mono font-bold">0 chiêu</span>
+                        </div>
+                        <div id="stat-skill-list" class="bg-slate-950/80 border border-white/10 rounded-xl p-2 max-h-32 overflow-y-auto text-[11px] font-mono text-slate-400 flex flex-col gap-1">
+                            <span>Chưa vào game.</span>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Telegram / Discord SKH Alert Configuration (Hạng mục 4) -->
@@ -1081,6 +1094,34 @@
                             elSkhList.innerHTML = game.skh_items.map(item =>
                                 `<div class="text-amber-300 bg-amber-950/30 border border-amber-500/20 rounded px-1.5 py-0.5">✨ ${item}</div>`
                             ).join('');
+                        }
+                    }
+                }
+
+                // Render character learned skills
+                const elSkillCount = document.getElementById('stat-skill-count');
+                const elSkillList = document.getElementById('stat-skill-list');
+                if (elSkillCount && Array.isArray(game.skills)) {
+                    elSkillCount.textContent = `${game.skills.length} chiêu`;
+                    if (elSkillList) {
+                        if (game.skills.length === 0) {
+                            elSkillList.innerHTML = '<span class="text-slate-500">Chưa tải được danh sách chiêu thức.</span>';
+                        } else {
+                            elSkillList.innerHTML = game.skills.map(sk => {
+                                const isMelee = sk.is_melee ? '<span class="text-emerald-400 text-[9px] bg-emerald-950/60 px-1 py-0.2 rounded border border-emerald-500/30">Cận chiến</span>' : '';
+                                return `
+                                    <div class="flex items-center justify-between bg-slate-900/80 border border-white/5 rounded px-2 py-1">
+                                        <div class="flex items-center gap-1.5">
+                                            <span class="text-cyan-300 font-bold">⚡ ${sk.name}</span>
+                                            <span class="text-amber-300 text-[10px]">Cấp ${sk.point}</span>
+                                            ${isMelee}
+                                        </div>
+                                        <button onclick="setSkillForAuto(${sk.index})" class="text-[9px] px-1.5 py-0.5 rounded bg-cyan-950 hover:bg-cyan-900 text-cyan-300 border border-cyan-500/30 active:scale-95 transition" title="Gán vào ô chiêu đánh auto">
+                                            Gán Auto
+                                        </button>
+                                    </div>
+                                `;
+                            }).join('');
                         }
                     }
                 }
@@ -1482,6 +1523,25 @@
             if (btnAntiStuck) btnAntiStuck.addEventListener('click', triggerAntiStuck);
             const btnFixStuck = document.getElementById('btn-fix-stuck');
             if (btnFixStuck) btnFixStuck.addEventListener('click', triggerAntiStuck);
+
+            window.setSkillForAuto = async function(idx) {
+                showToast(`⚡ Đang gán chiêu ô ${idx} làm chiêu auto...`, "indigo");
+                try {
+                    const resp = await fetch('/api/mod_action', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ cmd: `skill${idx} 1,ats` })
+                    });
+                    const data = await resp.json();
+                    if (resp.ok) {
+                        showToast(`✅ Đã gán chiêu ô ${idx} và kích hoạt Auto Skill!`, "emerald");
+                    } else {
+                        showToast(data.error || "Không thể gán chiêu", "rose");
+                    }
+                } catch (e) {
+                    showToast("Lỗi kết nối", "rose");
+                }
+            };
 
             // Restart Button
             document.getElementById('btn-restart').addEventListener('click', () => {
