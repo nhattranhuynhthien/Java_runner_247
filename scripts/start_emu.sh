@@ -8,8 +8,8 @@ mkdir -p "$EMU_HOME"
 if [ -d "/root/.microemulator" ] && [ ! -L "/root/.microemulator" ]; then
     cp -an /root/.microemulator/. "$EMU_HOME/"
 fi
-if [ ! -f "$EMU_HOME/config2.xml" ] && [ -f "/app/config2.xml" ]; then
-    cp /app/config2.xml "$EMU_HOME/config2.xml"
+if [ -f "/app/config2.xml" ]; then
+    cp -f /app/config2.xml "$EMU_HOME/config2.xml"
 fi
 export HOME="$EMU_USER_HOME"
 
@@ -80,7 +80,7 @@ if [ -f "$JAR_FILE" ]; then
         -Duser.home="$EMU_USER_HOME" \
         -Dsun.java2d.opengl=false -Dsun.java2d.pmoffscreen=false -Dsun.java2d.xrender=false \
         $AGENT_OPT \
-        -jar /app/microemulator.jar --quit "$JAR_FILE"
+        -jar /app/microemulator.jar --rms file --quit "$JAR_FILE"
 fi
 
 echo "[EMU] No ROM found at $JAR_FILE; starting MicroEmulator launcher."
@@ -88,4 +88,4 @@ exec java -Xmx220m -Xms96m -XX:+UseSerialGC -XX:TieredStopAtLevel=1 \
     -Duser.home="$EMU_USER_HOME" \
     -Dsun.java2d.opengl=false -Dsun.java2d.pmoffscreen=false -Dsun.java2d.xrender=false \
     $AGENT_OPT \
-    -jar /app/microemulator.jar
+    -jar /app/microemulator.jar --rms file

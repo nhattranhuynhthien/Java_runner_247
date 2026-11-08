@@ -936,18 +936,22 @@ def dismiss_error_popup_if_any():
                 time.sleep(0.4)
                 return True
 
-            # 2. Phát hiện màn hình 'Vui lòng tải dữ liệu để chơi' (nút cam tại (119, 234), nền đen phía trên)
-            if p_top == (0, 0, 0):
-                r_dl, g_dl, b_dl = im.getpixel((119, 234))[:3]
-                if r_dl > 180 and 100 < g_dl < 185 and b_dl < 90:
-                    safe_run(["xdotool", "mousemove", "119", str(234 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
-                    safe_run(["xdotool", "key", "Return"], timeout=1)
-                    time.sleep(1.0)
-                    return True
+            # 2. Phát hiện màn hình 'Vui lòng tải dữ liệu để chơi' (nút cam tại (119, 234), không có nút Chơi tiếp)
+            r_dl, g_dl, b_dl = im.getpixel((119, 234))[:3]
+            r_ct, g_ct, b_ct = im.getpixel((120, 144))[:3]
+            if (r_dl > 180 and 100 < g_dl < 185 and b_dl < 90) and r_ct < 130:
+                safe_run(["xdotool", "mousemove", "119", str(234 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                safe_run(["xdotool", "key", "Return"], timeout=1)
+                time.sleep(1.0)
+                return True
 
-            # 3. Phát hiện popup parchment nền giấy vàng tại (120, 220)
-            r2, g2, b2 = im.getpixel((120, 220))[:3]
-            if r2 > 200 and g2 > 200 and b2 > 170:
+            # 3. Phát hiện popup parchment nền giấy vàng (kiểm tra các điểm lề không dính chữ)
+            parchment_pts = [(50, 260), (190, 260), (50, 280), (190, 280), (120, 270), (120, 220)]
+            is_parchment = any(
+                im.getpixel(pt)[0] > 190 and im.getpixel(pt)[1] > 180 and im.getpixel(pt)[2] > 140
+                for pt in parchment_pts
+            )
+            if is_parchment:
                 # 3a. Kiểm tra nút [ Có ] tại (80, 320) (trong hộp thoại 'Bạn sẽ mất tài khoản đang chơi...')
                 r_co, g_co, b_co = im.getpixel((80, 320))[:3]
                 if r_co > 180 and 100 < g_co < 185 and b_co < 90:
@@ -956,10 +960,12 @@ def dismiss_error_popup_if_any():
                     time.sleep(0.4)
                     return True
 
-                # 3b. Kiểm tra nút [ OK ] tại (119, 320) (trong hộp thoại 'Xin khởi động lại game...' hoặc 'Có lỗi xảy ra...')
-                r_ok, g_ok, b_ok = im.getpixel((119, 320))[:3]
+                # 3b. Kiểm tra nút [ OK ] tại (119, 318) hoặc (119, 320) (trong hộp thoại 'Xin khởi động lại game...' hoặc thông báo lỗi)
+                r_ok, g_ok, b_ok = im.getpixel((119, 318))[:3]
+                if not (r_ok > 180 and 100 < g_ok < 185 and b_ok < 90):
+                    r_ok, g_ok, b_ok = im.getpixel((119, 320))[:3]
                 if r_ok > 180 and 100 < g_ok < 185 and b_ok < 90:
-                    safe_run(["xdotool", "mousemove", "119", str(320 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                    safe_run(["xdotool", "mousemove", "119", str(318 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
                     safe_run(["xdotool", "key", "Return"], timeout=1)
                     safe_run(["xdotool", "key", "space"], timeout=1)
                     time.sleep(0.4)
@@ -980,9 +986,9 @@ def dismiss_error_popup_if_any():
                 time.sleep(0.3)
                 return True
 
-            # 5. Tự động bấm 'Chơi tiếp' nếu đang ở Menu chính 5 nút và chưa vào game
+            # 5. Tự động bấm 'Chơi tiếp' / 'Chơi TK' nếu đang ở Menu chính và không bị popup che
             r_ct, g_ct, b_ct = im.getpixel((120, 144))[:3]
-            if r_ct > 180 and 100 < g_ct < 185 and b_ct < 90:
+            if r_ct > 180 and 100 < g_ct < 185 and b_ct < 90 and not is_parchment:
                 st = get_bridge_status()
                 if not st or not st.get("in_game"):
                     safe_run(["xdotool", "mousemove", "120", str(144 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
@@ -1811,7 +1817,7 @@ def restart_game():
 
     try:
         data = request.get_json(silent=True) or {}
-        clean_cache = bool(data.get("clean_cache", True))
+        clean_cache = bool(data.get("clean_cache", False))
         restart_emulator(clean_cache=clean_cache)
         return jsonify({"status": "ok", "message": "Đã dọn cache và khởi động lại game thành công!"})
     except Exception as e:

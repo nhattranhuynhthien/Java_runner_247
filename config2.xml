@@ -27,4 +27,5 @@
             </rectangle>
         </device>
     </devices>
+    <recordStoreManager class="org.microemu.app.util.FileRecordStoreManager"/>
 </config>
