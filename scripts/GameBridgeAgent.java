@@ -112,6 +112,16 @@ public class GameBridgeAgent {
         return defVal;
     }
 
+    public static void dismissDialog() {
+        try {
+            Class<?> clsCr = getGameClass("nro.cr");
+            if (clsCr != null) {
+                Method mcL = getTypedMethod(clsCr, "cL", true, void.class);
+                if (mcL != null) mcL.invoke(null);
+            }
+        } catch (Throwable ignored) {}
+    }
+
     public static void premain(String agentArgs, Instrumentation inst) {
         try {
             instrumentation = inst;
@@ -1955,6 +1965,7 @@ public class GameBridgeAgent {
                 jsonResp = "{\"status\": \"" + (ok ? "ok" : "error") + "\"}";
             } else if (path.equals("/api/game/anti_stuck")) {
                 stopXmap();
+                dismissDialog();
                 try {
                     Class<?> clsQ = getGameClass("nro.Q");
                     if (clsQ != null) {
@@ -1962,6 +1973,9 @@ public class GameBridgeAgent {
                         if (mBo != null) mBo.invoke(null);
                     }
                 } catch (Throwable ignored) {}
+                jsonResp = "{\"status\": \"ok\"}";
+            } else if (path.equals("/api/game/dismiss_dialog")) {
+                dismissDialog();
                 jsonResp = "{\"status\": \"ok\"}";
             } else if (path.equals("/api/game/cmd")) {
                 String cmd = params.get("cmd");
