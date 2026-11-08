@@ -2286,6 +2286,88 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                     }
                     status.put("skh_count", skhList.size());
                     status.put("skh_items", skhList);
+
+                    // Read character learned skills
+                    List<Map<String, Object>> skillList = new ArrayList<Map<String, Object>>();
+                    try {
+                        Field fL = getTypedFieldByTypeName(cCls, "L", "nro.cS");
+                        if (fL != null) {
+                            Vector learned = (Vector) fL.get(charObj);
+                            if (learned != null) {
+                                for (int i = 0; i < learned.size(); i++) {
+                                    Object s = learned.elementAt(i);
+                                    if (s != null) {
+                                        Map<String, Object> skMap = new LinkedHashMap<String, Object>();
+                                        int sId = getSkillTemplateId(s);
+                                        String sName = getSkillTemplateName(s);
+                                        Field fPoint = getTypedField(s.getClass(), "bU", int.class);
+                                        int pt = (fPoint != null) ? fPoint.getInt(s) : 0;
+                                        skMap.put("index", i + 1);
+                                        skMap.put("id", sId);
+                                        skMap.put("name", sName);
+                                        skMap.put("point", pt);
+                                        skMap.put("is_melee", isBasicMeleeSkill(s));
+                                        skillList.add(skMap);
+                                    }
+                                }
+                            }
+                        }
+                    } catch (Throwable t) {
+                        System.out.println("[BRIDGE] Error reading character skills: " + t);
+                    }
+                    status.put("skills", skillList);
+
+                    // Read hotbar skills (slots 1 to 5)
+                    List<Map<String, Object>> hotbarList = new ArrayList<Map<String, Object>>();
+                    try {
+                        Class<?> clsCt = getGameClass("nro.ct");
+                        Class<?> clsCr = getGameClass("nro.cr");
+                        if (clsCt != null && clsCr != null) {
+                            Field fCs = getTypedField(clsCr, "cS", boolean.class);
+                            boolean alternate = (fCs != null) && fCs.getBoolean(null);
+                            Field fHotbar = getTypedFieldByTypeName(clsCt, alternate ? "c" : "d", "nro.ao[]");
+                            if (fHotbar != null) {
+                                Object[] hb = (Object[]) fHotbar.get(null);
+                                if (hb != null) {
+                                    for (int i = 0; i < hb.length; i++) {
+                                        Object s = hb[i];
+                                        Map<String, Object> hbMap = new LinkedHashMap<String, Object>();
+                                        hbMap.put("slot", i + 1);
+                                        if (s != null) {
+                                            hbMap.put("id", getSkillTemplateId(s));
+                                            hbMap.put("name", getSkillTemplateName(s));
+                                        } else {
+                                            hbMap.put("id", -1);
+                                            hbMap.put("name", "Trống");
+                                        }
+                                        hotbarList.add(hbMap);
+                                    }
+                                }
+                            }
+                        }
+                    } catch (Throwable ignored) {}
+                    status.put("hotbar", hotbarList);
+
+                    // Read auto attack skill list (nro.j.a)
+                    List<String> autoSkillNames = new ArrayList<String>();
+                    try {
+                        Class<?> clsJ = getGameClass("nro.j");
+                        if (clsJ != null) {
+                            Field fAutoA = getTypedField(clsJ, "a", Vector.class);
+                            if (fAutoA != null) {
+                                Vector av = (Vector) fAutoA.get(null);
+                                if (av != null) {
+                                    for (int i = 0; i < av.size(); i++) {
+                                        Object s = av.elementAt(i);
+                                        if (s != null) {
+                                            autoSkillNames.add(getSkillTemplateName(s));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } catch (Throwable ignored) {}
+                    status.put("auto_skills", autoSkillNames);
                 }
             }
         } catch (Throwable t) {
