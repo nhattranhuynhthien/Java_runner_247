@@ -618,7 +618,7 @@ def is_chat_box_open():
         pass
     return False
 
-def bridge_call(url, data=b"", timeout=3.0, retries=2):
+def bridge_call(url, data=b"", timeout=3.5, retries=6):
     """Gửi yêu cầu HTTP tới GameBridgeAgent nội bộ với cơ chế tự động thử lại khi game vừa khởi động."""
     import urllib.request
     import json
