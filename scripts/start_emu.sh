@@ -56,6 +56,14 @@ if [ -z "$AGENT_OPT" ]; then
     echo "[EMU] WARNING: bridge.jar not found in any standard directory! GameBridge HTTP API will not start." >&2
 fi
 
+# Auto-confirm Launcher Start in case MicroEmulator stops at the MIDlet selection screen
+(
+    sleep 3
+    if command -v xdotool >/dev/null 2>&1; then
+        DISPLAY=:1 xdotool key F2 Return 2>/dev/null || true
+    fi
+) &
+
 if [ -f "$JAR_FILE" ]; then
     echo "[EMU] Starting game ROM: $JAR_FILE"
     exec java -Xmx220m -Xms96m -XX:+UseSerialGC -XX:TieredStopAtLevel=1 \

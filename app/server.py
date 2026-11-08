@@ -924,7 +924,16 @@ def dismiss_error_popup_if_any():
         im = ImageGrab.grab(bbox=(0, MENU_BAR_OFFSET, SCREEN_WIDTH, MENU_BAR_OFFSET + SCREEN_HEIGHT))
         if im is not None:
             im = im.convert('RGB')
-            # Kiểm tra nút Đóng/OK màu cam tại (120, 255)
+            # 1. Phát hiện màn hình Launcher chờ Start (nền trắng tinh góc trên và giữa)
+            p_top = im.getpixel((10, 10))[:3]
+            p_mid = im.getpixel((120, 180))[:3]
+            if p_top == (255, 255, 255) and p_mid == (255, 255, 255):
+                safe_run(["xdotool", "key", "F2"], timeout=1)
+                safe_run(["xdotool", "key", "Return"], timeout=1)
+                time.sleep(0.4)
+                return True
+
+            # 2. Kiểm tra nút Đóng/OK màu cam tại (120, 255)
             r, g, b = im.getpixel((120, 255))[:3]
             if r > 180 and 100 < g < 185 and b < 100:
                 cmd = ["xdotool", "mousemove", "120", str(255 + MENU_BAR_OFFSET), "click", "1"]
@@ -933,7 +942,7 @@ def dismiss_error_popup_if_any():
                 time.sleep(0.3)
                 return True
 
-            # Thân hộp thoại nền giấy vàng tại (120, 220)
+            # 3. Thân hộp thoại nền giấy vàng tại (120, 220)
             r2, g2, b2 = im.getpixel((120, 220))[:3]
             if r2 > 200 and g2 > 200 and b2 > 170:
                 cmd = ["xdotool", "mousemove", "120", str(285 + MENU_BAR_OFFSET), "click", "1"]
