@@ -45,7 +45,9 @@ def safe_run(cmd, timeout=3):
         print(f"[ERROR] Lỗi thực thi lệnh {cmd}: {e}")
         return None
 
-def restart_emulator():
+def restart_emulator(clean_cache=False):
+    if clean_cache:
+        cleanup_corrupted_rms_cache()
     subprocess.run(["supervisorctl", "restart", "emulator"], timeout=15, check=True)
 
 def run_input_command(cmd, timeout=3):
@@ -919,7 +921,7 @@ def get_menu_layout():
     return 4
 
 def dismiss_error_popup_if_any():
-    """Tự động phát hiện và đóng hộp thoại thông báo nếu đang xuất hiện."""
+    """Tự động phát hiện và xử lý mọi màn hình trung gian: Launcher, Tải dữ liệu, Thông báo, Menu chính."""
     try:
         im = ImageGrab.grab(bbox=(0, MENU_BAR_OFFSET, SCREEN_WIDTH, MENU_BAR_OFFSET + SCREEN_HEIGHT))
         if im is not None:
@@ -934,7 +936,42 @@ def dismiss_error_popup_if_any():
                 time.sleep(0.4)
                 return True
 
-            # 2. Kiểm tra nút Đóng/OK màu cam tại (120, 255)
+            # 2. Phát hiện màn hình 'Vui lòng tải dữ liệu để chơi' (nút cam tại (119, 234), nền đen phía trên)
+            if p_top == (0, 0, 0):
+                r_dl, g_dl, b_dl = im.getpixel((119, 234))[:3]
+                if r_dl > 180 and 100 < g_dl < 185 and b_dl < 90:
+                    safe_run(["xdotool", "mousemove", "119", str(234 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                    safe_run(["xdotool", "key", "Return"], timeout=1)
+                    time.sleep(1.0)
+                    return True
+
+            # 3. Phát hiện popup parchment nền giấy vàng tại (120, 220)
+            r2, g2, b2 = im.getpixel((120, 220))[:3]
+            if r2 > 200 and g2 > 200 and b2 > 170:
+                # 3a. Kiểm tra nút [ Có ] tại (80, 320) (trong hộp thoại 'Bạn sẽ mất tài khoản đang chơi...')
+                r_co, g_co, b_co = im.getpixel((80, 320))[:3]
+                if r_co > 180 and 100 < g_co < 185 and b_co < 90:
+                    safe_run(["xdotool", "mousemove", "80", str(320 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                    safe_run(["xdotool", "key", "Return"], timeout=1)
+                    time.sleep(0.4)
+                    return True
+
+                # 3b. Kiểm tra nút [ OK ] tại (119, 320) (trong hộp thoại 'Xin khởi động lại game...' hoặc 'Có lỗi xảy ra...')
+                r_ok, g_ok, b_ok = im.getpixel((119, 320))[:3]
+                if r_ok > 180 and 100 < g_ok < 185 and b_ok < 90:
+                    safe_run(["xdotool", "mousemove", "119", str(320 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                    safe_run(["xdotool", "key", "Return"], timeout=1)
+                    safe_run(["xdotool", "key", "space"], timeout=1)
+                    time.sleep(0.4)
+                    return True
+
+                # 3c. Fallback nút OK ở giữa (120, 285)
+                safe_run(["xdotool", "mousemove", "120", str(285 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                safe_run(["xdotool", "key", "Return"], timeout=1)
+                time.sleep(0.3)
+                return True
+
+            # 4. Kiểm tra nút Đóng/OK màu cam tại (120, 255)
             r, g, b = im.getpixel((120, 255))[:3]
             if r > 180 and 100 < g < 185 and b < 100:
                 cmd = ["xdotool", "mousemove", "120", str(255 + MENU_BAR_OFFSET), "click", "1"]
@@ -943,14 +980,15 @@ def dismiss_error_popup_if_any():
                 time.sleep(0.3)
                 return True
 
-            # 3. Thân hộp thoại nền giấy vàng tại (120, 220)
-            r2, g2, b2 = im.getpixel((120, 220))[:3]
-            if r2 > 200 and g2 > 200 and b2 > 170:
-                cmd = ["xdotool", "mousemove", "120", str(285 + MENU_BAR_OFFSET), "click", "1"]
-                safe_run(cmd, timeout=1)
-                safe_run(["xdotool", "key", "Return"], timeout=1)
-                time.sleep(0.3)
-                return True
+            # 5. Tự động bấm 'Chơi tiếp' nếu đang ở Menu chính 5 nút và chưa vào game
+            r_ct, g_ct, b_ct = im.getpixel((120, 144))[:3]
+            if r_ct > 180 and 100 < g_ct < 185 and b_ct < 90:
+                st = get_bridge_status()
+                if not st or not st.get("in_game"):
+                    safe_run(["xdotool", "mousemove", "120", str(144 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                    safe_run(["xdotool", "key", "Return"], timeout=1)
+                    time.sleep(0.5)
+                    return True
     except Exception as e:
         print(f"[POPUP] Lỗi kiểm tra popup: {e}")
     return False
@@ -1018,6 +1056,30 @@ def get_rms_suite_dir():
         os.path.join(os.environ.get("HOME", "/data"), ".microemulator")
     )
     return dirs[0] if dirs else os.path.join(primary_home, "suite-Dragonboy250 v3.0")
+
+def cleanup_corrupted_rms_cache():
+    """Xóa toàn bộ cache dữ liệu bị hỏng (CRC corruption) của Dragonboy, giữ nguyên tài khoản & máy chủ đã lưu."""
+    import shutil
+    suite_dirs = get_all_suite_dirs()
+    preserved = {"vjacc.rs", "vjpass.rs", "vjsvselect.rs", "vjcheck.rs"}
+    cleared = 0
+    for sdir in suite_dirs:
+        if not os.path.exists(sdir):
+            continue
+        try:
+            for fname in os.listdir(sdir):
+                if fname not in preserved:
+                    fpath = os.path.join(sdir, fname)
+                    if os.path.isfile(fpath) or os.path.islink(fpath):
+                        os.remove(fpath)
+                        cleared += 1
+                    elif os.path.isdir(fpath):
+                        shutil.rmtree(fpath, ignore_errors=True)
+                        cleared += 1
+        except Exception as e:
+            print(f"[REPAIR] Lỗi dọn dẹp cache {sdir}: {e}")
+    print(f"[REPAIR] Đã dọn sạch {cleared} file cache hỏng.")
+    return cleared
 
 def make_rs_bytes(store_name, records):
     """
@@ -1748,8 +1810,10 @@ def restart_game():
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
 
     try:
-        restart_emulator()
-        return jsonify({"status": "ok", "message": "Đã khởi động lại game thành công!"})
+        data = request.get_json(silent=True) or {}
+        clean_cache = bool(data.get("clean_cache", True))
+        restart_emulator(clean_cache=clean_cache)
+        return jsonify({"status": "ok", "message": "Đã dọn cache và khởi động lại game thành công!"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
