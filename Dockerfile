@@ -9,9 +9,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PORT=8080 \
     DISPLAY=:1
 
-# Install OpenJDK 8 JDK, Xvfb, xdotool, xclip, xsel, Python3, Supervisor, and X11 graphics libs
+# Install OpenJDK 8 JRE, Xvfb, xdotool, xclip, xsel, Python3, Supervisor, and X11 graphics libs
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    openjdk-8-jdk \
+    openjdk-8-jre \
     xvfb \
     xdotool \
     xclip \
@@ -52,11 +52,6 @@ COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Copy project files
 COPY . .
-
-# Recompile GameBridgeAgent with container's OpenJDK 8 compiler to guarantee 100% version compatibility (class v52)
-RUN javac -cp "/app/roms/NRO.jar:." /app/scripts/GameBridgeAgent.java && \
-    cd /app/scripts && jar cvfm bridge.jar MANIFEST.MF GameBridgeAgent*.class && \
-    cp -f bridge.jar /app/bridge.jar && cd /app
 
 # Ensure bridge.jar is present in both /app/bridge.jar and /app/scripts/bridge.jar
 RUN cp -f /app/bridge.jar /app/scripts/bridge.jar 2>/dev/null || cp -f /app/scripts/bridge.jar /app/bridge.jar 2>/dev/null || true
