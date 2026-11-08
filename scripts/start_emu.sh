@@ -36,12 +36,24 @@ setxkbmap -display :1 -layout us 2>/dev/null || true
 
 # Check if GameBridgeAgent is available
 AGENT_OPT=""
-if [ -f "/app/bridge.jar" ]; then
-    echo "[EMU] Loading GameBridgeAgent from /app/bridge.jar"
-    AGENT_OPT="-javaagent:/app/bridge.jar"
-elif [ -f "./bridge.jar" ]; then
-    echo "[EMU] Loading GameBridgeAgent from ./bridge.jar"
-    AGENT_OPT="-javaagent:./bridge.jar"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+for bpath in \
+    "/app/bridge.jar" \
+    "/app/scripts/bridge.jar" \
+    "$SCRIPT_DIR/../bridge.jar" \
+    "$SCRIPT_DIR/bridge.jar" \
+    "./bridge.jar" \
+    "./scripts/bridge.jar" \
+    "/data/bridge.jar"; do
+    if [ -f "$bpath" ]; then
+        echo "[EMU] Loading GameBridgeAgent from $bpath"
+        AGENT_OPT="-javaagent:$bpath"
+        break
+    fi
+done
+
+if [ -z "$AGENT_OPT" ]; then
+    echo "[EMU] WARNING: bridge.jar not found in any standard directory! GameBridge HTTP API will not start." >&2
 fi
 
 if [ -f "$JAR_FILE" ]; then

@@ -618,16 +618,35 @@ def is_chat_box_open():
         pass
     return False
 
+def bridge_call(url, data=b"", timeout=3.0, retries=2):
+    """Gửi yêu cầu HTTP tới GameBridgeAgent nội bộ với cơ chế tự động thử lại khi game vừa khởi động."""
+    import urllib.request
+    import json
+    req = urllib.request.Request(url, data=data, headers={"User-Agent": "NRO-Server"})
+    last_err = None
+    for attempt in range(retries):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                res_bytes = resp.read()
+                if resp.status == 200:
+                    return json.loads(res_bytes.decode("utf-8"))
+                raise RuntimeError(f"HTTP {resp.status} từ GameBridge")
+        except Exception as e:
+            last_err = e
+            err_str = str(e)
+            if attempt < retries - 1 and ("Connection refused" in err_str or "timed out" in err_str):
+                time.sleep(0.5)
+            else:
+                break
+    raise last_err
+
 def send_via_bridge(cmd):
     """Gửi lệnh trực tiếp vào JVM qua GameBridgeAgent nội bộ nếu có."""
     try:
         import urllib.parse
-        import urllib.request
         url = f"http://127.0.0.1:28888/api/game/cmd?cmd={urllib.parse.quote(cmd)}"
-        req = urllib.request.Request(url, data=b"", headers={"User-Agent": "NRO-Server"})
-        with urllib.request.urlopen(req, timeout=1.5) as resp:
-            if resp.status == 200:
-                return True
+        res = bridge_call(url, timeout=2.0, retries=2)
+        return bool(res and res.get("status") == "ok")
     except Exception:
         pass
     return False
@@ -635,36 +654,18 @@ def send_via_bridge(cmd):
 def send_mod_actions_via_bridge(cmd):
     """Execute mod commands through the JVM handler only; never type into game chat."""
     import urllib.parse
-    import urllib.request
     url = f"http://127.0.0.1:28888/api/game/mod_action?cmd={urllib.parse.quote(cmd)}"
-    req = urllib.request.Request(url, data=b"", headers={"User-Agent": "NRO-Server"})
-    with urllib.request.urlopen(req, timeout=2.0) as resp:
-        result = json.loads(resp.read().decode("utf-8"))
-        if resp.status != 200 or result.get("status") != "ok":
-            raise RuntimeError(result.get("error", "GameBridge rejected the mod action."))
-        return result
+    result = bridge_call(url, timeout=3.0, retries=2)
+    if result.get("status") != "ok":
+        raise RuntimeError(result.get("error", "GameBridge rejected the mod action."))
+    return result
 
 def configure_punch_via_bridge():
     """Ask the Hùng Hero bridge to add this character's actual punch skill to Auto."""
-    import urllib.request
-    import urllib.error
-    req = urllib.request.Request(
-        "http://127.0.0.1:28888/api/game/configure_punch",
-        data=b"",
-        headers={"User-Agent": "NRO-Server"}
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10.0) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-            if resp.status != 200 or result.get("status") != "ok":
-                raise RuntimeError(result.get("error", "Hùng Hero không xác nhận được chiêu Đấm."))
-            return result
-    except urllib.error.HTTPError as e:
-        try:
-            result = json.loads(e.read().decode("utf-8"))
-            raise RuntimeError(result.get("error", f"HTTP {e.code}"))
-        except (ValueError, UnicodeDecodeError):
-            raise RuntimeError(f"HTTP {e.code}")
+    result = bridge_call("http://127.0.0.1:28888/api/game/configure_punch", timeout=6.0, retries=2)
+    if result.get("status") != "ok":
+        raise RuntimeError(result.get("error", "Hùng Hero không xác nhận được chiêu Đấm."))
+    return result
 
 def get_bridge_status():
     """Lấy trạng thái game thời gian thực từ JVM Bridge."""
@@ -789,7 +790,10 @@ def handle_mod_action():
         result = send_mod_actions_via_bridge(",".join(cmds))
         return jsonify({"status": "ok", "method": "game_bridge", "executed": cmds, "details": result})
     except Exception as e:
-        return jsonify({"error": f"GameBridge chưa sẵn sàng: {e}"}), 503
+        err_msg = str(e)
+        if "Connection refused" in err_msg:
+            err_msg = "GameBridge đang khởi động. Vui lòng bấm lại sau 2 giây..."
+        return jsonify({"error": f"GameBridge chưa sẵn sàng: {err_msg}"}), 503
 
 @app.route('/api/auto_farm', methods=['POST'])
 def handle_auto_farm():
@@ -816,32 +820,31 @@ def handle_auto_farm():
 
     try:
         import urllib.parse
-        import urllib.request
         query = f"map={urllib.parse.quote(map_val)}&zone={urllib.parse.quote(zone_val)}&mode={urllib.parse.quote(mode)}"
         url = f"http://127.0.0.1:28888/api/game/auto_farm?{query}"
-        req = urllib.request.Request(url, data=b"", headers={"User-Agent": "NRO-Server"})
-        with urllib.request.urlopen(req, timeout=2.0) as resp:
-            if resp.status == 200:
-                res_data = json.loads(resp.read().decode('utf-8'))
-                skill_num = punch_skill.get('skill', 1)
-                traveling = bool(res_data.get('traveling'))
-                target_map = res_data.get('map', map_val)
-                if mode == "tdlt":
-                    mode_desc = "Chỉ TDLT (đã tắt Tàn Sát, tự dùng vé TĐLT + Goback + Auto Reconnect)"
-                elif mode == "ts":
-                    mode_desc = "Chỉ Tàn Sát (đã tắt TDLT, đánh liên tục + Goback + Auto Reconnect)"
-                else:
-                    mode_desc = "Combo TDLT + Tàn Sát 24/7 (Goback + TDLT + Tàn Sát + Auto Reconnect)"
-                prefix = f"🚀 Đang bay Xmap tới Map {target_map} rồi tự động bật " if traveling else f"Đã gán chiêu đánh (skill{skill_num}) và bật "
-                return jsonify({
-                    "status": "ok",
-                    "method": "bridge",
-                    "traveling": traveling,
-                    "message": f"{prefix}{mode_desc}!",
-                    "details": res_data
-                })
+        res_data = bridge_call(url, timeout=4.0, retries=2)
+        skill_num = punch_skill.get('skill', 1)
+        traveling = bool(res_data.get('traveling'))
+        target_map = res_data.get('map', map_val)
+        if mode == "tdlt":
+            mode_desc = "Chỉ TDLT (đã tắt Tàn Sát, tự dùng vé TĐLT + Goback + Auto Reconnect)"
+        elif mode == "ts":
+            mode_desc = "Chỉ Tàn Sát (đã tắt TDLT, đánh liên tục + Goback + Auto Reconnect)"
+        else:
+            mode_desc = "Combo TDLT + Tàn Sát 24/7 (Goback + TDLT + Tàn Sát + Auto Reconnect)"
+        prefix = f"🚀 Đang bay Xmap tới Map {target_map} rồi tự động bật " if traveling else f"Đã gán chiêu đánh (skill{skill_num}) và bật "
+        return jsonify({
+            "status": "ok",
+            "method": "bridge",
+            "traveling": traveling,
+            "message": f"{prefix}{mode_desc}!",
+            "details": res_data
+        })
     except Exception as e:
-        return jsonify({"error": f"GameBridge chưa sẵn sàng: {e}"}), 503
+        err_msg = str(e)
+        if "Connection refused" in err_msg:
+            err_msg = "GameBridge đang khởi động. Vui lòng bấm lại sau 2 giây..."
+        return jsonify({"error": f"GameBridge chưa sẵn sàng: {err_msg}"}), 503
 
 @app.route('/api/xmap', methods=['POST'])
 def handle_xmap():
@@ -853,38 +856,38 @@ def handle_xmap():
         return jsonify({"error": "Vui lòng chọn một Map cụ thể trong danh sách để bay!"}), 400
     try:
         import urllib.parse
-        import urllib.request
         url = f"http://127.0.0.1:28888/api/game/xmap?map={urllib.parse.quote(map_val)}"
-        req = urllib.request.Request(url, data=b"", headers={"User-Agent": "NRO-Server"})
-        with urllib.request.urlopen(req, timeout=2.0) as resp:
-            res_data = json.loads(resp.read().decode("utf-8"))
-            if resp.status == 200 and res_data.get("status") == "ok":
-                return jsonify({
-                    "status": "ok",
-                    "map": int(map_val),
-                    "message": f"🚀 Đã kích hoạt Xmap bay tới Map {map_val}!"
-                })
-            return jsonify({"error": "Không thể kích hoạt Xmap"}), 500
+        res_data = bridge_call(url, timeout=3.0, retries=2)
+        if res_data.get("status") == "ok":
+            return jsonify({
+                "status": "ok",
+                "map": int(map_val),
+                "message": f"🚀 Đã kích hoạt Xmap bay tới Map {map_val}!"
+            })
+        return jsonify({"error": f"Không thể kích hoạt Xmap: {res_data.get('error', 'Lỗi')}"}), 500
     except Exception as e:
-        return jsonify({"error": f"GameBridge chưa sẵn sàng: {e}"}), 503
+        err_msg = str(e)
+        if "Connection refused" in err_msg:
+            err_msg = "GameBridge đang khởi động. Vui lòng bấm lại sau 2 giây..."
+        return jsonify({"error": f"GameBridge chưa sẵn sàng: {err_msg}"}), 503
 
 @app.route('/api/stop_farm', methods=['POST'])
 def handle_stop_farm():
     if not check_pin(request):
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
     try:
-        import urllib.request
         url = "http://127.0.0.1:28888/api/game/stop_farm"
-        req = urllib.request.Request(url, data=b"", headers={"User-Agent": "NRO-Server"})
-        with urllib.request.urlopen(req, timeout=2.0) as resp:
-            res_data = json.loads(resp.read().decode('utf-8'))
-            return jsonify({
-                "status": "ok",
-                "message": "Đã dừng toàn bộ Auto & khôi phục hiển thị đồ họa!",
-                "details": res_data
-            })
+        res_data = bridge_call(url, timeout=3.0, retries=2)
+        return jsonify({
+            "status": "ok",
+            "message": "Đã dừng toàn bộ Auto & khôi phục hiển thị đồ họa!",
+            "details": res_data
+        })
     except Exception as e:
-        return jsonify({"error": f"GameBridge chưa sẵn sàng: {e}"}), 503
+        err_msg = str(e)
+        if "Connection refused" in err_msg:
+            err_msg = "GameBridge đang khởi động. Vui lòng bấm lại sau 2 giây..."
+        return jsonify({"error": f"GameBridge chưa sẵn sàng: {err_msg}"}), 503
 
 @app.route('/api/game_status', methods=['GET'])
 def handle_game_status():

@@ -53,6 +53,9 @@ COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 # Copy project files
 COPY . .
 
+# Ensure bridge.jar is present in both /app/bridge.jar and /app/scripts/bridge.jar
+RUN cp -f /app/bridge.jar /app/scripts/bridge.jar 2>/dev/null || cp -f /app/scripts/bridge.jar /app/bridge.jar 2>/dev/null || true
+
 # Set execution permission for scripts
 RUN chmod +x /app/scripts/start_emu.sh
 

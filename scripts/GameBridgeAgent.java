@@ -10,11 +10,21 @@ import java.awt.Graphics2D;
 import java.awt.Window;
 import java.awt.image.BufferedImage;
 import javax.imageio.ImageIO;
+import java.util.concurrent.*;
 
 public class GameBridgeAgent {
     private static Instrumentation instrumentation;
     private static int serverPort = 28888;
     private static volatile boolean running = true;
+    private static volatile Thread serverThread = null;
+    private static final ExecutorService httpExecutor = Executors.newFixedThreadPool(8, new ThreadFactory() {
+        private int counter = 0;
+        public Thread newThread(Runnable r) {
+            Thread t = new Thread(r, "NRO-Bridge-Worker-" + (++counter));
+            t.setDaemon(true);
+            return t;
+        }
+    });
 
     // Keep track of background farm task & persistent 24/7 state
     private static Thread farmThread = null;
@@ -103,19 +113,29 @@ public class GameBridgeAgent {
     }
 
     public static void premain(String agentArgs, Instrumentation inst) {
-        instrumentation = inst;
-        System.out.println("[BRIDGE] GameBridgeAgent premain loaded!");
-        loadAutoFarmState();
-        startHttpServer();
-        startWatchdogThread();
+        try {
+            instrumentation = inst;
+            System.out.println("[BRIDGE] GameBridgeAgent premain loaded!");
+            loadAutoFarmState();
+            startHttpServer();
+            startWatchdogThread();
+        } catch (Throwable t) {
+            System.out.println("[BRIDGE] premain critical error: " + t);
+            t.printStackTrace();
+        }
     }
 
     public static void agentmain(String agentArgs, Instrumentation inst) {
-        instrumentation = inst;
-        System.out.println("[BRIDGE] GameBridgeAgent agentmain loaded!");
-        loadAutoFarmState();
-        startHttpServer();
-        startWatchdogThread();
+        try {
+            instrumentation = inst;
+            System.out.println("[BRIDGE] GameBridgeAgent agentmain loaded!");
+            loadAutoFarmState();
+            startHttpServer();
+            startWatchdogThread();
+        } catch (Throwable t) {
+            System.out.println("[BRIDGE] agentmain critical error: " + t);
+            t.printStackTrace();
+        }
     }
 
     private static volatile ClassLoader cachedClassLoader = null;
@@ -1438,6 +1458,13 @@ public class GameBridgeAgent {
                 while (running) {
                     try {
                         Thread.sleep(6000);
+
+                        // Ensure HTTP bridge server is always alive and listening
+                        if (serverThread == null || !serverThread.isAlive()) {
+                            System.out.println("[WATCHDOG] HTTP Bridge server is down! Auto-restarting HTTP server...");
+                            startHttpServer();
+                        }
+
                         if (!autoFarmActive) continue;
 
                         // If an explicit farmThread is currently executing travel/setup, let it finish
@@ -1750,23 +1777,50 @@ public class GameBridgeAgent {
         return status;
     }
 
-    private static void startHttpServer() {
-        Thread serverThread = new Thread(new Runnable() {
+    private static synchronized void startHttpServer() {
+        if (serverThread != null && serverThread.isAlive()) return;
+        serverThread = new Thread(new Runnable() {
             public void run() {
-                try {
-                    ServerSocket serverSocket = new ServerSocket(serverPort, 50, InetAddress.getByName("127.0.0.1"));
-                    System.out.println("[BRIDGE] HTTP Bridge server listening on 127.0.0.1:" + serverPort);
+                int retryCount = 0;
+                while (running) {
+                    ServerSocket serverSocket = null;
+                    try {
+                        serverSocket = new ServerSocket();
+                        serverSocket.setReuseAddress(true);
+                        serverSocket.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), serverPort), 50);
+                        System.out.println("[BRIDGE] HTTP Bridge server listening on 127.0.0.1:" + serverPort);
+                        retryCount = 0;
 
-                    while (running) {
-                        final Socket socket = serverSocket.accept();
-                        new Thread(new Runnable() {
-                            public void run() {
-                                handleClient(socket);
+                        while (running) {
+                            try {
+                                final Socket socket = serverSocket.accept();
+                                socket.setSoTimeout(10000);
+                                socket.setTcpNoDelay(true);
+                                httpExecutor.execute(new Runnable() {
+                                    public void run() {
+                                        handleClient(socket);
+                                    }
+                                });
+                            } catch (Throwable clientErr) {
+                                if (!running) break;
+                                try { Thread.sleep(50); } catch (Throwable ignored) {}
                             }
-                        }).start();
+                        }
+                    } catch (Throwable t) {
+                        System.out.println("[BRIDGE] Server socket error on port " + serverPort + ": " + t);
+                        retryCount++;
+                    } finally {
+                        if (serverSocket != null && !serverSocket.isClosed()) {
+                            try { serverSocket.close(); } catch (Throwable ignored) {}
+                        }
                     }
-                } catch (Throwable t) {
-                    System.out.println("[BRIDGE] Server socket error: " + t);
+                    if (running) {
+                        try {
+                            long waitMs = Math.min(1000L * retryCount, 4000L);
+                            if (waitMs < 500L) waitMs = 500L;
+                            Thread.sleep(waitMs);
+                        } catch (Throwable ignored) {}
+                    }
                 }
             }
         }, "NRO-Bridge-Server");
@@ -2105,8 +2159,8 @@ public class GameBridgeAgent {
             out.write(header.getBytes("UTF-8"));
             out.write(respBytes);
             out.flush();
-            socket.close();
-        } catch (Throwable t) {
+        } catch (Throwable ignored) {
+        } finally {
             try { socket.close(); } catch (Throwable ignored) {}
         }
     }
