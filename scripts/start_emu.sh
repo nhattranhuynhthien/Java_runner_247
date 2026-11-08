@@ -58,10 +58,20 @@ fi
 
 # Auto-confirm Launcher Start in case MicroEmulator stops at the MIDlet selection screen
 (
-    sleep 3
-    if command -v xdotool >/dev/null 2>&1; then
-        DISPLAY=:1 xdotool key F2 Return 2>/dev/null || true
-    fi
+    for i in $(seq 1 35); do
+        sleep 1
+        if command -v xdotool >/dev/null 2>&1; then
+            WID=$(DISPLAY=:1 xdotool search --onlyvisible --class java 2>/dev/null | tail -n 1)
+            if [ -n "$WID" ]; then
+                DISPLAY=:1 xdotool mousemove --window "$WID" 160 208 click 1 2>/dev/null || true
+                DISPLAY=:1 xdotool mousemove 160 232 click 1 2>/dev/null || true
+                DISPLAY=:1 xdotool key --window "$WID" F2 Return space 2>/dev/null || true
+            fi
+            if curl -s -m 1 http://127.0.0.1:28888/api/game/status >/dev/null 2>&1; then
+                break
+            fi
+        fi
+    done
 ) &
 
 if [ -f "$JAR_FILE" ]; then

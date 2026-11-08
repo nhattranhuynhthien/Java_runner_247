@@ -655,14 +655,14 @@ def send_mod_actions_via_bridge(cmd):
     """Execute mod commands through the JVM handler only; never type into game chat."""
     import urllib.parse
     url = f"http://127.0.0.1:28888/api/game/mod_action?cmd={urllib.parse.quote(cmd)}"
-    result = bridge_call(url, timeout=3.0, retries=2)
+    result = bridge_call(url, timeout=3.5, retries=6)
     if result.get("status") != "ok":
         raise RuntimeError(result.get("error", "GameBridge rejected the mod action."))
     return result
 
 def configure_punch_via_bridge():
     """Ask the Hùng Hero bridge to add this character's actual punch skill to Auto."""
-    result = bridge_call("http://127.0.0.1:28888/api/game/configure_punch", timeout=6.0, retries=2)
+    result = bridge_call("http://127.0.0.1:28888/api/game/configure_punch", timeout=6.0, retries=6)
     if result.get("status") != "ok":
         raise RuntimeError(result.get("error", "Hùng Hero không xác nhận được chiêu Đấm."))
     return result
@@ -822,7 +822,7 @@ def handle_auto_farm():
         import urllib.parse
         query = f"map={urllib.parse.quote(map_val)}&zone={urllib.parse.quote(zone_val)}&mode={urllib.parse.quote(mode)}"
         url = f"http://127.0.0.1:28888/api/game/auto_farm?{query}"
-        res_data = bridge_call(url, timeout=4.0, retries=2)
+        res_data = bridge_call(url, timeout=4.0, retries=6)
         skill_num = punch_skill.get('skill', 1)
         traveling = bool(res_data.get('traveling'))
         target_map = res_data.get('map', map_val)
@@ -928,6 +928,7 @@ def dismiss_error_popup_if_any():
             p_top = im.getpixel((10, 10))[:3]
             p_mid = im.getpixel((120, 180))[:3]
             if p_top == (255, 255, 255) and p_mid == (255, 255, 255):
+                safe_run(["xdotool", "mousemove", "160", str(208 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
                 safe_run(["xdotool", "key", "F2"], timeout=1)
                 safe_run(["xdotool", "key", "Return"], timeout=1)
                 time.sleep(0.4)
@@ -953,6 +954,19 @@ def dismiss_error_popup_if_any():
     except Exception as e:
         print(f"[POPUP] Lỗi kiểm tra popup: {e}")
     return False
+
+def emulator_ui_watchdog_worker():
+    """Lightweight 24/7 background watchdog to auto-start emulator from Launcher and dismiss popups."""
+    time.sleep(5.0)
+    while True:
+        try:
+            dismiss_error_popup_if_any()
+        except Exception:
+            pass
+        time.sleep(2.5)
+
+_ui_watchdog_thread = threading.Thread(target=emulator_ui_watchdog_worker, daemon=True)
+_ui_watchdog_thread.start()
 
 # =========================================================================
 # J2ME Record Management System (RMS) - Quản lý Tài khoản & Máy chủ Tự Động
