@@ -12,19 +12,73 @@ import java.awt.image.BufferedImage;
 import javax.imageio.ImageIO;
 import java.util.concurrent.*;
 
-public class GameBridgeAgent {
+public class GameBridgeAgent implements Runnable, ThreadFactory {
     private static Instrumentation instrumentation;
     private static int serverPort = 28888;
     private static volatile boolean running = true;
     private static volatile Thread serverThread = null;
-    private static final ExecutorService httpExecutor = Executors.newFixedThreadPool(8, new ThreadFactory() {
-        private int counter = 0;
-        public Thread newThread(Runnable r) {
-            Thread t = new Thread(r, "NRO-Bridge-Worker-" + (++counter));
-            t.setDaemon(true);
-            return t;
+    private static volatile ExecutorService httpExecutor = null;
+    private static volatile int workerCounter = 0;
+
+    private static final int TASK_HTTP_SERVER = 1;
+    private static final int TASK_HANDLE_CLIENT = 2;
+    private static final int TASK_WATCHDOG = 3;
+    private static final int TASK_DIRECT_LOGIN = 4;
+    private static final int TASK_AUTO_FARM = 5;
+
+    private final int taskType;
+    private final Socket clientSocket;
+    private final String loginUser;
+    private final String loginPass;
+    private final int loginServer;
+    private final boolean farmNeedTravel;
+    private final Integer farmInitialMap;
+    private final int farmTargetMap;
+    private final String farmMode;
+
+    public GameBridgeAgent() {
+        this(0, null, null, null, 0, false, null, -1, null);
+    }
+
+    private GameBridgeAgent(int taskType, Socket clientSocket, String loginUser, String loginPass, int loginServer,
+                            boolean farmNeedTravel, Integer farmInitialMap, int farmTargetMap, String farmMode) {
+        this.taskType = taskType;
+        this.clientSocket = clientSocket;
+        this.loginUser = loginUser;
+        this.loginPass = loginPass;
+        this.loginServer = loginServer;
+        this.farmNeedTravel = farmNeedTravel;
+        this.farmInitialMap = farmInitialMap;
+        this.farmTargetMap = farmTargetMap;
+        this.farmMode = farmMode;
+    }
+
+    public Thread newThread(Runnable r) {
+        Thread t = new Thread(r, "NRO-Bridge-Worker-" + (++workerCounter));
+        t.setDaemon(true);
+        return t;
+    }
+
+    private static synchronized ExecutorService getHttpExecutor() {
+        if (httpExecutor == null) {
+            httpExecutor = Executors.newFixedThreadPool(8, new GameBridgeAgent());
         }
-    });
+        return httpExecutor;
+    }
+
+    public void run() {
+        if (taskType == TASK_HTTP_SERVER) {
+            runHttpServerLoop();
+        } else if (taskType == TASK_HANDLE_CLIENT) {
+            handleClient(clientSocket);
+        } else if (taskType == TASK_WATCHDOG) {
+            runWatchdogLoop();
+        } else if (taskType == TASK_DIRECT_LOGIN) {
+            runDirectLoginWorker(loginUser, loginPass, loginServer);
+        } else if (taskType == TASK_AUTO_FARM) {
+            runAutoFarmWorker(farmNeedTravel, farmInitialMap, farmTargetMap, farmMode);
+        }
+    }
 
     // Keep track of background farm task & persistent 24/7 state
     private static Thread farmThread = null;
@@ -120,6 +174,415 @@ public class GameBridgeAgent {
                 if (mcL != null) mcL.invoke(null);
             }
         } catch (Throwable ignored) {}
+    }
+
+    // Check if the game MIDlet (nro.hero68) has started and left MicroEmulator's Launcher screen
+    public static boolean isMidletLoaded() {
+        try {
+            Class<?> mbCls = Class.forName("org.microemu.MIDletBridge", false, ClassLoader.getSystemClassLoader());
+            Method mGetCur = mbCls.getMethod("getCurrentMIDlet");
+            Object cur = mGetCur.invoke(null);
+            if (cur != null && !cur.getClass().getName().endsWith("Launcher")) {
+                return true;
+            }
+        } catch (Throwable ignored) {}
+        try {
+            Class<?> clsCr = getGameClass("nro.cr");
+            if (clsCr != null) {
+                Field fA = getTypedFieldByTypeName(clsCr, "a", "nro.cr");
+                if (fA != null && fA.get(null) != null) return true;
+            }
+        } catch (Throwable ignored) {}
+        return false;
+    }
+
+    // Automatically launch the selected MIDlet if MicroEmulator is sitting on the Launcher screen
+    public static boolean autoLaunchMidletIfNeeded() {
+        try {
+            if (isMidletLoaded()) return true;
+            Class<?> mbCls = Class.forName("org.microemu.MIDletBridge", false, ClassLoader.getSystemClassLoader());
+            Method mGetCur = mbCls.getMethod("getCurrentMIDlet");
+            Object cur = mGetCur.invoke(null);
+            if (cur != null && cur.getClass().getName().endsWith("Launcher")) {
+                Method mGetEntry = cur.getClass().getMethod("getSelectedMidletEntry");
+                Object entry = mGetEntry.invoke(cur);
+                if (entry != null) {
+                    Field fCommon = cur.getClass().getDeclaredField("common");
+                    fCommon.setAccessible(true);
+                    Object common = fCommon.get(cur);
+                    if (common != null) {
+                        Method mInit = common.getClass().getMethod("initMIDlet", boolean.class);
+                        mInit.setAccessible(true);
+                        mInit.invoke(common, Boolean.TRUE);
+                        System.out.println("[BRIDGE] Auto-launched MIDlet from MicroEmulator Launcher!");
+                        return true;
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            System.out.println("[BRIDGE] autoLaunchMidletIfNeeded note: " + t);
+        }
+        return false;
+    }
+
+    private static Object getDisplayAccess() {
+        try {
+            Class<?> mbCls = Class.forName("org.microemu.MIDletBridge", false, ClassLoader.getSystemClassLoader());
+            Method mGetAccess = mbCls.getMethod("getMIDletAccess");
+            Object ma = mGetAccess.invoke(null);
+            if (ma == null) return null;
+            Method mGetDisp = ma.getClass().getMethod("getDisplayAccess");
+            mGetDisp.setAccessible(true);
+            return mGetDisp.invoke(ma);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static void repaintDisplay() {
+        try {
+            Object da = getDisplayAccess();
+            if (da != null) {
+                Method mRepaint = da.getClass().getMethod("repaint");
+                mRepaint.setAccessible(true);
+                mRepaint.invoke(da);
+            }
+        } catch (Throwable ignored) {}
+        try {
+            if (cachedCanvasComp != null) {
+                cachedCanvasComp.repaint();
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    public static int mapKeyToJ2meCode(String rawKey) {
+        if (rawKey == null) return 0;
+        String k = rawKey.trim();
+        String lower = k.toLowerCase(Locale.ROOT);
+        if ("up".equals(lower) || "arrowup".equals(lower)) return -1;
+        if ("down".equals(lower) || "arrowdown".equals(lower)) return -2;
+        if ("left".equals(lower) || "arrowleft".equals(lower)) return -3;
+        if ("right".equals(lower) || "arrowright".equals(lower)) return -4;
+        if ("ok".equals(lower) || "select".equals(lower) || "return".equals(lower) || "enter".equals(lower) || "kp_enter".equals(lower)) return -5;
+        if ("f1".equals(lower) || "soft1".equals(lower) || "escape".equals(lower)) return -6;
+        if ("f2".equals(lower) || "soft2".equals(lower)) return -7;
+        if ("backspace".equals(lower) || "clear".equals(lower) || "delete".equals(lower)) return -8;
+        if ("star".equals(lower) || "asterisk".equals(lower) || "*".equals(k)) return 42;
+        if ("hash".equals(lower) || "numbersign".equals(lower) || "pound".equals(lower) || "#".equals(k)) return 35;
+        if ("space".equals(lower) || "kp_space".equals(lower) || " ".equals(k)) return 32;
+        if ("tab".equals(lower)) return 9;
+        if (k.length() == 1) {
+            return (int) k.charAt(0);
+        }
+        return 0;
+    }
+
+    // Dispatch a J2ME key press & release directly into MicroEmulator / DragonBoy Canvas
+    public static boolean sendKey(String rawKey) {
+        try {
+            int keyCode = mapKeyToJ2meCode(rawKey);
+            if (keyCode == 0) return false;
+
+            if (!isMidletLoaded() && (keyCode == -5 || keyCode == -7 || keyCode == 32 || keyCode == 53)) {
+                if (autoLaunchMidletIfNeeded()) return true;
+            }
+
+            boolean delivered = false;
+            Object da = getDisplayAccess();
+            if (da != null) {
+                Method mPress = da.getClass().getMethod("keyPressed", int.class);
+                Method mRelease = da.getClass().getMethod("keyReleased", int.class);
+                mPress.setAccessible(true);
+                mRelease.setAccessible(true);
+                mPress.invoke(da, Integer.valueOf(keyCode));
+                Thread.sleep(35);
+                mRelease.invoke(da, Integer.valueOf(keyCode));
+                delivered = true;
+            }
+
+            if (!delivered) {
+                Class<?> clsCr = getGameClass("nro.cr");
+                if (clsCr != null) {
+                    Field fCanvas = getTypedFieldByTypeName(clsCr, "a", "nro.cr");
+                    Object canvas = (fCanvas != null) ? fCanvas.get(null) : null;
+                    if (canvas != null) {
+                        Method mPress = getTypedMethod(clsCr, "keyPressed", false, void.class, int.class);
+                        Method mRelease = getTypedMethod(clsCr, "keyReleased", false, void.class, int.class);
+                        if (mPress != null) mPress.invoke(canvas, Integer.valueOf(keyCode));
+                        Thread.sleep(35);
+                        if (mRelease != null) mRelease.invoke(canvas, Integer.valueOf(keyCode));
+                        delivered = true;
+                    }
+                }
+            }
+
+            repaintDisplay();
+            return delivered;
+        } catch (Throwable t) {
+            System.out.println("[BRIDGE] sendKey error for [" + rawKey + "]: " + t);
+            return false;
+        }
+    }
+
+    // Dispatch a 240x360 pointer touch/click directly into MicroEmulator / DragonBoy Canvas
+    public static boolean sendPointerClick(int x, int y) {
+        try {
+            int cx = Math.max(0, Math.min(239, x));
+            int cy = Math.max(0, Math.min(359, y));
+
+            if (!isMidletLoaded()) {
+                if (autoLaunchMidletIfNeeded()) return true;
+            }
+
+            boolean delivered = false;
+            Object da = getDisplayAccess();
+            if (da != null) {
+                Method mPress = da.getClass().getMethod("pointerPressed", int.class, int.class);
+                Method mRelease = da.getClass().getMethod("pointerReleased", int.class, int.class);
+                mPress.setAccessible(true);
+                mRelease.setAccessible(true);
+                mPress.invoke(da, Integer.valueOf(cx), Integer.valueOf(cy));
+                Thread.sleep(40);
+                mRelease.invoke(da, Integer.valueOf(cx), Integer.valueOf(cy));
+                delivered = true;
+            }
+
+            if (!delivered) {
+                Class<?> clsCr = getGameClass("nro.cr");
+                if (clsCr != null) {
+                    Field fCanvas = getTypedFieldByTypeName(clsCr, "a", "nro.cr");
+                    Object canvas = (fCanvas != null) ? fCanvas.get(null) : null;
+                    if (canvas != null) {
+                        Method mPress = getTypedMethod(clsCr, "pointerPressed", false, void.class, int.class, int.class);
+                        Method mRelease = getTypedMethod(clsCr, "pointerReleased", false, void.class, int.class, int.class);
+                        if (mPress != null) mPress.invoke(canvas, Integer.valueOf(cx), Integer.valueOf(cy));
+                        Thread.sleep(40);
+                        if (mRelease != null) mRelease.invoke(canvas, Integer.valueOf(cx), Integer.valueOf(cy));
+                        delivered = true;
+                    }
+                }
+            }
+
+            repaintDisplay();
+            return delivered;
+        } catch (Throwable t) {
+            System.out.println("[BRIDGE] sendPointerClick error (" + x + "," + y + "): " + t);
+            return false;
+        }
+    }
+
+    // Locate the currently focused or target TField (nro.au) in DragonBoy
+    private static Object findTargetTField(String fieldHint) {
+        try {
+            Class<?> clsCr = getGameClass("nro.cr");
+            Class<?> clsCJ = getGameClass("nro.cJ");
+            Class<?> clsCk = getGameClass("nro.ck");
+            Class<?> clsBR = getGameClass("nro.bR");
+            Class<?> clsAu = getGameClass("nro.au");
+            if (clsCr == null || clsAu == null) return null;
+
+            String hint = (fieldHint != null) ? fieldHint.trim().toLowerCase(Locale.ROOT) : "";
+
+            // 1. Explicit hint for LoginScr user / pass
+            if (("user".equals(hint) || "pass".equals(hint)) && clsCJ != null) {
+                Field fLoginScr = getTypedFieldByTypeName(clsCr, "a", "nro.cJ");
+                Object loginScr = (fLoginScr != null) ? fLoginScr.get(null) : null;
+                if (loginScr != null) {
+                    Field fUser = getTypedFieldByTypeName(clsCJ, "b", "nro.au");
+                    Field fPass = getTypedFieldByTypeName(clsCJ, "e", "nro.au");
+                    Object tfUser = (fUser != null) ? fUser.get(loginScr) : null;
+                    Object tfPass = (fPass != null) ? fPass.get(loginScr) : null;
+                    Field fFocus = getTypedField(clsAu, "bf", boolean.class);
+                    if ("user".equals(hint) && tfUser != null) {
+                        if (fFocus != null) {
+                            fFocus.setBoolean(tfUser, true);
+                            if (tfPass != null) fFocus.setBoolean(tfPass, false);
+                        }
+                        return tfUser;
+                    }
+                    if ("pass".equals(hint) && tfPass != null) {
+                        if (fFocus != null) {
+                            fFocus.setBoolean(tfPass, true);
+                            if (tfUser != null) fFocus.setBoolean(tfUser, false);
+                        }
+                        return tfPass;
+                    }
+                }
+            }
+
+            // 2. Check if InputDlg (nro.cr.a of type nro.ck) is currently open as active dialog (nro.cr.a of type nro.Z)
+            if (clsCk != null) {
+                Field fInputDlg = getTypedFieldByTypeName(clsCr, "a", "nro.ck");
+                Field fCurDlg = getTypedFieldByTypeName(clsCr, "a", "nro.Z");
+                Object inputDlg = (fInputDlg != null) ? fInputDlg.get(null) : null;
+                Object curDlg = (fCurDlg != null) ? fCurDlg.get(null) : null;
+                if (inputDlg != null && inputDlg == curDlg) {
+                    Field fTf = getTypedFieldByTypeName(clsCk, "a", "nro.au");
+                    if (fTf != null) {
+                        Object tf = fTf.get(inputDlg);
+                        if (tf != null) return tf;
+                    }
+                }
+            }
+
+            // 3. Check if ChatTextField (nro.bR) is open
+            if (clsBR != null) {
+                Field fChat = getTypedFieldByTypeName(clsCr, "a", "nro.bR");
+                Object chatInst = (fChat != null) ? fChat.get(null) : null;
+                if (chatInst == null) {
+                    Field fStaticChat = getTypedFieldByTypeName(clsBR, "a", "nro.bR");
+                    if (fStaticChat != null) chatInst = fStaticChat.get(null);
+                }
+                if (chatInst != null) {
+                    Field fShow = getTypedField(clsBR, "bf", boolean.class);
+                    if (fShow != null && fShow.getBoolean(chatInst)) {
+                        Field fTf = getTypedFieldByTypeName(clsBR, "a", "nro.au");
+                        if (fTf != null) {
+                            Object tf = fTf.get(chatInst);
+                            if (tf != null) return tf;
+                        }
+                    }
+                }
+            }
+
+            // 4. Check LoginScr (nro.cJ) TFields (b = user, e = pass)
+            if (clsCJ != null) {
+                Field fLoginScr = getTypedFieldByTypeName(clsCr, "a", "nro.cJ");
+                Object loginScr = (fLoginScr != null) ? fLoginScr.get(null) : null;
+                if (loginScr != null) {
+                    Field fUser = getTypedFieldByTypeName(clsCJ, "b", "nro.au");
+                    Field fPass = getTypedFieldByTypeName(clsCJ, "e", "nro.au");
+                    Object tfUser = (fUser != null) ? fUser.get(loginScr) : null;
+                    Object tfPass = (fPass != null) ? fPass.get(loginScr) : null;
+                    Field fFocus = getTypedField(clsAu, "bf", boolean.class);
+                    if (fFocus != null) {
+                        if (tfPass != null && fFocus.getBoolean(tfPass)) return tfPass;
+                        if (tfUser != null && fFocus.getBoolean(tfUser)) return tfUser;
+                    }
+                    if (tfUser != null) return tfUser;
+                }
+            }
+        } catch (Throwable ignored) {}
+        return null;
+    }
+
+    // Set text directly into the active J2ME InputMethod or DragonBoy TField (nro.au)
+    public static boolean sendTextInput(String text, String fieldHint, String submit) {
+        if (text == null) text = "";
+        boolean handled = false;
+        try {
+            // 1. Try setting DragonBoy's TField (nro.au) directly
+            Object tf = findTargetTField(fieldHint);
+            if (tf != null) {
+                Method mSetText = getTypedMethod(tf.getClass(), "t", false, void.class, String.class);
+                if (mSetText != null) {
+                    mSetText.invoke(tf, text);
+                    handled = true;
+                }
+            }
+
+            // 2. Also try MicroEmulator's J2SEInputMethod.clipboardPaste if a native LCDUI TextBox is active
+            try {
+                Class<?> dfCls = Class.forName("org.microemu.device.DeviceFactory", false, ClassLoader.getSystemClassLoader());
+                Object dev = dfCls.getMethod("getDevice").invoke(null);
+                if (dev != null) {
+                    Object im = dev.getClass().getMethod("getInputMethod").invoke(dev);
+                    if (im != null) {
+                        Field fListener = im.getClass().getSuperclass().getDeclaredField("inputMethodListener");
+                        fListener.setAccessible(true);
+                        if (fListener.get(im) != null) {
+                            Method mPaste = im.getClass().getMethod("clipboardPaste", String.class);
+                            mPaste.invoke(im, text);
+                            handled = true;
+                        }
+                    }
+                }
+            } catch (Throwable ignored) {}
+
+            if (submit != null) {
+                String sub = submit.trim().toLowerCase(Locale.ROOT);
+                if ("f2".equals(sub)) {
+                    Thread.sleep(40);
+                    sendKey("f2");
+                } else if ("enter".equals(sub) || "return".equals(sub) || "ok".equals(sub)) {
+                    Thread.sleep(40);
+                    sendKey("enter");
+                }
+            }
+            repaintDisplay();
+        } catch (Throwable t) {
+            System.out.println("[BRIDGE] sendTextInput error: " + t);
+        }
+        return handled;
+    }
+
+    public static boolean clearActiveText() {
+        boolean handled = false;
+        try {
+            Object tf = findTargetTField(null);
+            if (tf != null) {
+                Method mSetText = getTypedMethod(tf.getClass(), "t", false, void.class, String.class);
+                if (mSetText != null) {
+                    mSetText.invoke(tf, "");
+                    handled = true;
+                }
+                Method mClear = getTypedMethod(tf.getClass(), "eh", false, void.class);
+                if (mClear != null) {
+                    mClear.invoke(tf);
+                    handled = true;
+                }
+            }
+            sendKey("backspace");
+            repaintDisplay();
+        } catch (Throwable t) {
+            System.out.println("[BRIDGE] clearActiveText error: " + t);
+        }
+        return handled;
+    }
+
+    // Open the Account / Login screen (nro.cJ) directly inside JVM
+    public static boolean openAccountDialog() {
+        try {
+            autoLaunchMidletIfNeeded();
+            dismissDialog();
+            Class<?> clsE = getGameClass("nro.e");
+            Class<?> clsCr = getGameClass("nro.cr");
+            Class<?> clsCJ = getGameClass("nro.cJ");
+            Class<?> clsAu = getGameClass("nro.au");
+            if (clsE != null) {
+                Method mH = getTypedMethod(clsE, "h", true, void.class);
+                if (mH != null) mH.invoke(null);
+            }
+            if (clsCr != null && clsCJ != null) {
+                Field fLoginScr = getTypedFieldByTypeName(clsCr, "a", "nro.cJ");
+                if (fLoginScr != null) {
+                    Object loginScr = fLoginScr.get(null);
+                    if (loginScr == null) {
+                        loginScr = clsCJ.getDeclaredConstructor().newInstance();
+                        fLoginScr.set(null, loginScr);
+                    }
+                    Method mCr = getTypedMethod(clsCJ, "cR", false, void.class);
+                    if (mCr != null) mCr.invoke(loginScr);
+
+                    if (clsAu != null) {
+                        Field fUser = getTypedFieldByTypeName(clsCJ, "b", "nro.au");
+                        Field fPass = getTypedFieldByTypeName(clsCJ, "e", "nro.au");
+                        Field fFocus = getTypedField(clsAu, "bf", boolean.class);
+                        if (fFocus != null) {
+                            Object tfUser = (fUser != null) ? fUser.get(loginScr) : null;
+                            Object tfPass = (fPass != null) ? fPass.get(loginScr) : null;
+                            if (tfUser != null) fFocus.setBoolean(tfUser, true);
+                            if (tfPass != null) fFocus.setBoolean(tfPass, false);
+                        }
+                    }
+                    repaintDisplay();
+                    return true;
+                }
+            }
+        } catch (Throwable t) {
+            System.out.println("[BRIDGE] openAccountDialog error: " + t);
+        }
+        return false;
     }
 
     public static void premain(String agentArgs, Instrumentation inst) {
@@ -863,68 +1326,77 @@ public class GameBridgeAgent {
             }
 
             // 2. Spawn asynchronous worker inside JVM to disconnect old session and trigger LoginScr login
-            Thread loginWorker = new Thread(new Runnable() {
-                public void run() {
-                    try {
-                        stopXmap();
-                        // Disconnect active session & switch to LoginScr
-                        Method mH = getTypedMethod(clsE, "h", true, void.class);
-                        if (mH != null) mH.invoke(null);
-                        Thread.sleep(350);
-
-                        // Populate LoginScr TFields (b=user, e=pass) using type-safe reflection
-                        if (clsCr != null && clsCJ != null) {
-                            Field fLoginScr = getTypedFieldByTypeName(clsCr, "a", "nro.cJ");
-                            if (fLoginScr != null) {
-                                Object loginScr = fLoginScr.get(null);
-                                if (loginScr == null) {
-                                    loginScr = clsCJ.getDeclaredConstructor().newInstance();
-                                    fLoginScr.set(null, loginScr);
-                                }
-                                if (!cleanUser.isEmpty()) {
-                                    Field fUser = getTypedFieldByTypeName(clsCJ, "b", "nro.au");
-                                    Object tfUser = (fUser != null) ? fUser.get(loginScr) : null;
-                                    if (tfUser != null) {
-                                        Method mT = getTypedMethod(tfUser.getClass(), "t", false, void.class, String.class);
-                                        if (mT != null) mT.invoke(tfUser, cleanUser);
-                                    }
-                                }
-                                if (!cleanPass.isEmpty()) {
-                                    Field fPass = getTypedFieldByTypeName(clsCJ, "e", "nro.au");
-                                    Object tfPass = (fPass != null) ? fPass.get(loginScr) : null;
-                                    if (tfPass != null) {
-                                        Method mT = getTypedMethod(tfPass.getClass(), "t", false, void.class, String.class);
-                                        if (mT != null) mT.invoke(tfPass, cleanPass);
-                                    }
-                                }
-                            }
-                        }
-
-                        // Trigger LoginScr.cR() + LoginScr.hS() via nro.e.j()
-                        Method mJ = getTypedMethod(clsE, "j", true, void.class);
-                        if (mJ != null) mJ.invoke(null);
-                        System.out.println("[BRIDGE] Direct JVM Login triggered for user=" + cleanUser + ", server=" + serverNum);
-
-                        // Wait up to 4.5s; if still not in_game, trigger hS() once more
-                        for (int i = 0; i < 9; i++) {
-                            Thread.sleep(500);
-                            Map<String, Object> st = getStatus();
-                            if (Boolean.TRUE.equals(st.get("in_game"))) {
-                                return;
-                            }
-                        }
-                        if (mJ != null) mJ.invoke(null);
-                    } catch (Throwable t) {
-                        System.out.println("[BRIDGE] DirectLogin-Worker error: " + t);
-                    }
-                }
-            }, "NRO-DirectLogin-Worker");
+            Thread loginWorker = new Thread(
+                new GameBridgeAgent(TASK_DIRECT_LOGIN, null, cleanUser, cleanPass, serverNum, false, null, -1, null),
+                "NRO-DirectLogin-Worker"
+            );
             loginWorker.setDaemon(true);
             loginWorker.start();
             return true;
         } catch (Throwable t) {
             System.out.println("[BRIDGE] directLogin error: " + t);
             return false;
+        }
+    }
+
+    private static void runDirectLoginWorker(String cleanUser, String cleanPass, int serverNum) {
+        try {
+            autoLaunchMidletIfNeeded();
+            Class<?> clsCr = getGameClass("nro.cr");
+            Class<?> clsCJ = getGameClass("nro.cJ");
+            Class<?> clsE = getGameClass("nro.e");
+            stopXmap();
+            // Disconnect active session & switch to LoginScr
+            if (clsE != null) {
+                Method mH = getTypedMethod(clsE, "h", true, void.class);
+                if (mH != null) mH.invoke(null);
+            }
+            Thread.sleep(350);
+
+            // Populate LoginScr TFields (b=user, e=pass) using type-safe reflection
+            if (clsCr != null && clsCJ != null) {
+                Field fLoginScr = getTypedFieldByTypeName(clsCr, "a", "nro.cJ");
+                if (fLoginScr != null) {
+                    Object loginScr = fLoginScr.get(null);
+                    if (loginScr == null) {
+                        loginScr = clsCJ.getDeclaredConstructor().newInstance();
+                        fLoginScr.set(null, loginScr);
+                    }
+                    if (cleanUser != null && !cleanUser.isEmpty()) {
+                        Field fUser = getTypedFieldByTypeName(clsCJ, "b", "nro.au");
+                        Object tfUser = (fUser != null) ? fUser.get(loginScr) : null;
+                        if (tfUser != null) {
+                            Method mT = getTypedMethod(tfUser.getClass(), "t", false, void.class, String.class);
+                            if (mT != null) mT.invoke(tfUser, cleanUser);
+                        }
+                    }
+                    if (cleanPass != null && !cleanPass.isEmpty()) {
+                        Field fPass = getTypedFieldByTypeName(clsCJ, "e", "nro.au");
+                        Object tfPass = (fPass != null) ? fPass.get(loginScr) : null;
+                        if (tfPass != null) {
+                            Method mT = getTypedMethod(tfPass.getClass(), "t", false, void.class, String.class);
+                            if (mT != null) mT.invoke(tfPass, cleanPass);
+                        }
+                    }
+                }
+            }
+
+            // Trigger LoginScr.cR() + LoginScr.hS() via nro.e.j()
+            Method mJ = (clsE != null) ? getTypedMethod(clsE, "j", true, void.class) : null;
+            if (mJ != null) mJ.invoke(null);
+            System.out.println("[BRIDGE] Direct JVM Login triggered for user=" + cleanUser + ", server=" + serverNum);
+
+            // Wait up to 4.5s; if still not in_game, trigger hS() once more
+            for (int i = 0; i < 9; i++) {
+                Thread.sleep(500);
+                Map<String, Object> st = getStatus();
+                if (Boolean.TRUE.equals(st.get("in_game"))) {
+                    return;
+                }
+            }
+            if (mJ != null) mJ.invoke(null);
+        } catch (Throwable t) {
+            System.out.println("[BRIDGE] DirectLogin-Worker error: " + t);
         }
     }
 
@@ -1516,106 +1988,125 @@ public class GameBridgeAgent {
         }
     }
 
-    // 24/7 Watchdog Thread: Ensures Auto-Reconnect (alogin + sz) and Auto-Resume Farm after disconnect or restart
+    // 24/7 Watchdog Thread: Ensures Auto-Launch from Launcher, Auto-Reconnect (alogin + sz) and Auto-Resume Farm
     private static void startWatchdogThread() {
-        Thread wd = new Thread(new Runnable() {
-            public void run() {
-                System.out.println("[BRIDGE] 24/7 Auto-Reconnect & AutoFarm Watchdog started.");
-                while (running) {
-                    try {
-                        Thread.sleep(6000);
-
-                        // Ensure HTTP bridge server is always alive and listening
-                        if (serverThread == null || !serverThread.isAlive()) {
-                            System.out.println("[WATCHDOG] HTTP Bridge server is down! Auto-restarting HTTP server...");
-                            startHttpServer();
-                        }
-
-                        if (!autoFarmActive) continue;
-
-                        // If an explicit farmThread is currently executing travel/setup, let it finish
-                        if (farmThread != null && farmThread.isAlive()) continue;
-
-                        Map<String, Object> st = getStatus();
-                        boolean inGame = Boolean.TRUE.equals(st.get("in_game"));
-                        if (!inGame) {
-                            continue;
-                        }
-
-                        // Always keep Hùng Hero's built-in Auto-Login (nro.e.c) and Save-Zone (nro.e.d) active once in-game
-                        setModFlag("alogin", true);
-                        setModFlag("sz", true);
-                        setModFlag("checklag", true);
-
-                        // Ensure melee skill is in auto list
-                        configurePunchSkill();
-
-                        // If currently flying to Map 5 (Đảo Kame) to auto-buy TDLT from Santa, bound wait to 20s max
-                        Class<?> clsP = getGameClass("nro.p");
-                        if (clsP != null) {
-                            Field fBuyingTdlt = getTypedField(clsP, "B", boolean.class);
-                            if (fBuyingTdlt != null && fBuyingTdlt.getBoolean(null)) {
-                                checkAndUnstickXmap();
-                                if (buyingTdltSinceMs == 0L) buyingTdltSinceMs = System.currentTimeMillis();
-                                if (System.currentTimeMillis() - buyingTdltSinceMs < 20000L) {
-                                    continue;
-                                } else {
-                                    // Safety timeout after 20s so character never gets stuck trying to reach Map 5
-                                    fBuyingTdlt.setBoolean(null, false);
-                                    Field fZ = getTypedField(clsP, "z", boolean.class);
-                                    if (fZ != null) fZ.setBoolean(null, false);
-                                    buyingTdltSinceMs = 0L;
-                                    stopXmap();
-                                    System.out.println("[WATCHDOG] Auto-buy TDLT at Map 5 timed out after 20s; resuming farm with Tàn Sát.");
-                                }
-                            } else {
-                                buyingTdltSinceMs = 0L;
-                            }
-                        }
-
-                        Boolean xmapRun = (Boolean) st.get("xmap_running");
-                        if (Boolean.TRUE.equals(xmapRun)) {
-                            checkAndUnstickXmap();
-                            continue;
-                        }
-
-                        Integer curMap = (Integer) st.get("map_id");
-                        Integer curZone = (Integer) st.get("zone");
-
-                        // Check if character is dead (let Goback handle healing & returning)
-                        Class<?> clsF = getGameClass("nro.F");
-                        if (clsF != null) {
-                            Method mDead = getTypedMethod(clsF, "d", true, boolean.class);
-                            Boolean isDead = (mDead != null) ? (Boolean) mDead.invoke(null) : Boolean.FALSE;
-                            if (Boolean.TRUE.equals(isDead)) continue;
-                        }
-
-                        // 1. If target map is configured and we are not there, trigger Xmap travel (with 20s cooldown)
-                        if (autoFarmMap >= 0 && (curMap == null || curMap.intValue() != autoFarmMap)) {
-                            long now = System.currentTimeMillis();
-                            if (now - lastWatchdogTravelMs > 20000L) {
-                                lastWatchdogTravelMs = now;
-                                System.out.println("[WATCHDOG] Character at map " + curMap + " (target=" + autoFarmMap + "). Triggering Xmap...");
-                                travelToMap(autoFarmMap);
-                            }
-                            continue;
-                        }
-
-                        // 2. If at target map, verify target zone (only if autoFarmZone >= 0 was explicitly specified)
-                        if (autoFarmZone >= 0 && curZone != null && curZone.intValue() != autoFarmZone) {
-                            System.out.println("[WATCHDOG] Switching zone from " + curZone + " -> " + autoFarmZone);
-                            executeModAction("k" + autoFarmZone);
-                            Thread.sleep(800);
-                        }
-
-                        // 3. Enforce exact farming mode (COMBO, Chỉ TDLT, or Chỉ Tàn Sát)
-                        applyFarmModeFlags(autoFarmMode);
-                    } catch (Throwable ignored) {}
-                }
-            }
-        }, "NRO-AutoFarm-Watchdog");
+        Thread wd = new Thread(
+            new GameBridgeAgent(TASK_WATCHDOG, null, null, null, 0, false, null, -1, null),
+            "NRO-AutoFarm-Watchdog"
+        );
         wd.setDaemon(true);
         wd.start();
+    }
+
+    private static void runWatchdogLoop() {
+        System.out.println("[BRIDGE] 24/7 Auto-Reconnect & AutoFarm Watchdog started.");
+        // Fast initial check to auto-start MIDlet from MicroEmulator Launcher as soon as it loads
+        for (int bootStep = 0; bootStep < 12 && running; bootStep++) {
+            try {
+                Thread.sleep(900);
+                if (autoLaunchMidletIfNeeded()) {
+                    break;
+                }
+            } catch (Throwable ignored) {}
+        }
+
+        while (running) {
+            try {
+                Thread.sleep(5000);
+
+                // Ensure HTTP bridge server is always alive and listening
+                if (serverThread == null || !serverThread.isAlive()) {
+                    System.out.println("[WATCHDOG] HTTP Bridge server is down! Auto-restarting HTTP server...");
+                    startHttpServer();
+                }
+
+                // Always ensure MIDlet is started if MicroEmulator is sitting at the Launcher screen
+                if (!isMidletLoaded()) {
+                    autoLaunchMidletIfNeeded();
+                    continue;
+                }
+
+                if (!autoFarmActive) continue;
+
+                // If an explicit farmThread is currently executing travel/setup, let it finish
+                if (farmThread != null && farmThread.isAlive()) continue;
+
+                Map<String, Object> st = getStatus();
+                boolean inGame = Boolean.TRUE.equals(st.get("in_game"));
+                if (!inGame) {
+                    continue;
+                }
+
+                // Always keep Hùng Hero's built-in Auto-Login (nro.e.c) and Save-Zone (nro.e.d) active once in-game
+                setModFlag("alogin", true);
+                setModFlag("sz", true);
+                setModFlag("checklag", true);
+
+                // Ensure melee skill is in auto list
+                configurePunchSkill();
+
+                // If currently flying to Map 5 (Đảo Kame) to auto-buy TDLT from Santa, bound wait to 20s max
+                Class<?> clsP = getGameClass("nro.p");
+                if (clsP != null) {
+                    Field fBuyingTdlt = getTypedField(clsP, "B", boolean.class);
+                    if (fBuyingTdlt != null && fBuyingTdlt.getBoolean(null)) {
+                        checkAndUnstickXmap();
+                        if (buyingTdltSinceMs == 0L) buyingTdltSinceMs = System.currentTimeMillis();
+                        if (System.currentTimeMillis() - buyingTdltSinceMs < 20000L) {
+                            continue;
+                        } else {
+                            // Safety timeout after 20s so character never gets stuck trying to reach Map 5
+                            fBuyingTdlt.setBoolean(null, false);
+                            Field fZ = getTypedField(clsP, "z", boolean.class);
+                            if (fZ != null) fZ.setBoolean(null, false);
+                            buyingTdltSinceMs = 0L;
+                            stopXmap();
+                            System.out.println("[WATCHDOG] Auto-buy TDLT at Map 5 timed out after 20s; resuming farm with Tàn Sát.");
+                        }
+                    } else {
+                        buyingTdltSinceMs = 0L;
+                    }
+                }
+
+                Boolean xmapRun = (Boolean) st.get("xmap_running");
+                if (Boolean.TRUE.equals(xmapRun)) {
+                    checkAndUnstickXmap();
+                    continue;
+                }
+
+                Integer curMap = (Integer) st.get("map_id");
+                Integer curZone = (Integer) st.get("zone");
+
+                // Check if character is dead (let Goback handle healing & returning)
+                Class<?> clsF = getGameClass("nro.F");
+                if (clsF != null) {
+                    Method mDead = getTypedMethod(clsF, "d", true, boolean.class);
+                    Boolean isDead = (mDead != null) ? (Boolean) mDead.invoke(null) : Boolean.FALSE;
+                    if (Boolean.TRUE.equals(isDead)) continue;
+                }
+
+                // 1. If target map is configured and we are not there, trigger Xmap travel (with 20s cooldown)
+                if (autoFarmMap >= 0 && (curMap == null || curMap.intValue() != autoFarmMap)) {
+                    long now = System.currentTimeMillis();
+                    if (now - lastWatchdogTravelMs > 20000L) {
+                        lastWatchdogTravelMs = now;
+                        System.out.println("[WATCHDOG] Character at map " + curMap + " (target=" + autoFarmMap + "). Triggering Xmap...");
+                        travelToMap(autoFarmMap);
+                    }
+                    continue;
+                }
+
+                // 2. If at target map, verify target zone (only if autoFarmZone >= 0 was explicitly specified)
+                if (autoFarmZone >= 0 && curZone != null && curZone.intValue() != autoFarmZone) {
+                    System.out.println("[WATCHDOG] Switching zone from " + curZone + " -> " + autoFarmZone);
+                    executeModAction("k" + autoFarmZone);
+                    Thread.sleep(800);
+                }
+
+                // 3. Enforce exact farming mode (COMBO, Chỉ TDLT, or Chỉ Tàn Sát)
+                applyFarmModeFlags(autoFarmMode);
+            } catch (Throwable ignored) {}
+        }
     }
 
     // Scan an item array (bag or body) for SKH items using type-safe reflection
@@ -1687,6 +2178,11 @@ public class GameBridgeAgent {
     public static Map<String, Object> getStatus() {
         Map<String, Object> status = new LinkedHashMap<String, Object>();
         status.put("bridge_online", true);
+        boolean midletLoaded = isMidletLoaded();
+        if (!midletLoaded) {
+            midletLoaded = autoLaunchMidletIfNeeded();
+        }
+        status.put("midlet_loaded", midletLoaded);
         status.put("autofarm_active", autoFarmActive);
         status.put("autofarm_map", autoFarmMap);
         status.put("autofarm_zone", autoFarmZone);
@@ -1845,53 +2341,54 @@ public class GameBridgeAgent {
 
     private static synchronized void startHttpServer() {
         if (serverThread != null && serverThread.isAlive()) return;
-        serverThread = new Thread(new Runnable() {
-            public void run() {
-                int retryCount = 0;
-                while (running) {
-                    ServerSocket serverSocket = null;
-                    try {
-                        serverSocket = new ServerSocket();
-                        serverSocket.setReuseAddress(true);
-                        serverSocket.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), serverPort), 50);
-                        System.out.println("[BRIDGE] HTTP Bridge server listening on 127.0.0.1:" + serverPort);
-                        retryCount = 0;
-
-                        while (running) {
-                            try {
-                                final Socket socket = serverSocket.accept();
-                                socket.setSoTimeout(10000);
-                                socket.setTcpNoDelay(true);
-                                httpExecutor.execute(new Runnable() {
-                                    public void run() {
-                                        handleClient(socket);
-                                    }
-                                });
-                            } catch (Throwable clientErr) {
-                                if (!running) break;
-                                try { Thread.sleep(50); } catch (Throwable ignored) {}
-                            }
-                        }
-                    } catch (Throwable t) {
-                        System.out.println("[BRIDGE] Server socket error on port " + serverPort + ": " + t);
-                        retryCount++;
-                    } finally {
-                        if (serverSocket != null && !serverSocket.isClosed()) {
-                            try { serverSocket.close(); } catch (Throwable ignored) {}
-                        }
-                    }
-                    if (running) {
-                        try {
-                            long waitMs = Math.min(1000L * retryCount, 4000L);
-                            if (waitMs < 500L) waitMs = 500L;
-                            Thread.sleep(waitMs);
-                        } catch (Throwable ignored) {}
-                    }
-                }
-            }
-        }, "NRO-Bridge-Server");
+        serverThread = new Thread(
+            new GameBridgeAgent(TASK_HTTP_SERVER, null, null, null, 0, false, null, -1, null),
+            "NRO-Bridge-Server"
+        );
         serverThread.setDaemon(true);
         serverThread.start();
+    }
+
+    private static void runHttpServerLoop() {
+        int retryCount = 0;
+        while (running) {
+            ServerSocket serverSocket = null;
+            try {
+                serverSocket = new ServerSocket();
+                serverSocket.setReuseAddress(true);
+                serverSocket.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), serverPort), 50);
+                System.out.println("[BRIDGE] HTTP Bridge server listening on 127.0.0.1:" + serverPort);
+                retryCount = 0;
+
+                while (running) {
+                    try {
+                        final Socket socket = serverSocket.accept();
+                        socket.setSoTimeout(10000);
+                        socket.setTcpNoDelay(true);
+                        getHttpExecutor().execute(
+                            new GameBridgeAgent(TASK_HANDLE_CLIENT, socket, null, null, 0, false, null, -1, null)
+                        );
+                    } catch (Throwable clientErr) {
+                        if (!running) break;
+                        try { Thread.sleep(50); } catch (Throwable ignored) {}
+                    }
+                }
+            } catch (Throwable t) {
+                System.out.println("[BRIDGE] Server socket error on port " + serverPort + ": " + t);
+                retryCount++;
+            } finally {
+                if (serverSocket != null && !serverSocket.isClosed()) {
+                    try { serverSocket.close(); } catch (Throwable ignored) {}
+                }
+            }
+            if (running) {
+                try {
+                    long waitMs = Math.min(1000L * retryCount, 4000L);
+                    if (waitMs < 500L) waitMs = 500L;
+                    Thread.sleep(waitMs);
+                } catch (Throwable ignored) {}
+            }
+        }
     }
 
     private static void handleClient(Socket socket) {
@@ -1950,6 +2447,52 @@ public class GameBridgeAgent {
 
             if (path.equals("/api/game/status")) {
                 jsonResp = toJson(getStatus());
+            } else if (path.equals("/api/game/auto_launch")) {
+                boolean ok = autoLaunchMidletIfNeeded();
+                jsonResp = "{\"status\": \"ok\", \"midlet_loaded\": " + ok + "}";
+            } else if (path.equals("/api/game/input_key")) {
+                String k = params.get("key");
+                boolean ok = sendKey(k);
+                if (ok) {
+                    jsonResp = "{\"status\": \"ok\", \"key\": \"" + escapeJson(k) + "\"}";
+                } else {
+                    statusCode = 400;
+                    jsonResp = "{\"status\": \"error\", \"error\": \"Could not dispatch key\"}";
+                }
+            } else if (path.equals("/api/game/input_click")) {
+                int x = 120;
+                int y = 180;
+                try { x = Math.round(Float.parseFloat(params.get("x"))); } catch (Throwable ignored) {}
+                try { y = Math.round(Float.parseFloat(params.get("y"))); } catch (Throwable ignored) {}
+                boolean ok = sendPointerClick(x, y);
+                if (ok) {
+                    jsonResp = "{\"status\": \"ok\", \"x\": " + x + ", \"y\": " + y + "}";
+                } else {
+                    statusCode = 400;
+                    jsonResp = "{\"status\": \"error\", \"error\": \"Could not dispatch click\"}";
+                }
+            } else if (path.equals("/api/game/input_text")) {
+                String txt = params.get("text") != null ? params.get("text") : "";
+                String fieldHint = params.get("field");
+                String submit = params.get("submit");
+                boolean ok = sendTextInput(txt, fieldHint, submit);
+                if (ok) {
+                    jsonResp = "{\"status\": \"ok\"}";
+                } else {
+                    statusCode = 400;
+                    jsonResp = "{\"status\": \"error\", \"error\": \"No active text field found\"}";
+                }
+            } else if (path.equals("/api/game/clear_text")) {
+                boolean ok = clearActiveText();
+                jsonResp = "{\"status\": \"ok\", \"cleared\": " + ok + "}";
+            } else if (path.equals("/api/game/open_account_dialog")) {
+                boolean ok = openAccountDialog();
+                if (ok) {
+                    jsonResp = "{\"status\": \"ok\"}";
+                } else {
+                    statusCode = 500;
+                    jsonResp = "{\"status\": \"error\", \"error\": \"Could not open LoginScr\"}";
+                }
             } else if (path.equals("/api/game/xmap")) {
                 String mapStr = params.get("map");
                 if (mapStr != null) {
@@ -1964,6 +2507,7 @@ public class GameBridgeAgent {
                 boolean ok = stopXmap();
                 jsonResp = "{\"status\": \"" + (ok ? "ok" : "error") + "\"}";
             } else if (path.equals("/api/game/anti_stuck")) {
+                autoLaunchMidletIfNeeded();
                 stopXmap();
                 dismissDialog();
                 try {
@@ -1972,7 +2516,22 @@ public class GameBridgeAgent {
                         Method mBo = getTypedMethod(clsQ, "bo", true, void.class);
                         if (mBo != null) mBo.invoke(null);
                     }
+                    Class<?> clsBR = getGameClass("nro.bR");
+                    if (clsBR != null) {
+                        Field fStaticChat = getTypedFieldByTypeName(clsBR, "a", "nro.bR");
+                        Object chatInst = (fStaticChat != null) ? fStaticChat.get(null) : null;
+                        if (chatInst != null) {
+                            Field fShow = getTypedField(clsBR, "bf", boolean.class);
+                            if (fShow != null) fShow.setBoolean(chatInst, false);
+                        }
+                    }
+                    Class<?> clsI = getGameClass("nro.i");
+                    if (clsI != null) {
+                        Field fIm = getTypedField(clsI, "m", boolean.class);
+                        if (fIm != null) fIm.setBoolean(null, false);
+                    }
                 } catch (Throwable ignored) {}
+                repaintDisplay();
                 jsonResp = "{\"status\": \"ok\"}";
             } else if (path.equals("/api/game/dismiss_dialog")) {
                 dismissDialog();
@@ -2087,99 +2646,10 @@ public class GameBridgeAgent {
                     executeModAction("s20");
                 }
 
-                farmThread = new Thread(new Runnable() {
-                    public void run() {
-                        try {
-                            // 1. If target map specified and not there yet, monitor Xmap travel until arrival
-                            if (needMapTravel) {
-                                System.out.println("[BRIDGE] AutoFarm: Traveling from map " + initialCurMap + " to map " + effectiveTargetMap + "...");
-                                long startWait = System.currentTimeMillis();
-                                boolean arrived = false;
-                                int retryCount = 0;
-                                Integer lastProgressMap = initialCurMap;
-
-                                while (System.currentTimeMillis() - startWait < 60000L) {
-                                    Thread.sleep(600);
-                                    checkAndUnstickXmap();
-                                    // Keep in-game TDLT (nro.ct.cT) off while traveling across maps
-                                    try {
-                                        Class<?> clsCt = getGameClass("nro.ct");
-                                        if (clsCt != null) {
-                                            Field fCt = getTypedField(clsCt, "cT", boolean.class);
-                                            if (fCt != null && fCt.getBoolean(null)) {
-                                                fCt.setBoolean(null, false);
-                                            }
-                                        }
-                                    } catch (Throwable ignored) {}
-
-                                    Map<String, Object> st = getStatus();
-                                    Integer cm = (Integer) st.get("map_id");
-                                    Boolean xmapRun = (Boolean) st.get("xmap_running");
-
-                                    if (cm != null && cm.intValue() == effectiveTargetMap) {
-                                        if (Boolean.TRUE.equals(xmapRun)) {
-                                            stopXmap();
-                                        }
-                                        System.out.println("[BRIDGE] AutoFarm: Arrived at target map " + effectiveTargetMap + "!");
-                                        arrived = true;
-                                        break;
-                                    }
-
-                                    if (cm != null && (lastProgressMap == null || cm.intValue() != lastProgressMap.intValue())) {
-                                        lastProgressMap = cm;
-                                        retryCount = 0;
-                                    }
-
-                                    // If Xmap stopped before reaching effectiveTargetMap, retry up to 2 times
-                                    if (!Boolean.TRUE.equals(xmapRun)) {
-                                        if (retryCount < 2) {
-                                            retryCount++;
-                                            System.out.println("[BRIDGE] AutoFarm: Xmap paused at map " + cm + ", retrying travel to " + effectiveTargetMap + " (" + retryCount + "/2)...");
-                                            lastWatchdogTravelMs = System.currentTimeMillis();
-                                            travelToMap(effectiveTargetMap);
-                                            Thread.sleep(1000);
-                                        } else {
-                                            System.out.println("[BRIDGE] AutoFarm: Map " + effectiveTargetMap + " unreachable from map " + cm + "; farming at current map " + cm);
-                                            if (cm != null && cm.intValue() >= 0) {
-                                                autoFarmMap = cm.intValue();
-                                                saveAutoFarmState();
-                                            }
-                                            break;
-                                        }
-                                    }
-                                }
-                                if (arrived) {
-                                    Thread.sleep(600);
-                                }
-                            }
-
-                            // 2. Switch zone only if explicitly specified AND character is not already in that zone
-                            if (autoFarmZone >= 0) {
-                                Map<String, Object> stAfter = getStatus();
-                                Integer cz = (Integer) stAfter.get("zone");
-                                if (cz == null || cz.intValue() != autoFarmZone) {
-                                    executeModAction("k" + autoFarmZone);
-                                    Thread.sleep(600);
-                                }
-                            }
-
-                            // 3. Configure melee skill and apply exact farming mode
-                            configurePunchSkill();
-                            applyFarmModeFlags(mode);
-
-                            // 4. Enable Lọc Đồ + Auto Nhặt + Speed
-                            setModFlag("locdo", true);
-                            setModFlag("anhat", true);
-                            executeModAction("s20");
-
-                            System.out.println("[BRIDGE] AutoFarm 24/7 mode [" + mode + "] active (map=" + autoFarmMap + ", zone=" + autoFarmZone + ")");
-                        } catch (InterruptedException ie) {
-                            System.out.println("[BRIDGE] AutoFarm thread interrupted.");
-                        } catch (Throwable t) {
-                            System.out.println("[BRIDGE] AutoFarm error: " + t);
-                        }
-                    }
-                }, "AutoFarm-Worker");
+                farmThread = new Thread(
+                    new GameBridgeAgent(TASK_AUTO_FARM, null, null, null, 0, needMapTravel, initialCurMap, effectiveTargetMap, mode),
+                    "AutoFarm-Worker"
+                );
                 farmThread.setDaemon(true);
                 farmThread.start();
 
@@ -2248,6 +2718,98 @@ public class GameBridgeAgent {
         } catch (Throwable ignored) {
         } finally {
             try { socket.close(); } catch (Throwable ignored) {}
+        }
+    }
+
+    private static void runAutoFarmWorker(boolean needMapTravel, Integer initialCurMap, int effectiveTargetMap, String mode) {
+        try {
+            // 1. If target map specified and not there yet, monitor Xmap travel until arrival
+            if (needMapTravel) {
+                System.out.println("[BRIDGE] AutoFarm: Traveling from map " + initialCurMap + " to map " + effectiveTargetMap + "...");
+                long startWait = System.currentTimeMillis();
+                boolean arrived = false;
+                int retryCount = 0;
+                Integer lastProgressMap = initialCurMap;
+
+                while (System.currentTimeMillis() - startWait < 60000L) {
+                    Thread.sleep(600);
+                    checkAndUnstickXmap();
+                    // Keep in-game TDLT (nro.ct.cT) off while traveling across maps
+                    try {
+                        Class<?> clsCt = getGameClass("nro.ct");
+                        if (clsCt != null) {
+                            Field fCt = getTypedField(clsCt, "cT", boolean.class);
+                            if (fCt != null && fCt.getBoolean(null)) {
+                                fCt.setBoolean(null, false);
+                            }
+                        }
+                    } catch (Throwable ignored) {}
+
+                    Map<String, Object> st = getStatus();
+                    Integer cm = (Integer) st.get("map_id");
+                    Boolean xmapRun = (Boolean) st.get("xmap_running");
+
+                    if (cm != null && cm.intValue() == effectiveTargetMap) {
+                        if (Boolean.TRUE.equals(xmapRun)) {
+                            stopXmap();
+                        }
+                        System.out.println("[BRIDGE] AutoFarm: Arrived at target map " + effectiveTargetMap + "!");
+                        arrived = true;
+                        break;
+                    }
+
+                    if (cm != null && (lastProgressMap == null || cm.intValue() != lastProgressMap.intValue())) {
+                        lastProgressMap = cm;
+                        retryCount = 0;
+                    }
+
+                    // If Xmap stopped before reaching effectiveTargetMap, retry up to 2 times
+                    if (!Boolean.TRUE.equals(xmapRun)) {
+                        if (retryCount < 2) {
+                            retryCount++;
+                            System.out.println("[BRIDGE] AutoFarm: Xmap paused at map " + cm + ", retrying travel to " + effectiveTargetMap + " (" + retryCount + "/2)...");
+                            lastWatchdogTravelMs = System.currentTimeMillis();
+                            travelToMap(effectiveTargetMap);
+                            Thread.sleep(1000);
+                        } else {
+                            System.out.println("[BRIDGE] AutoFarm: Map " + effectiveTargetMap + " unreachable from map " + cm + "; farming at current map " + cm);
+                            if (cm != null && cm.intValue() >= 0) {
+                                autoFarmMap = cm.intValue();
+                                saveAutoFarmState();
+                            }
+                            break;
+                        }
+                    }
+                }
+                if (arrived) {
+                    Thread.sleep(600);
+                }
+            }
+
+            // 2. Switch zone only if explicitly specified AND character is not already in that zone
+            if (autoFarmZone >= 0) {
+                Map<String, Object> stAfter = getStatus();
+                Integer cz = (Integer) stAfter.get("zone");
+                if (cz == null || cz.intValue() != autoFarmZone) {
+                    executeModAction("k" + autoFarmZone);
+                    Thread.sleep(600);
+                }
+            }
+
+            // 3. Configure melee skill and apply exact farming mode
+            configurePunchSkill();
+            applyFarmModeFlags(mode);
+
+            // 4. Enable Lọc Đồ + Auto Nhặt + Speed
+            setModFlag("locdo", true);
+            setModFlag("anhat", true);
+            executeModAction("s20");
+
+            System.out.println("[BRIDGE] AutoFarm 24/7 mode [" + mode + "] active (map=" + autoFarmMap + ", zone=" + autoFarmZone + ")");
+        } catch (InterruptedException ie) {
+            System.out.println("[BRIDGE] AutoFarm thread interrupted.");
+        } catch (Throwable t) {
+            System.out.println("[BRIDGE] AutoFarm error: " + t);
         }
     }
 

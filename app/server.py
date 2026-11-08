@@ -45,10 +45,45 @@ def safe_run(cmd, timeout=3):
         print(f"[ERROR] Lỗi thực thi lệnh {cmd}: {e}")
         return None
 
+def is_emulator_running():
+    try:
+        p = subprocess.run(["pgrep", "-f", "microemulator"], capture_output=True, text=True, timeout=2)
+        if p.returncode == 0:
+            return True
+    except Exception:
+        pass
+    st = get_bridge_status()
+    return bool(st and st.get("bridge_online"))
+
 def restart_emulator(clean_cache=False):
     if clean_cache:
         cleanup_corrupted_rms_cache()
-    subprocess.run(["supervisorctl", "restart", "emulator"], timeout=15, check=True)
+    sup_cmds = [
+        ["supervisorctl", "-c", "/etc/supervisor/conf.d/supervisord.conf", "restart", "emulator"],
+        ["supervisorctl", "restart", "emulator"],
+        ["supervisorctl", "-c", "/etc/supervisor/conf.d/supervisord.conf", "start", "emulator"],
+        ["supervisorctl", "start", "emulator"],
+    ]
+    for cmd in sup_cmds:
+        res = safe_run(cmd, timeout=12)
+        if res is not None and res.returncode == 0:
+            return True
+    # Fallback if supervisorctl socket is unavailable: restart start_emu.sh directly
+    safe_run(["pkill", "-f", "microemulator.jar"], timeout=3)
+    time.sleep(0.4)
+    script_path = "/app/scripts/start_emu.sh"
+    if not os.path.exists(script_path):
+        script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts", "start_emu.sh"))
+    if os.path.exists(script_path):
+        subprocess.Popen(
+            ["/bin/bash", script_path],
+            env=dict(os.environ, DISPLAY=":1", HOME="/data", MICROEMULATOR_HOME="/data/.microemulator"),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True
+        )
+        return True
+    raise RuntimeError("Không thể khởi động lại tiến trình giả lập game.")
 
 def run_input_command(cmd, timeout=3):
     """Run a dashboard input command and fail visibly if X11 rejects it."""
@@ -207,19 +242,20 @@ def check_pin(req):
     return verify_credentials(user, pin)
 
 def get_game_window():
-    try:
-        p = subprocess.run(["xdotool", "search", "--onlyvisible", "--class", "java"], capture_output=True, text=True, timeout=1)
-        wids = p.stdout.strip().split()
-        if not wids:
-            p = subprocess.run(["xdotool", "search", "--onlyvisible", ""], capture_output=True, text=True, timeout=1)
+    for search_cmd in [
+        ["xdotool", "search", "--onlyvisible", "--name", "MicroEmulator"],
+        ["xdotool", "search", "--onlyvisible", "--class", "org-microemu-app-Main"],
+        ["xdotool", "search", "--onlyvisible", "--class", "java"],
+    ]:
+        try:
+            p = subprocess.run(search_cmd, capture_output=True, text=True, timeout=1)
             wids = p.stdout.strip().split()
-        if wids:
-            wid = wids[-1]
-            subprocess.run(["xdotool", "windowfocus", wid], timeout=1, check=False)
-            subprocess.run(["xdotool", "windowactivate", wid], timeout=1, check=False)
-            return wid
-    except Exception:
-        pass
+            if wids:
+                wid = wids[-1]
+                subprocess.run(["xdotool", "windowfocus", wid], timeout=1, check=False)
+                return wid
+        except Exception:
+            pass
     return None
 
 def focus_game_window():
@@ -376,18 +412,24 @@ def auth_status():
     })
 
 def capture_game_screenshot_bytes(quality=55):
-    """Capture 240x360 game screenshot bytes (X11 ImageGrab primary, JVM Bridge framebuffer fallback)."""
+    """Capture 240x360 game screenshot bytes (JVM Bridge framebuffer + X11 ImageGrab)."""
+    x11_bytes = None
+    x11_is_black = True
     try:
         im = ImageGrab.grab(bbox=(0, MENU_BAR_OFFSET, SCREEN_WIDTH, MENU_BAR_OFFSET + SCREEN_HEIGHT))
         if im is not None:
             im = im.convert('RGB')
+            extrema = im.getextrema()
+            x11_is_black = (extrema == ((0, 0), (0, 0), (0, 0)))
             buf = io.BytesIO()
             im.save(buf, format='JPEG', quality=quality, optimize=True)
-            return buf.getvalue()
+            x11_bytes = buf.getvalue()
+            if not x11_is_black:
+                return x11_bytes
     except Exception:
         pass
 
-    # Fallback: Direct JVM Canvas Framebuffer Screenshot from GameBridgeAgent
+    # Direct JVM Canvas Framebuffer Screenshot from GameBridgeAgent (used when X11 is black or unavailable)
     try:
         import urllib.request
         req = urllib.request.Request("http://127.0.0.1:28888/api/game/screenshot", headers={"User-Agent": "NRO-Server"})
@@ -398,6 +440,9 @@ def capture_game_screenshot_bytes(quality=55):
                     return data
     except Exception:
         pass
+
+    if x11_bytes:
+        return x11_bytes
 
     buf = io.BytesIO()
     blank = Image.new('RGB', (SCREEN_WIDTH, SCREEN_HEIGHT), color=(15, 20, 30))
@@ -431,12 +476,14 @@ def server_status():
     else:
         uptime_human = f"{minutes}m {uptime_sec % 60}s"
 
-    emu_running = False
-    try:
-        p = subprocess.run(["pgrep", "-f", "microemulator"], capture_output=True, text=True)
-        emu_running = (p.returncode == 0)
-    except Exception:
-        pass
+    game_st = get_bridge_status()
+    emu_running = bool(game_st and game_st.get("bridge_online"))
+    if not emu_running:
+        try:
+            p = subprocess.run(["pgrep", "-f", "microemulator"], capture_output=True, text=True, timeout=2)
+            emu_running = (p.returncode == 0)
+        except Exception:
+            pass
 
     rom_file = ROM_FILE
     if not os.path.exists(rom_file) and os.path.exists("/app/roms/NRO.jar"):
@@ -457,7 +504,7 @@ def server_status():
         "ram": get_ram_info(),
         "rom": rom_info,
         "saved_account": read_rms_saved_info(),
-        "game": get_bridge_status()
+        "game": game_st
     })
 
 def type_text_reliably(value, wid=None):
@@ -521,85 +568,134 @@ def handle_input():
     action = data.get("action")
 
     try:
-        with x11_lock:
-            wid = focus_game_window()
+        import urllib.parse
+        import urllib.request
 
-            if action == "key":
-                raw_val = str(data.get("value", "")).strip()
-                key_to_send = KEY_MAP.get(raw_val.lower(), raw_val)
+        if action == "key":
+            raw_val = str(data.get("value", "")).strip()
+            key_to_send = KEY_MAP.get(raw_val.lower(), raw_val)
 
-                if key_to_send not in ALLOWED_KEYS and key_to_send not in KEY_MAP.values():
-                    return jsonify({"error": f"Invalid key: {raw_val}"}), 400
+            if key_to_send not in ALLOWED_KEYS and key_to_send not in KEY_MAP.values():
+                return jsonify({"error": f"Invalid key: {raw_val}"}), 400
 
-                cmd = ["xdotool", "key", key_to_send]
-                if wid:
-                    cmd = ["xdotool", "key", "--window", wid, key_to_send]
-                run_input_command(cmd, timeout=2)
+            # 1. Primary: Dispatch key directly into JVM via GameBridgeAgent
+            try:
+                url = f"http://127.0.0.1:28888/api/game/input_key?key={urllib.parse.quote(raw_val)}"
+                res = bridge_call(url, timeout=1.5, retries=1)
+                if res and res.get("status") == "ok":
+                    return jsonify({"status": "ok", "method": "bridge"})
+            except Exception:
+                pass
 
-                # Khi người dùng bấm OK / Select: Gửi kèm space để hỗ trợ trọn vẹn mọi ngữ cảnh game (cả Enter lẫn Space)
-                if raw_val.lower() in ("ok", "select"):
-                    cmd_space = ["xdotool", "key", "space"]
-                    if wid:
-                        cmd_space = ["xdotool", "key", "--window", wid, "space"]
-                    run_input_command(cmd_space, timeout=2)
+            # 2. Fallback: X11 xdotool
+            with x11_lock:
+                focus_game_window()
+                run_input_command(["xdotool", "key", key_to_send], timeout=2)
+            return jsonify({"status": "ok", "method": "x11"})
 
-            elif action == "click":
-                try:
-                    raw_x = float(data.get("x", 0))
-                    raw_y = float(data.get("y", 0))
-                    x = max(0, min(SCREEN_WIDTH - 1, int(round(raw_x))))
-                    y = max(0, min(SCREEN_HEIGHT - 1, int(round(raw_y)))) + MENU_BAR_OFFSET
-                    cmd = ["xdotool", "mousemove", str(x), str(y), "click", "1"]
-                    run_input_command(cmd, timeout=2)
-                except (ValueError, TypeError):
-                    return jsonify({"error": "Invalid coordinates"}), 400
+        elif action == "click":
+            try:
+                raw_x = float(data.get("x", 0))
+                raw_y = float(data.get("y", 0))
+                x = max(0, min(SCREEN_WIDTH - 1, int(round(raw_x))))
+                y = max(0, min(SCREEN_HEIGHT - 1, int(round(raw_y))))
+            except (ValueError, TypeError):
+                return jsonify({"error": "Invalid coordinates"}), 400
 
-            elif action == "text":
-                value = str(data.get("value", ""))
+            # 1. Primary: Dispatch pointer click directly into JVM via GameBridgeAgent (exact 240x360 canvas coordinates)
+            try:
+                url = f"http://127.0.0.1:28888/api/game/input_click?x={x}&y={y}"
+                res = bridge_call(url, timeout=1.5, retries=1)
+                if res and res.get("status") == "ok":
+                    return jsonify({"status": "ok", "method": "bridge"})
+            except Exception:
+                pass
+
+            # 2. Fallback: X11 xdotool
+            with x11_lock:
+                focus_game_window()
+                run_input_command(["xdotool", "mousemove", str(x), str(y + MENU_BAR_OFFSET), "click", "1"], timeout=2)
+            return jsonify({"status": "ok", "method": "x11"})
+
+        elif action == "text":
+            value = str(data.get("value", ""))
+            field_hint = str(data.get("field", ""))
+            submit = str(data.get("submit", ""))
+            if not submit:
+                if data.get("f2") is True:
+                    submit = "f2"
+                elif data.get("enter") is True:
+                    submit = "enter"
+
+            # 1. Primary: Set text directly on active TField (nro.au) inside JVM
+            try:
+                query = (
+                    f"text={urllib.parse.quote(value)}"
+                    f"&field={urllib.parse.quote(field_hint)}"
+                    f"&submit={urllib.parse.quote(submit)}"
+                )
+                url = f"http://127.0.0.1:28888/api/game/input_text?{query}"
+                res = bridge_call(url, timeout=2.0, retries=1)
+                if res and res.get("status") == "ok":
+                    return jsonify({"status": "ok", "method": "bridge"})
+            except Exception:
+                pass
+
+            # 2. Fallback: X11 clipboard / xdotool
+            with x11_lock:
+                wid = focus_game_window()
                 if value:
                     type_text_reliably(value, wid=wid)
                 time.sleep(0.08)
-                submit = data.get("submit")
-                if submit == "f2" or data.get("f2") is True:
-                    cmd = ["xdotool", "key", "F2"]
-                    if wid:
-                        cmd = ["xdotool", "key", "--window", wid, "F2"]
-                    run_input_command(cmd, timeout=2)
-                elif submit == "enter" or data.get("enter") is True:
-                    cmd = ["xdotool", "key", "Return"]
-                    if wid:
-                        cmd = ["xdotool", "key", "--window", wid, "Return"]
-                    run_input_command(cmd, timeout=2)
+                if submit == "f2":
+                    run_input_command(["xdotool", "key", "F2"], timeout=2)
+                elif submit == "enter":
+                    run_input_command(["xdotool", "key", "Return"], timeout=2)
+            return jsonify({"status": "ok", "method": "x11"})
 
-            elif action == "clear_text":
-                # Clear all characters in the active text box
-                cmd = ["xdotool", "key", "--repeat", "45", "--delay", "8", "BackSpace"]
-                if wid:
-                    cmd = ["xdotool", "key", "--window", wid, "--repeat", "45", "--delay", "8", "BackSpace"]
-                run_input_command(cmd, timeout=3)
+        elif action == "clear_text":
+            # 1. Primary: Clear active TField directly inside JVM
+            try:
+                res = bridge_call("http://127.0.0.1:28888/api/game/clear_text", timeout=1.5, retries=1)
+                if res and res.get("status") == "ok":
+                    return jsonify({"status": "ok", "method": "bridge"})
+            except Exception:
+                pass
 
-            elif action == "anti_stuck":
-                # 1. Xử lý chống kẹt bên trong JVM (dừng Xmap đang treo, đóng hộp thoại in-game nro.Q.bo)
+            # 2. Fallback: X11 BackSpace repeat
+            with x11_lock:
+                focus_game_window()
+                run_input_command(["xdotool", "key", "--repeat", "45", "--delay", "8", "BackSpace"], timeout=3)
+            return jsonify({"status": "ok", "method": "x11"})
+
+        elif action == "anti_stuck":
+            # 0. Nếu tiến trình game chưa bật, tự động khởi động lại ngay
+            if not is_emulator_running():
                 try:
-                    import urllib.request
-                    req_as = urllib.request.Request("http://127.0.0.1:28888/api/game/anti_stuck", data=b"", headers={"User-Agent": "NRO-Server"})
-                    urllib.request.urlopen(req_as, timeout=1.5).close()
+                    restart_emulator(clean_cache=False)
+                    return jsonify({"status": "ok", "message": "Đã tự động khởi động lại tiến trình game!"})
                 except Exception:
                     pass
-                # 2. Đóng mọi hộp thoại đang mở trên X11: hộp thoại chat (80, 274), thông báo giữa (120, 245/255), thông báo dưới (120, 285)
-                run_input_command(["xdotool", "mousemove", "80", str(274 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
-                run_input_command(["xdotool", "mousemove", "120", str(255 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
-                run_input_command(["xdotool", "mousemove", "120", str(245 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
-                run_input_command(["xdotool", "mousemove", "120", str(285 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
-                run_input_command(["xdotool", "key", "Return"], timeout=1)
-                run_input_command(["xdotool", "key", "space"], timeout=1)
-                run_input_command(["xdotool", "key", "F1"], timeout=1)
-                run_input_command(["xdotool", "key", "Escape"], timeout=1)
 
-            else:
-                return jsonify({"error": "Invalid action"}), 400
+            # 1. Xử lý chống kẹt bên trong JVM (auto-launch Launcher, dừng Xmap đang treo, đóng hộp thoại in-game nro.Q.bo)
+            try:
+                req_as = urllib.request.Request("http://127.0.0.1:28888/api/game/anti_stuck", data=b"", headers={"User-Agent": "NRO-Server"})
+                urllib.request.urlopen(req_as, timeout=1.5).close()
+            except Exception:
+                pass
 
-        return jsonify({"status": "ok"})
+            # 2. Hỗ trợ đóng hộp thoại đang mở trên X11 an toàn (không ném lỗi nếu X11 đang bận)
+            with x11_lock:
+                focus_game_window()
+                safe_run(["xdotool", "mousemove", "80", str(274 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                safe_run(["xdotool", "mousemove", "120", str(255 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                safe_run(["xdotool", "mousemove", "120", str(285 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                safe_run(["xdotool", "key", "F1"], timeout=1)
+                safe_run(["xdotool", "key", "Escape"], timeout=1)
+            return jsonify({"status": "ok"})
+
+        else:
+            return jsonify({"error": "Invalid action"}), 400
 
     except subprocess.TimeoutExpired:
         return jsonify({"error": "Action timed out"}), 504
@@ -1000,14 +1096,55 @@ def dismiss_error_popup_if_any():
     return False
 
 def emulator_ui_watchdog_worker():
-    """Lightweight 24/7 background watchdog to auto-start emulator from Launcher and dismiss popups."""
+    """
+    Lightweight 24/7 background watchdog:
+    1. Tự động khởi động lại tiến trình emulator nếu bị dừng (Game chưa bật).
+    2. Tự động kích hoạt MIDlet nếu MicroEmulator đang dừng ở màn hình Launcher hoặc màn hình tải dữ liệu lần đầu.
+    (Không tự ý đóng hộp thoại parchment hay tự bấm menu khi người dùng đang thao tác trong game).
+    """
     time.sleep(5.0)
+    last_restart_ts = 0.0
     while True:
         try:
-            dismiss_error_popup_if_any()
+            now = time.time()
+            if not is_emulator_running():
+                if now - last_restart_ts > 20.0:
+                    last_restart_ts = now
+                    print("[WATCHDOG] Phát hiện tiến trình giả lập chưa chạy, đang tự động khởi động lại...")
+                    try:
+                        restart_emulator(clean_cache=False)
+                    except Exception as re_err:
+                        print(f"[WATCHDOG] Lỗi tự khởi động lại emulator: {re_err}")
+                time.sleep(4.0)
+                continue
+
+            st = get_bridge_status()
+            if st and not st.get("midlet_loaded", True):
+                try:
+                    bridge_call("http://127.0.0.1:28888/api/game/auto_launch", timeout=1.5, retries=1)
+                except Exception:
+                    pass
+
+            if not st or not st.get("in_game"):
+                im = ImageGrab.grab(bbox=(0, MENU_BAR_OFFSET, SCREEN_WIDTH, MENU_BAR_OFFSET + SCREEN_HEIGHT))
+                if im is not None:
+                    im = im.convert('RGB')
+                    # Chỉ tự động qua màn hình Launcher trắng hoặc màn hình 'Vui lòng tải dữ liệu để chơi'
+                    p_top = im.getpixel((10, 10))[:3]
+                    p_mid = im.getpixel((120, 180))[:3]
+                    if p_top == (255, 255, 255) and p_mid == (255, 255, 255):
+                        safe_run(["xdotool", "mousemove", "160", str(208 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                        safe_run(["xdotool", "key", "F2"], timeout=1)
+                        safe_run(["xdotool", "key", "Return"], timeout=1)
+                    else:
+                        r_dl, g_dl, b_dl = im.getpixel((119, 234))[:3]
+                        r_ct, g_ct, b_ct = im.getpixel((120, 144))[:3]
+                        if (r_dl > 180 and 100 < g_dl < 185 and b_dl < 90) and r_ct < 130:
+                            safe_run(["xdotool", "mousemove", "119", str(234 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                            safe_run(["xdotool", "key", "Return"], timeout=1)
         except Exception:
             pass
-        time.sleep(2.5)
+        time.sleep(3.5)
 
 _ui_watchdog_thread = threading.Thread(target=emulator_ui_watchdog_worker, daemon=True)
 _ui_watchdog_thread.start()
@@ -1266,16 +1403,24 @@ def handle_open_account_dialog():
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
 
     try:
+        # 1. Ưu tiên mở trực tiếp màn hình LoginScr (nro.cJ) trong JVM và focus ô tài khoản
+        try:
+            res = bridge_call("http://127.0.0.1:28888/api/game/open_account_dialog", timeout=2.0, retries=2)
+            if res and res.get("status") == "ok":
+                return jsonify({"status": "ok", "method": "bridge", "message": "Đã mở màn hình Đổi tài khoản!"})
+        except Exception:
+            pass
+
+        # 2. Fallback: Click qua X11
         with x11_lock:
             focus_game_window()
-            dismiss_error_popup_if_any()
             layout = get_menu_layout()
             y_doi_tk = 202 if layout == 5 else 187
             cmd = ["xdotool", "mousemove", "120", str(y_doi_tk + MENU_BAR_OFFSET), "click", "1"]
             safe_run(cmd, timeout=2)
             time.sleep(0.5)
 
-        return jsonify({"status": "ok", "message": "Đã mở hộp thoại Đổi tài khoản!"})
+        return jsonify({"status": "ok", "method": "x11", "message": "Đã mở hộp thoại Đổi tài khoản!"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1324,10 +1469,8 @@ def handle_select_server():
             except Exception:
                 pass
 
-        # 2. Ưu tiên đổi máy chủ & kết nối lại trực tiếp trong JVM (0s downtime)
+        # 2. Ưu tiên đổi máy chủ & kết nối lại trực tiếp trong JVM (0s downtime, không dùng xdotool tránh xung đột)
         if login_via_bridge("", "", server_num):
-            t = threading.Thread(target=auto_enter_game_worker, daemon=True)
-            t.start()
             return jsonify({
                 "status": "ok",
                 "method": "direct_jvm",
@@ -1365,15 +1508,12 @@ def handle_quick_login():
         # 1. Ghi trực tiếp thông tin vào RMS trên đĩa để lưu bền vững
         write_rms_account(username, password, server_num)
 
-        # 2. Ưu tiên đăng nhập trực tiếp trong bộ nhớ JVM (không cần restart emulator)
+        # 2. Ưu tiên đăng nhập trực tiếp trong bộ nhớ JVM (không cần restart emulator, tránh xdotool click nhầm nút Hủy)
         if not force_restart and login_via_bridge(username, password, server_num):
-            if auto_enter:
-                t = threading.Thread(target=auto_enter_game_worker, daemon=True)
-                t.start()
             return jsonify({
                 "status": "ok",
                 "method": "direct_jvm",
-                "message": "Đã nạp tài khoản & đăng nhập trực tiếp trong JVM! Đang vào thế giới..."
+                "message": "Đã nạp tài khoản & đăng nhập trực tiếp trong JVM! Đang kết nối vào thế giới..."
             })
 
         # 3. Fallback: Khởi động lại game để áp dụng tài khoản & máy chủ mới

@@ -926,8 +926,11 @@
     <script>
         (function() {
             // State
+            const validIntervals = [350, 700, 1500, 0];
+            let savedInterval = parseInt(localStorage.getItem('nro_interval') || '700', 10);
+            if (!validIntervals.includes(savedInterval)) savedInterval = 700;
             const state = {
-                fpsInterval: parseInt(localStorage.getItem('nro_interval') || '700'),
+                fpsInterval: savedInterval,
                 timer: null,
                 isFetching: false,
                 failCount: 0
@@ -1134,10 +1137,17 @@
                             if (data.ram) {
                                 txtRam.textContent = `RAM: ${data.ram.used_mb}/${data.ram.total_mb}MB (${data.ram.percent}%)`;
                             }
+                            const badgeRunning = document.getElementById('badge-running');
                             if (data.emulator_running) {
                                 txtStatus.textContent = "Đang chạy 24/7";
+                                if (badgeRunning) {
+                                    badgeRunning.className = "flex items-center gap-1 text-emerald-400 font-sans font-semibold";
+                                }
                             } else {
                                 txtStatus.textContent = "Game chưa bật";
+                                if (badgeRunning) {
+                                    badgeRunning.className = "flex items-center gap-1 text-amber-400 font-sans font-semibold";
+                                }
                             }
 
                             // Check TeaMobi Server Socket
@@ -1158,9 +1168,7 @@
                                 }
                             }
 
-                            if (data.game) {
-                                updateGameTelemetry(data.game);
-                            }
+                            updateGameTelemetry(data.game || null);
                         }
                     })
                     .catch(() => {});
@@ -1503,7 +1511,11 @@
             });
 
             // Refresh Screen Button
-            document.getElementById('btn-refresh').addEventListener('click', fetchScreenshot);
+            document.getElementById('btn-refresh').addEventListener('click', () => {
+                showToast("Đang làm mới khung hình...", "indigo");
+                restartTimer();
+                fetchStatus();
+            });
 
             // Download Screenshot
             document.getElementById('btn-download-shot').addEventListener('click', () => {
@@ -1844,12 +1856,8 @@
                     return;
                 }
                 showToast("Đang điền tài khoản vào ô...", "indigo");
-                sendInput({ action: 'clear_text' }).then(() => {
-                    setTimeout(() => {
-                        sendInput({ action: 'text', value: u, f2: true }).then(() => {
-                            setTimeout(fetchScreenshot, 300);
-                        });
-                    }, 150);
+                sendInput({ action: 'text', value: u, field: 'user', f2: true }).then(() => {
+                    setTimeout(fetchScreenshot, 300);
                 });
             });
 
@@ -1861,12 +1869,8 @@
                     return;
                 }
                 showToast("Đang điền mật khẩu vào ô...", "indigo");
-                sendInput({ action: 'clear_text' }).then(() => {
-                    setTimeout(() => {
-                        sendInput({ action: 'text', value: p, f2: true }).then(() => {
-                            setTimeout(fetchScreenshot, 300);
-                        });
-                    }, 150);
+                sendInput({ action: 'text', value: p, field: 'pass', f2: true }).then(() => {
+                    setTimeout(fetchScreenshot, 300);
                 });
             });
 
@@ -2159,6 +2163,10 @@
                 btnSwitchAndFarm.addEventListener('click', () => {
                     const id = selectAccountProfile ? selectAccountProfile.value : '';
                     const prof = savedProfiles.find(p => String(p.id) === String(id));
+                    if (!prof && (!loginUser || !loginUser.value.trim())) {
+                        showToast('Hãy chọn một Acc trong danh sách đã lưu để chuyển!', 'amber');
+                        return;
+                    }
                     if (prof) {
                         if (loginUser) loginUser.value = prof.username || '';
                         if (loginPass && prof.password) loginPass.value = prof.password;

@@ -34,9 +34,19 @@ fi
 
 setxkbmap -display :1 -layout us 2>/dev/null || true
 
-# Check if GameBridgeAgent is available
+# Check if GameBridgeAgent is available; auto-compile if javac is present and source is newer
 AGENT_OPT=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if command -v javac >/dev/null 2>&1 && command -v jar >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/GameBridgeAgent.java" ] && [ -f "$SCRIPT_DIR/MANIFEST.MF" ]; then
+    BUILD_TMP="/tmp/bridge_runtime_build"
+    rm -rf "$BUILD_TMP" && mkdir -p "$BUILD_TMP"
+    if javac -encoding UTF-8 -source 1.8 -target 1.8 -d "$BUILD_TMP" "$SCRIPT_DIR/GameBridgeAgent.java" 2>/dev/null; then
+        jar cfm "$SCRIPT_DIR/bridge.jar" "$SCRIPT_DIR/MANIFEST.MF" -C "$BUILD_TMP" . 2>/dev/null || true
+        cp -f "$SCRIPT_DIR/bridge.jar" "/app/bridge.jar" 2>/dev/null || true
+    fi
+    rm -rf "$BUILD_TMP"
+fi
+
 for bpath in \
     "/app/bridge.jar" \
     "/app/scripts/bridge.jar" \
@@ -60,15 +70,20 @@ fi
 (
     for i in $(seq 1 35); do
         sleep 1
+        STATUS_JSON="$(curl -s -m 1 http://127.0.0.1:28888/api/game/status 2>/dev/null || true)"
+        if echo "$STATUS_JSON" | grep -q '"midlet_loaded":true'; then
+            break
+        fi
+        curl -s -m 1 http://127.0.0.1:28888/api/game/auto_launch >/dev/null 2>&1 || true
         if command -v xdotool >/dev/null 2>&1; then
-            WID=$(DISPLAY=:1 xdotool search --onlyvisible --class java 2>/dev/null | tail -n 1)
-            if [ -n "$WID" ]; then
-                DISPLAY=:1 xdotool mousemove --window "$WID" 160 208 click 1 2>/dev/null || true
-                DISPLAY=:1 xdotool mousemove 160 232 click 1 2>/dev/null || true
-                DISPLAY=:1 xdotool key --window "$WID" F2 Return space 2>/dev/null || true
+            WID=$(DISPLAY=:1 xdotool search --onlyvisible --name "MicroEmulator" 2>/dev/null | tail -n 1)
+            if [ -z "$WID" ]; then
+                WID=$(DISPLAY=:1 xdotool search --onlyvisible --class "org-microemu-app-Main" 2>/dev/null | tail -n 1)
             fi
-            if curl -s -m 1 http://127.0.0.1:28888/api/game/status >/dev/null 2>&1; then
-                break
+            if [ -n "$WID" ]; then
+                DISPLAY=:1 xdotool windowfocus "$WID" 2>/dev/null || true
+                DISPLAY=:1 xdotool mousemove 160 232 click 1 2>/dev/null || true
+                DISPLAY=:1 xdotool key F2 Return 2>/dev/null || true
             fi
         fi
     done

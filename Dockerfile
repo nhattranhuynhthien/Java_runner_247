@@ -9,8 +9,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PORT=8080 \
     DISPLAY=:1
 
-# Install OpenJDK 8 JRE, Xvfb, xdotool, xclip, xsel, Python3, Supervisor, and X11 graphics libs
+# Install OpenJDK 8 JDK (for GameBridgeAgent compilation & JRE runtime), Xvfb, xdotool, xclip, xsel, Python3, Supervisor, and X11 graphics libs
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    openjdk-8-jdk-headless \
     openjdk-8-jre \
     xvfb \
     xdotool \
@@ -53,8 +54,13 @@ COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 # Copy project files
 COPY . .
 
-# Ensure bridge.jar is present in both /app/bridge.jar and /app/scripts/bridge.jar
-RUN cp -f /app/bridge.jar /app/scripts/bridge.jar 2>/dev/null || cp -f /app/scripts/bridge.jar /app/bridge.jar 2>/dev/null || true
+# Normalize line endings and compile GameBridgeAgent.java for Java 8 so bridge.jar never misses classes
+RUN sed -i 's/\r$//' /app/scripts/start_emu.sh /app/scripts/MANIFEST.MF /etc/supervisor/conf.d/supervisord.conf 2>/dev/null || true && \
+    mkdir -p /tmp/bridge_build && \
+    javac -encoding UTF-8 -source 1.8 -target 1.8 -d /tmp/bridge_build /app/scripts/GameBridgeAgent.java && \
+    jar cfm /app/bridge.jar /app/scripts/MANIFEST.MF -C /tmp/bridge_build . && \
+    cp -f /app/bridge.jar /app/scripts/bridge.jar && \
+    rm -rf /tmp/bridge_build
 
 # Set execution permission for scripts
 RUN chmod +x /app/scripts/start_emu.sh
