@@ -196,28 +196,49 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
         return false;
     }
 
-    // Automatically launch the selected MIDlet if MicroEmulator is sitting on the Launcher screen
-    public static boolean autoLaunchMidletIfNeeded() {
+    private static volatile long lastLaunchAttemptMs = 0L;
+
+    // Automatically launch the selected MIDlet if MicroEmulator has finished booting into the Launcher screen
+    public static synchronized boolean autoLaunchMidletIfNeeded() {
         try {
             if (isMidletLoaded()) return true;
+            if (!isDeviceReady()) return false;
+            long now = System.currentTimeMillis();
+            if (now - lastLaunchAttemptMs < 2500L) return false;
+
             Class<?> mbCls = Class.forName("org.microemu.MIDletBridge", false, ClassLoader.getSystemClassLoader());
             Method mGetCur = mbCls.getMethod("getCurrentMIDlet");
             Object cur = mGetCur.invoke(null);
             if (cur != null && cur.getClass().getName().endsWith("Launcher")) {
+                Field fMenu = cur.getClass().getDeclaredField("menuList");
+                fMenu.setAccessible(true);
+                Object menuList = fMenu.get(cur);
+                if (menuList == null) return false;
+
                 Method mGetEntry = cur.getClass().getMethod("getSelectedMidletEntry");
                 Object entry = mGetEntry.invoke(cur);
-                if (entry != null) {
-                    Field fCommon = cur.getClass().getDeclaredField("common");
-                    fCommon.setAccessible(true);
-                    Object common = fCommon.get(cur);
-                    if (common != null) {
-                        Method mInit = common.getClass().getMethod("initMIDlet", boolean.class);
-                        mInit.setAccessible(true);
-                        mInit.invoke(common, Boolean.TRUE);
-                        System.out.println("[BRIDGE] Auto-launched MIDlet from MicroEmulator Launcher!");
-                        return true;
+                if (entry == null) return false;
+
+                Field fCommon = cur.getClass().getDeclaredField("common");
+                fCommon.setAccessible(true);
+                Object common = fCommon.get(cur);
+                if (common == null) return false;
+
+                // Ensure Main.main() has completely finished initMIDlet(false) (which clears midletClassOrUrl to null)
+                try {
+                    Field fUrl = common.getClass().getDeclaredField("midletClassOrUrl");
+                    fUrl.setAccessible(true);
+                    if (fUrl.get(common) != null) {
+                        return false;
                     }
-                }
+                } catch (Throwable ignored) {}
+
+                lastLaunchAttemptMs = now;
+                Method mInit = common.getClass().getMethod("initMIDlet", boolean.class);
+                mInit.setAccessible(true);
+                mInit.invoke(common, Boolean.TRUE);
+                System.out.println("[BRIDGE] Auto-launched MIDlet from MicroEmulator Launcher!");
+                return true;
             }
         } catch (Throwable t) {
             System.out.println("[BRIDGE] autoLaunchMidletIfNeeded note: " + t);
@@ -2178,11 +2199,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
     public static Map<String, Object> getStatus() {
         Map<String, Object> status = new LinkedHashMap<String, Object>();
         status.put("bridge_online", true);
-        boolean midletLoaded = isMidletLoaded();
-        if (!midletLoaded) {
-            midletLoaded = autoLaunchMidletIfNeeded();
-        }
-        status.put("midlet_loaded", midletLoaded);
+        status.put("midlet_loaded", isMidletLoaded());
         status.put("autofarm_active", autoFarmActive);
         status.put("autofarm_map", autoFarmMap);
         status.put("autofarm_zone", autoFarmZone);

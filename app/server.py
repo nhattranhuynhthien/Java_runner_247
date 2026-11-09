@@ -46,12 +46,13 @@ def safe_run(cmd, timeout=3):
         return None
 
 def is_emulator_running():
-    try:
-        p = subprocess.run(["pgrep", "-f", "microemulator"], capture_output=True, text=True, timeout=2)
-        if p.returncode == 0:
-            return True
-    except Exception:
-        pass
+    for pattern in ("microemulator", "start_emu.sh"):
+        try:
+            p = subprocess.run(["pgrep", "-f", pattern], capture_output=True, text=True, timeout=2)
+            if p.returncode == 0:
+                return True
+        except Exception:
+            pass
     st = get_bridge_status()
     return bool(st and st.get("bridge_online"))
 
@@ -1098,18 +1099,21 @@ def dismiss_error_popup_if_any():
 def emulator_ui_watchdog_worker():
     """
     Lightweight 24/7 background watchdog:
-    1. Tự động khởi động lại tiến trình emulator nếu bị dừng (Game chưa bật).
+    1. Tự động khởi động lại tiến trình emulator nếu bị dừng hẳn (Game chưa bật).
     2. Tự động kích hoạt MIDlet nếu MicroEmulator đang dừng ở màn hình Launcher hoặc màn hình tải dữ liệu lần đầu.
     (Không tự ý đóng hộp thoại parchment hay tự bấm menu khi người dùng đang thao tác trong game).
     """
-    time.sleep(5.0)
+    time.sleep(15.0)
     last_restart_ts = 0.0
+    down_streak = 0
     while True:
         try:
             now = time.time()
             if not is_emulator_running():
-                if now - last_restart_ts > 20.0:
+                down_streak += 1
+                if down_streak >= 2 and (now - last_restart_ts > 30.0):
                     last_restart_ts = now
+                    down_streak = 0
                     print("[WATCHDOG] Phát hiện tiến trình giả lập chưa chạy, đang tự động khởi động lại...")
                     try:
                         restart_emulator(clean_cache=False)
@@ -1117,6 +1121,7 @@ def emulator_ui_watchdog_worker():
                         print(f"[WATCHDOG] Lỗi tự khởi động lại emulator: {re_err}")
                 time.sleep(4.0)
                 continue
+            down_streak = 0
 
             st = get_bridge_status()
             if st and not st.get("midlet_loaded", True):
@@ -1969,19 +1974,29 @@ def get_logs():
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
 
     log_lines = []
-    for log_path in ['/var/log/emulator.log', '/var/log/emulator_err.log']:
+    try:
+        p = subprocess.run(["supervisorctl", "status"], capture_output=True, text=True, timeout=2)
+        if p.stdout:
+            log_lines.append("=== SUPERVISOR STATUS ===\n" + p.stdout.strip() + "\n\n")
+    except Exception:
+        pass
+
+    for log_path in ['/var/log/emulator.log', '/var/log/emulator_err.log', '/var/log/supervisord.log']:
         if os.path.exists(log_path):
             try:
                 with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
                     lines = f.readlines()
-                    log_lines.extend(lines[-30:])
+                    if lines:
+                        log_lines.append(f"=== {log_path} ===\n")
+                        log_lines.extend(lines[-35:])
+                        log_lines.append("\n")
             except Exception:
                 pass
 
     if not log_lines:
         log_lines = ["[LOG] Chưa có bản ghi log nào được tạo."]
 
-    return jsonify({"status": "ok", "logs": "".join(log_lines[-50:])})
+    return jsonify({"status": "ok", "logs": "".join(log_lines[-120:])})
 
 @app.route('/api/upload_rom', methods=['POST'])
 def upload_rom():

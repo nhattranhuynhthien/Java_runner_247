@@ -4,12 +4,12 @@ set -e
 # Keep MicroEmulator configuration and RMS data on the persistent /data volume.
 EMU_HOME="${MICROEMULATOR_HOME:-/data/.microemulator}"
 EMU_USER_HOME="$(dirname "$EMU_HOME")"
-mkdir -p "$EMU_HOME"
+mkdir -p "$EMU_HOME" || true
 if [ -d "/root/.microemulator" ] && [ ! -L "/root/.microemulator" ]; then
-    cp -an /root/.microemulator/. "$EMU_HOME/"
+    cp -rn /root/.microemulator/. "$EMU_HOME/" 2>/dev/null || true
 fi
 if [ -f "/app/config2.xml" ]; then
-    cp -f /app/config2.xml "$EMU_HOME/config2.xml"
+    cp -f /app/config2.xml "$EMU_HOME/config2.xml" 2>/dev/null || true
 fi
 export HOME="$EMU_USER_HOME"
 
@@ -22,8 +22,15 @@ for i in $(seq 1 30); do
 done
 
 if [ ! -e "/tmp/.X11-unix/X1" ]; then
-    echo "[EMU] Xvfb :1 did not become ready in time." >&2
-    exit 1
+    echo "[EMU] Cleaning stale X1 lock and starting Xvfb :1..."
+    rm -f /tmp/.X1-lock /tmp/.X11-unix/X1 2>/dev/null || true
+    /usr/bin/Xvfb :1 -screen 0 240x384x24 -ac -nolisten tcp >/dev/null 2>&1 &
+    for i in $(seq 1 25); do
+        if [ -e "/tmp/.X11-unix/X1" ]; then
+            break
+        fi
+        sleep 0.2
+    done
 fi
 
 export DISPLAY=:1
@@ -34,19 +41,9 @@ fi
 
 setxkbmap -display :1 -layout us 2>/dev/null || true
 
-# Check if GameBridgeAgent is available; auto-compile if javac is present and source is newer
+# Locate precompiled Java 8 GameBridgeAgent jar
 AGENT_OPT=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if command -v javac >/dev/null 2>&1 && command -v jar >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/GameBridgeAgent.java" ] && [ -f "$SCRIPT_DIR/MANIFEST.MF" ]; then
-    BUILD_TMP="/tmp/bridge_runtime_build"
-    rm -rf "$BUILD_TMP" && mkdir -p "$BUILD_TMP"
-    if javac -encoding UTF-8 -source 1.8 -target 1.8 -d "$BUILD_TMP" "$SCRIPT_DIR/GameBridgeAgent.java" 2>/dev/null; then
-        jar cfm "$SCRIPT_DIR/bridge.jar" "$SCRIPT_DIR/MANIFEST.MF" -C "$BUILD_TMP" . 2>/dev/null || true
-        cp -f "$SCRIPT_DIR/bridge.jar" "/app/bridge.jar" 2>/dev/null || true
-    fi
-    rm -rf "$BUILD_TMP"
-fi
-
 for bpath in \
     "/app/bridge.jar" \
     "/app/scripts/bridge.jar" \
@@ -68,6 +65,7 @@ fi
 
 # Auto-confirm Launcher Start in case MicroEmulator stops at the MIDlet selection screen
 (
+    sleep 2
     for i in $(seq 1 35); do
         sleep 1
         STATUS_JSON="$(curl -s -m 1 http://127.0.0.1:28888/api/game/status 2>/dev/null || true)"
@@ -95,7 +93,7 @@ if [ -f "$JAR_FILE" ]; then
         -Duser.home="$EMU_USER_HOME" \
         -Dsun.java2d.opengl=false -Dsun.java2d.pmoffscreen=false -Dsun.java2d.xrender=false \
         $AGENT_OPT \
-        -jar /app/microemulator.jar --rms file --quit "$JAR_FILE"
+        -jar /app/microemulator.jar --rms file "$JAR_FILE"
 fi
 
 echo "[EMU] No ROM found at $JAR_FILE; starting MicroEmulator launcher."
