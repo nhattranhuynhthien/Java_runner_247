@@ -635,6 +635,19 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
     private static volatile ClassLoader cachedClassLoader = null;
 
     private static ClassLoader findMidletClassLoader() {
+        try {
+            Class<?> mbCls = Class.forName("org.microemu.MIDletBridge", false, ClassLoader.getSystemClassLoader());
+            Method mGetCur = mbCls.getMethod("getCurrentMIDlet");
+            Object cur = mGetCur.invoke(null);
+            if (cur != null && !cur.getClass().getName().endsWith("Launcher")) {
+                ClassLoader activeCl = cur.getClass().getClassLoader();
+                if (activeCl != null) {
+                    cachedClassLoader = activeCl;
+                    return activeCl;
+                }
+            }
+        } catch (Throwable ignored) {}
+
         if (cachedClassLoader != null) return cachedClassLoader;
         for (Thread t : Thread.getAllStackTraces().keySet()) {
             ClassLoader cl = t.getContextClassLoader();
@@ -659,19 +672,26 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
 
     private static boolean isDeviceReady() {
         try {
-            ClassLoader cl = findMidletClassLoader();
-            Class<?> dfCls = (cl != null)
-                ? Class.forName("org.microemu.device.DeviceFactory", false, cl)
-                : Class.forName("org.microemu.device.DeviceFactory", false, ClassLoader.getSystemClassLoader());
+            Class<?> dfCls = Class.forName("org.microemu.device.DeviceFactory", false, ClassLoader.getSystemClassLoader());
             Method mGet = dfCls.getMethod("getDevice");
             Object dev = mGet.invoke(null);
             if (dev == null) return false;
-            Method mUi = dev.getClass().getMethod("getUIFactory");
             Method mDisp = dev.getClass().getMethod("getDeviceDisplay");
-            return mUi.invoke(dev) != null && mDisp.invoke(dev) != null;
+            mDisp.setAccessible(true);
+            return mDisp.invoke(dev) != null;
         } catch (Throwable ignored) {
-            return false;
+            return isMidletLoaded();
         }
+    }
+
+    private static void ensureModControllerInitialized() {
+        try {
+            Class<?> clsF = getGameClass("nro.F");
+            if (clsF != null) {
+                Method mFa = getTypedMethodByReturnName(clsF, "a", true, "nro.F");
+                if (mFa != null) mFa.invoke(null);
+            }
+        } catch (Throwable ignored) {}
     }
 
     private static Class<?> getGameClass(String name) {
@@ -846,6 +866,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
         if ("nb".equals(c)) return new String[]{"nro.H", "T"};
         if ("cflag".equals(c)) return new String[]{"nro.V", "aq"};
         if ("ak".equals(c)) return new String[]{"nro.n", "x"};
+        if ("ats".equals(c)) return new String[]{"nro.j", "n"};
         return null;
     }
 
@@ -932,10 +953,18 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 return;
             }
 
-            // enable == true: KEEP nro.p.z = true and Goback enabled so mod loop stays alive
+            // enable == true: Ensure mod controller is initialized, keep nro.p.z = true, nro.ct.cT = true, and Goback enabled
+            ensureModControllerInitialized();
+            configurePunchSkill();
             if (clsP != null) {
                 Field fZ = getTypedField(clsP, "z", boolean.class);
                 if (fZ != null) fZ.setBoolean(null, true);
+                Field fB = getTypedField(clsP, "B", boolean.class);
+                if (fB != null) fB.setBoolean(null, false);
+            }
+            if (clsCt != null) {
+                Field fCt = getTypedField(clsCt, "cT", boolean.class);
+                if (fCt != null) fCt.setBoolean(null, true);
             }
             if (clsA != null) {
                 Field fJ = getTypedField(clsA, "J", boolean.class);
@@ -952,14 +981,6 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 Field fAq = getTypedField(clsF, "aQ", int.class);
                 if (fAq != null && fAq.getInt(null) < 1) {
                     fAq.setInt(null, 1);
-                }
-            }
-
-            // If nro.p.B is already true (currently flying to Map 5 Đảo Kame to buy TDLT from Santa), let it finish
-            if (clsP != null) {
-                Field fB = getTypedField(clsP, "B", boolean.class);
-                if (fB != null && fB.getBoolean(null)) {
-                    return;
                 }
             }
 
@@ -1008,7 +1029,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 return;
             }
 
-            // Case 3: No usable item 521 in bag. Check character gems to auto-buy at Map 5 (Đảo Kame)
+            // Case 3: No usable item 521 in bag. Only buy from Santa if ALREADY at Map 5 (never hijack Xmap away from farming map!)
             Object myChar = getMyChar();
             Class<?> clsCd = getGameClass("nro.cd");
             int totalGems = 0;
@@ -1032,40 +1053,24 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
             }
 
             long now = System.currentTimeMillis();
-            if (totalGems > 0 && clsP != null && (now - lastTdltBuyAttemptMs > 60000L)) {
+            if (currentMapId == 5 && totalGems > 0 && clsP != null && (now - lastTdltBuyAttemptMs > 60000L)) {
                 lastTdltBuyAttemptMs = now;
-                buyingTdltSinceMs = now;
-                updateGobackTarget(autoFarmMap, autoFarmZone);
-
-                if (currentMapId == 5) {
-                    // Already at Map 5 Đảo Kame: invoke nro.p.ab() to buy TDLT from Santa!
-                    try {
-                        Method mAb = getTypedMethod(clsP, "ab", true, void.class);
-                        if (mAb != null) {
-                            mAb.invoke(null);
-                            System.out.println("[BRIDGE] Invoked nro.p.ab() at Map 5 to buy TDLT from Santa!");
-                            return;
-                        }
-                    } catch (Throwable ignored) {}
-                } else {
-                    // Fly to Map 5 to buy TDLT!
-                    Field fB = getTypedField(clsP, "B", boolean.class);
-                    if (fB != null) fB.setBoolean(null, true);
-                    travelToMap(5);
-                    System.out.println("[BRIDGE] Flying to Map 5 (Đảo Kame) to auto-buy TDLT (Gems=" + totalGems + ")");
-                    return;
-                }
+                try {
+                    Method mAb = getTypedMethod(clsP, "ab", true, void.class);
+                    if (mAb != null) {
+                        mAb.invoke(null);
+                        System.out.println("[BRIDGE] Invoked nro.p.ab() at Map 5 to buy TDLT from Santa!");
+                    }
+                } catch (Throwable ignored) {}
             }
 
-            // If gems == 0 or TDLT unavailable, KEEP TDLT FLAG ENABLED (nro.p.z = true) so when gems/item arrive it activates,
-            // and ensure Tàn Sát is enabled so character attacks mobs immediately!
+            // Ensure both in-game cT and Tàn Sát (nro.j.n) are enabled so character attacks mobs immediately on the current map!
             Class<?> clsJ = getGameClass("nro.j");
             if (clsJ != null) {
-                configurePunchSkill();
                 Field fN = getTypedField(clsJ, "n", boolean.class);
                 if (fN != null) fN.setBoolean(null, true);
             }
-            System.out.println("[BRIDGE] TDLT pending (slot=" + slot + ", mins=" + itemMins + ", gems=" + totalGems + "); ensured Tàn Sát is active so character attacks immediately.");
+            System.out.println("[BRIDGE] TDLT enabled (cT=true, ts=true, slot=" + slot + ", mins=" + itemMins + "); attacking immediately.");
         } catch (Throwable t) {
             System.out.println("[BRIDGE] syncInGameTdltState error: " + t);
         }
@@ -1074,6 +1079,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
     // Idempotently set a mod boolean feature to desired state without accidental toggle-off
     public static boolean setModFlag(String cmd, boolean desired) {
         try {
+            ensureModControllerInitialized();
             String c = cmd.trim().toLowerCase(Locale.ROOT);
             // Special dependency: tdlt requires gb (nro.A.J == true) and target map locked before enabling
             if ("tdlt".equals(c) && desired) {
@@ -1231,6 +1237,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
     // Call Xmap travel to mapId
     public static boolean travelToMap(int mapId) {
         try {
+            ensureModControllerInitialized();
             pauseAutoForTravel(mapId);
             // Speed up Xmap step interval (nro.F.J = 350ms instead of 1000ms)
             Class<?> clsF = getGameClass("nro.F");
@@ -1242,9 +1249,9 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
             }
             Class<?> cls_f = getGameClass("nro.f");
             if (cls_f != null) {
-                // Reset any stale Xmap error/capsule/delay flags before starting new route
+                // Reset any stale Xmap error/capsule/delay flags before starting new route (keep e=false before b(mapId) so b(mapId) doesn't toggle off!)
                 Field fE = getTypedField(cls_f, "e", boolean.class);
-                if (fE != null) fE.setBoolean(null, true);
+                if (fE != null) fE.setBoolean(null, false);
                 Field fL = getTypedField(cls_f, "l", int.class);
                 if (fL != null) fL.setInt(null, mapId);
                 Field fF = getTypedField(cls_f, "f", boolean.class);
@@ -1256,23 +1263,17 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 Field fC = getTypedField(cls_f, "c", long.class);
                 if (fC != null) fC.setLong(null, 0L);
 
-                // Call nro.f.b(mapId)
+                // Call nro.f.b(mapId) ONCE to compute route and start Xmap
                 Method bMeth = getTypedMethod(cls_f, "b", true, void.class, int.class);
                 if (bMeth != null) {
                     bMeth.invoke(null, mapId);
                 }
 
-                // Also trigger nro.f.a().a(2, Integer.valueOf(mapId)) to show in-game toast and start route
-                try {
-                    Method mA = getTypedMethodByReturnName(cls_f, "a", true, "nro.f");
-                    Object instF = (mA != null) ? mA.invoke(null) : null;
-                    if (instF != null) {
-                        Method mAct = getTypedMethod(cls_f, "a", false, void.class, int.class, Object.class);
-                        if (mAct != null) {
-                            mAct.invoke(instF, 2, Integer.valueOf(mapId));
-                        }
-                    }
-                } catch (Throwable ignored) {}
+                // Ensure target map and running flag are active if route did not immediately error
+                if (fL != null) fL.setInt(null, mapId);
+                if (fE != null && (fF == null || !fF.getBoolean(null))) {
+                    fE.setBoolean(null, true);
+                }
 
                 System.out.println("[BRIDGE] Travel to map " + mapId + " triggered via nro.f.b(" + mapId + ")");
                 return true;
@@ -1485,6 +1486,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
         try {
             // 1. Open Xmap menu via nro.f.a().o()
             if ("xmap".equals(lower)) {
+                ensureModControllerInitialized();
                 Class<?> cls_f = getGameClass("nro.f");
                 if (cls_f != null) {
                     Method mA = getTypedMethodByReturnName(cls_f, "a", true, "nro.f");
@@ -1500,6 +1502,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
 
             // 2. Open Hùng Hero Settings / Lọc Đồ Menu ("cd") via nro.G.a().aK()
             if ("cd".equals(lower) || "menu".equals(lower)) {
+                ensureModControllerInitialized();
                 Class<?> clsG = getGameClass("nro.G");
                 if (clsG != null) {
                     Method mA = getTypedMethodByReturnName(clsG, "a", true, "nro.G");
@@ -1515,6 +1518,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
 
             // 3. Use Capsule ("cs") via nro.G.a().a(2, null)
             if ("cs".equals(lower)) {
+                ensureModControllerInitialized();
                 Class<?> clsG = getGameClass("nro.G");
                 if (clsG != null) {
                     Method mA = getTypedMethodByReturnName(clsG, "a", true, "nro.G");
@@ -1530,6 +1534,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
 
             // 4. Use Porata Earring ("bt" / "bongtai") via nro.G.a().a(3, null)
             if ("bt".equals(lower) || "bongtai".equals(lower)) {
+                ensureModControllerInitialized();
                 Class<?> clsG = getGameClass("nro.G");
                 if (clsG != null) {
                     Method mA = getTypedMethodByReturnName(clsG, "a", true, "nro.G");
@@ -1546,6 +1551,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
             // 5. Direct Zone Switch ("k<zone>")
             if (lower.startsWith("k") && lower.length() > 1 && Character.isDigit(lower.charAt(1))) {
                 try {
+                    ensureModControllerInitialized();
                     int targetZone = Integer.parseInt(lower.substring(1).trim());
                     autoFarmZone = targetZone;
                     // Direct network packet via nro.am.a().K(targetZone)
@@ -1570,6 +1576,26 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 } catch (Throwable t) {
                     System.out.println("[BRIDGE] Error switching zone: " + t);
                 }
+            }
+
+            // 5b. Direct Speed Set ("s<speed>", e.g. "s20") via nro.F.I
+            if (lower.startsWith("s") && lower.length() > 1 && Character.isDigit(lower.charAt(1))) {
+                try {
+                    ensureModControllerInitialized();
+                    int spd = Integer.parseInt(lower.substring(1).trim());
+                    Class<?> clsF = getGameClass("nro.F");
+                    if (clsF != null) {
+                        Field fSpd = getTypedField(clsF, "I", int.class);
+                        if (fSpd != null) fSpd.setInt(null, spd);
+                        Method aMeth = getTypedMethodByReturnName(clsF, "a", true, "nro.F");
+                        Object instF = (aMeth != null) ? aMeth.invoke(null) : null;
+                        if (instF != null) {
+                            Method dMeth = getTypedMethod(clsF, "d", false, boolean.class, String.class);
+                            if (dMeth != null) dMeth.invoke(instF, lower);
+                        }
+                    }
+                    return true;
+                } catch (Throwable ignored) {}
             }
 
             // 6. Direct TDLT chip toggle
@@ -2596,6 +2622,11 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 String mapStr = params.get("map");
                 if (mapStr != null) {
                     int mapId = Integer.parseInt(mapStr);
+                    if (autoFarmActive) {
+                        autoFarmMap = mapId;
+                        saveAutoFarmState();
+                    }
+                    lastWatchdogTravelMs = System.currentTimeMillis();
                     boolean ok = travelToMap(mapId);
                     jsonResp = "{\"status\": \"" + (ok ? "ok" : "error") + "\", \"map\": " + mapId + "}";
                 } else {
