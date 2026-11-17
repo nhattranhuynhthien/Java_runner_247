@@ -35,6 +35,14 @@ app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 * 1024
 x11_lock = threading.Lock()
 login_attempts_lock = threading.Lock()
 
+# Screenshot cache — tránh chụp lại mỗi request khi nhiều tab mở cùng lúc
+_screenshot_cache: dict = {}  # keyed by fmt: {"jpeg": {"ts": 0.0, "data": bytes}}
+_screenshot_cache_lock = threading.Lock()
+
+def invalidate_screenshot_cache():
+    with _screenshot_cache_lock:
+        _screenshot_cache.clear()
+
 def safe_run(cmd, timeout=3):
     try:
         return subprocess.run(cmd, timeout=timeout, check=False)
@@ -45,16 +53,25 @@ def safe_run(cmd, timeout=3):
         print(f"[ERROR] Lỗi thực thi lệnh {cmd}: {e}")
         return None
 
+def _x11_grab_frame():
+    """Chỉ chụp vùng màn hình Xvfb trên POSIX (hoặc khi bật FORCE_IMAGEGRAB=1 cho kiểm thử), tránh chụp nhầm màn hình Desktop Windows."""
+    if os.name == "posix" or os.environ.get("FORCE_IMAGEGRAB") == "1":
+        return ImageGrab.grab(bbox=(0, MENU_BAR_OFFSET, SCREEN_WIDTH, MENU_BAR_OFFSET + SCREEN_HEIGHT))
+    return None
+
 def is_emulator_running():
-    for pattern in ("microemulator", "start_emu.sh"):
-        try:
-            p = subprocess.run(["pgrep", "-f", pattern], capture_output=True, text=True, timeout=2)
-            if p.returncode == 0:
-                return True
-        except Exception:
-            pass
     st = get_bridge_status()
-    return bool(st and st.get("bridge_online"))
+    if st and st.get("bridge_online"):
+        return True
+    if os.name == "posix":
+        for pattern in ("microemulator", "start_emu.sh"):
+            try:
+                p = subprocess.run(["pgrep", "-f", pattern], capture_output=True, text=True, timeout=2)
+                if p.returncode == 0:
+                    return True
+            except Exception:
+                pass
+    return False
 
 def restart_emulator(clean_cache=False):
     if clean_cache:
@@ -155,8 +172,8 @@ def verify_credentials(candidate_user, candidate_pass):
     if configured_password:
         return hmac.compare_digest(cand_pass, configured_password)
 
-    # Default fallback: "admin"
-    return hmac.compare_digest(cand_pass, "admin")
+    # No valid credentials configured — deny access to prevent unauthorized login
+    return False
 
 def update_credentials(new_user, new_pass):
     hashed, salt = hash_secret(str(new_pass).strip())
@@ -195,8 +212,42 @@ def reset_failed_attempts(ip):
 def upload_too_large(_error):
     return jsonify({"error": "File tải lên vượt quá giới hạn 64 MB."}), 413
 
+@app.before_request
+def csrf_protect():
+    """Chống tấn công CSRF cross-origin đối với các request thay đổi trạng thái dùng cookie session."""
+    if request.method not in ("POST", "PUT", "DELETE", "PATCH"):
+        return None
+    if request.headers.get("X-PIN") or request.headers.get("X-Auth-Token"):
+        return None
+    origin = request.headers.get("Origin")
+    referer = request.headers.get("Referer")
+    if not origin and not referer:
+        return None
+
+    import urllib.parse
+    allowed_hosts = {request.host.lower()}
+    fwd_host = request.headers.get("X-Forwarded-Host", "")
+    if fwd_host:
+        for h in fwd_host.split(","):
+            if h.strip():
+                allowed_hosts.add(h.strip().lower())
+
+    if origin:
+        if origin.strip().lower() == "null":
+            return jsonify({"error": "Cross-origin request blocked (CSRF protection)."}), 403
+        origin_host = urllib.parse.urlparse(origin).netloc.lower()
+        if not origin_host or origin_host not in allowed_hosts:
+            return jsonify({"error": "Cross-origin request blocked (CSRF protection)."}), 403
+    elif referer:
+        ref_host = urllib.parse.urlparse(referer).netloc.lower()
+        if ref_host and ref_host not in allowed_hosts:
+            return jsonify({"error": "Cross-origin request blocked (CSRF protection)."}), 403
+    return None
+
 @app.after_request
 def add_security_headers(response):
+    if request.method in ("POST", "PUT", "DELETE", "PATCH") and request.path.startswith("/api/"):
+        invalidate_screenshot_cache()
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['X-XSS-Protection'] = '1; mode=block'
@@ -281,10 +332,16 @@ def get_ram_info():
     return {"used_mb": 0, "total_mb": 512, "percent": 0}
 
 def check_nro_socket():
+    host = (os.environ.get("NRO_SERVER_HOST") or "").strip() or "112.213.94.23"
+    raw_port = (os.environ.get("NRO_SERVER_PORT") or "").strip()
+    try:
+        port = int(raw_port) if raw_port else 14445
+    except ValueError:
+        port = 14445
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(1.0)
     try:
-        s.connect(('112.213.94.23', 14445))
+        s.connect((host, port))
         s.close()
         return True
     except Exception:
@@ -293,6 +350,39 @@ def check_nro_socket():
 @app.route('/health', methods=['GET'])
 def health():
     return "OK", 200
+
+@app.route('/health/detailed', methods=['GET'])
+def health_detailed():
+    """Health check nâng cao: trả trạng thái chi tiết emulator, bridge, Xvfb."""
+    bridge_st = get_bridge_status()
+    bridge_online = bool(bridge_st and bridge_st.get("bridge_online"))
+    emu_running = bridge_online
+    if not emu_running:
+        for pattern in ("microemulator", "start_emu.sh"):
+            try:
+                p = subprocess.run(["pgrep", "-f", pattern], capture_output=True, text=True, timeout=2)
+                if p.returncode == 0:
+                    emu_running = True
+                    break
+            except Exception:
+                pass
+    xvfb_ok = os.path.exists("/tmp/.X11-unix/X1")
+    uptime_sec = int(time.time() - SERVER_START_TIME)
+    return jsonify({
+        "web": "ok",
+        "emulator": "running" if emu_running else "stopped",
+        "bridge": "online" if bridge_online else "offline",
+        "xvfb": "ok" if xvfb_ok else "error",
+        "uptime_sec": uptime_sec,
+        "ram": get_ram_info()
+    })
+
+@app.route('/api/ping', methods=['GET'])
+def api_ping():
+    """Endpoint siêu nhẹ để dashboard kiểm tra kết nối mà không tốn tài nguyên screenshot."""
+    if not check_pin(request):
+        return jsonify({"error": "Unauthorized"}), 403
+    return jsonify({"pong": True, "ts": time.time()})
 
 @app.route('/', methods=['GET'])
 def index():
@@ -324,6 +414,12 @@ def auth_login():
 
     if not password:
         return jsonify({"error": "Vui lòng nhập tài khoản và mật khẩu quản trị!"}), 400
+
+    _, sec_cfg = get_admin_credentials()
+    if "hashed_password" not in sec_cfg and not os.environ.get("ADMIN_PASSWORD", "").strip():
+        return jsonify({
+            "error": "Máy chủ chưa cấu hình ADMIN_PASSWORD. Hãy đặt biến môi trường ADMIN_PASSWORD trước khi đăng nhập."
+        }), 503
 
     if verify_credentials(username, password):
         reset_failed_attempts(ip)
@@ -412,19 +508,27 @@ def auth_status():
         "is_default": is_default
     })
 
-def capture_game_screenshot_bytes(quality=55):
-    """Capture 240x360 game screenshot bytes (JVM Bridge framebuffer + X11 ImageGrab)."""
+def capture_game_screenshot_bytes(quality=55, fmt='jpeg'):
+    """Capture 240x360 game screenshot bytes (JVM Bridge framebuffer + X11 ImageGrab).
+    fmt: 'jpeg' (default) hoặc 'webp' (nhỏ hơn ~30%, browsers hiện đại hỗ trợ).
+    """
+    def _encode(im, fmt, quality):
+        buf = io.BytesIO()
+        if fmt == 'webp':
+            im.save(buf, format='WEBP', quality=quality, method=4)
+        else:
+            im.save(buf, format='JPEG', quality=quality, optimize=True)
+        return buf.getvalue()
+
     x11_bytes = None
     x11_is_black = True
     try:
-        im = ImageGrab.grab(bbox=(0, MENU_BAR_OFFSET, SCREEN_WIDTH, MENU_BAR_OFFSET + SCREEN_HEIGHT))
+        im = _x11_grab_frame()
         if im is not None:
             im = im.convert('RGB')
             extrema = im.getextrema()
             x11_is_black = (extrema == ((0, 0), (0, 0), (0, 0)))
-            buf = io.BytesIO()
-            im.save(buf, format='JPEG', quality=quality, optimize=True)
-            x11_bytes = buf.getvalue()
+            x11_bytes = _encode(im, fmt, quality)
             if not x11_is_black:
                 return x11_bytes
     except Exception:
@@ -438,6 +542,12 @@ def capture_game_screenshot_bytes(quality=55):
             if resp.status == 200:
                 data = resp.read()
                 if data and len(data) > 200:
+                    if fmt == 'webp':
+                        try:
+                            im_bridge = Image.open(io.BytesIO(data)).convert('RGB')
+                            return _encode(im_bridge, 'webp', quality)
+                        except Exception:
+                            pass
                     return data
     except Exception:
         pass
@@ -447,16 +557,41 @@ def capture_game_screenshot_bytes(quality=55):
 
     buf = io.BytesIO()
     blank = Image.new('RGB', (SCREEN_WIDTH, SCREEN_HEIGHT), color=(15, 20, 30))
-    blank.save(buf, format='JPEG', quality=50)
+    if fmt == 'webp':
+        blank.save(buf, format='WEBP', quality=50)
+    else:
+        blank.save(buf, format='JPEG', quality=50)
     return buf.getvalue()
+
+
+def get_cached_screenshot(quality=55, max_age=0.2, fmt='jpeg'):
+    """Trả screenshot từ cache nếu chưa quá max_age giây, tránh block x11_lock khi nhiều tab."""
+    with _screenshot_cache_lock:
+        cached = _screenshot_cache.get(fmt)
+        if cached and (time.time() - cached["ts"]) < max_age:
+            return cached["data"]
+    data = capture_game_screenshot_bytes(quality, fmt=fmt)
+    with _screenshot_cache_lock:
+        _screenshot_cache[fmt] = {"ts": time.time(), "data": data}
+    return data
 
 @app.route('/api/screenshot', methods=['GET'])
 def screenshot():
     if not check_pin(request):
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
 
-    jpeg_bytes = capture_game_screenshot_bytes(quality=55)
-    response = Response(jpeg_bytes, mimetype='image/jpeg')
+    is_download = request.args.get('download') == '1'
+    if is_download:
+        img_bytes = capture_game_screenshot_bytes(quality=90, fmt='jpeg')
+    else:
+        accept = request.headers.get('Accept', '')
+        fmt = 'webp' if 'image/webp' in accept else 'jpeg'
+        img_bytes = get_cached_screenshot(quality=55, fmt=fmt)
+
+    mime = 'image/webp' if (len(img_bytes) >= 12 and img_bytes[:4] == b'RIFF' and img_bytes[8:12] == b'WEBP') else 'image/jpeg'
+    response = Response(img_bytes, mimetype=mime)
+    if is_download:
+        response.headers['Content-Disposition'] = 'attachment; filename="NRO_Capture.jpg"'
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     response.headers['Pragma'] = 'no-cache'
     return response
@@ -706,7 +841,7 @@ def handle_input():
 def is_chat_box_open():
     """Kiểm tra xem hộp thoại Chat có đang mở trên màn hình game hay không."""
     try:
-        im = ImageGrab.grab(bbox=(0, MENU_BAR_OFFSET, SCREEN_WIDTH, MENU_BAR_OFFSET + SCREEN_HEIGHT))
+        im = _x11_grab_frame()
         if im is not None:
             im = im.convert('RGB')
             # Nút OK tại (80, 274) có màu cam đặc trưng (r > 190, 100 < g < 185, b < 100)
@@ -734,7 +869,7 @@ def bridge_call(url, data=b"", timeout=3.5, retries=6):
             last_err = e
             err_str = str(e)
             if attempt < retries - 1 and ("Connection refused" in err_str or "timed out" in err_str):
-                time.sleep(0.5)
+                time.sleep(min(0.3 * (2 ** attempt), 3.0))  # exponential backoff: 0.3s, 0.6s, 1.2s, 2.4s, capped 3.0s
             else:
                 break
     raise last_err
@@ -1004,7 +1139,7 @@ def get_menu_layout():
     - 4 nút (Mới khởi động game): [Chơi mới, Đổi tài khoản, Máy chủ, Cấu hình]
     """
     try:
-        im = ImageGrab.grab(bbox=(0, MENU_BAR_OFFSET, SCREEN_WIDTH, MENU_BAR_OFFSET + SCREEN_HEIGHT))
+        im = _x11_grab_frame()
         if im is not None:
             im = im.convert('RGB')
             # Kiểm tra pixel tại (120, 144)
@@ -1020,7 +1155,7 @@ def get_menu_layout():
 def dismiss_error_popup_if_any():
     """Tự động phát hiện và xử lý mọi màn hình trung gian: Launcher, Tải dữ liệu, Thông báo, Menu chính."""
     try:
-        im = ImageGrab.grab(bbox=(0, MENU_BAR_OFFSET, SCREEN_WIDTH, MENU_BAR_OFFSET + SCREEN_HEIGHT))
+        im = _x11_grab_frame()
         if im is not None:
             im = im.convert('RGB')
             # 1. Phát hiện màn hình Launcher chờ Start (nền trắng tinh góc trên và giữa)
@@ -1107,6 +1242,7 @@ def emulator_ui_watchdog_worker():
     last_restart_ts = 0.0
     down_streak = 0
     while True:
+        st = None
         try:
             now = time.time()
             if not is_emulator_running():
@@ -1131,7 +1267,7 @@ def emulator_ui_watchdog_worker():
                     pass
 
             if not st or not st.get("in_game"):
-                im = ImageGrab.grab(bbox=(0, MENU_BAR_OFFSET, SCREEN_WIDTH, MENU_BAR_OFFSET + SCREEN_HEIGHT))
+                im = _x11_grab_frame()
                 if im is not None:
                     im = im.convert('RGB')
                     # Chỉ tự động qua màn hình Launcher trắng hoặc màn hình 'Vui lòng tải dữ liệu để chơi'
@@ -1149,7 +1285,8 @@ def emulator_ui_watchdog_worker():
                             safe_run(["xdotool", "key", "Return"], timeout=1)
         except Exception:
             pass
-        time.sleep(3.5)
+        # Adaptive sleep: 2s nếu chưa in_game (theo dõi chặt hơn), 5s nếu đang chơi bình thường
+        time.sleep(2.0 if not (st and st.get("in_game")) else 5.0)
 
 _ui_watchdog_thread = threading.Thread(target=emulator_ui_watchdog_worker, daemon=True)
 _ui_watchdog_thread.start()
@@ -1857,22 +1994,100 @@ def handle_notify_test():
 # HẠNG MỤC 5: Quản Lý Danh Sách Tài Khoản (Multi-Account Profiles Manager)
 # =========================================================================
 
+def _get_profile_cipher_key():
+    key_dir = os.path.dirname(PROFILES_CONFIG_FILE) or "."
+    key_path = os.path.join(key_dir, ".profile_key")
+    if os.path.exists(key_path):
+        try:
+            with open(key_path, "rb") as f:
+                raw = f.read()
+                if len(raw) >= 32:
+                    return raw[:32]
+        except Exception:
+            pass
+    new_key = secrets.token_bytes(32)
+    try:
+        os.makedirs(key_dir, exist_ok=True)
+        with open(key_path, "wb") as f:
+            f.write(new_key)
+        if os.name == "posix":
+            os.chmod(key_path, 0o600)
+    except Exception:
+        return hashlib.sha256(str(app.secret_key).encode("utf-8")).digest()
+    return new_key
+
+def _encrypt_profile_secret(plaintext):
+    if not plaintext:
+        return ""
+    s = str(plaintext)
+    if s.startswith("enc:v1:"):
+        return s
+    import base64
+    key = _get_profile_cipher_key()
+    pt_bytes = s.encode("utf-8")
+    nonce = secrets.token_bytes(16)
+    stream = hashlib.pbkdf2_hmac("sha256", key, nonce, 10000, dklen=len(pt_bytes))
+    ct_bytes = bytes(a ^ b for a, b in zip(pt_bytes, stream))
+    mac = hmac.new(key, nonce + ct_bytes, hashlib.sha256).digest()[:16]
+    token = base64.urlsafe_b64encode(nonce + mac + ct_bytes).decode("ascii")
+    return f"enc:v1:{token}"
+
+def _decrypt_profile_secret(stored):
+    if not stored:
+        return ""
+    s = str(stored)
+    if not s.startswith("enc:v1:"):
+        return s
+    import base64
+    try:
+        raw = base64.urlsafe_b64decode(s[7:].encode("ascii"))
+        if len(raw) < 32:
+            return ""
+        nonce, mac, ct_bytes = raw[:16], raw[16:32], raw[32:]
+        key = _get_profile_cipher_key()
+        expected_mac = hmac.new(key, nonce + ct_bytes, hashlib.sha256).digest()[:16]
+        if not hmac.compare_digest(mac, expected_mac) or not ct_bytes:
+            return ""
+        stream = hashlib.pbkdf2_hmac("sha256", key, nonce, 10000, dklen=len(ct_bytes))
+        return bytes(a ^ b for a, b in zip(ct_bytes, stream)).decode("utf-8")
+    except Exception:
+        return ""
+
 def load_account_profiles():
     if os.path.exists(PROFILES_CONFIG_FILE):
         try:
             with open(PROFILES_CONFIG_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, list):
-                    return data
+                    result = []
+                    for item in data:
+                        if isinstance(item, dict):
+                            p = dict(item)
+                            if "password" in p:
+                                p["password"] = _decrypt_profile_secret(p.get("password", ""))
+                            result.append(p)
+                    return result
         except Exception as e:
             print(f"[PROFILES] Lỗi đọc danh sách tài khoản: {e}")
     return []
 
 def save_account_profiles(profiles):
+    temp_path = None
     try:
-        os.makedirs(os.path.dirname(PROFILES_CONFIG_FILE) or ".", exist_ok=True)
-        with open(PROFILES_CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(profiles, f, ensure_ascii=False, indent=2)
+        prof_dir = os.path.dirname(PROFILES_CONFIG_FILE) or "."
+        os.makedirs(prof_dir, exist_ok=True)
+        disk_profiles = []
+        for item in profiles:
+            if isinstance(item, dict):
+                p = dict(item)
+                if p.get("password"):
+                    p["password"] = _encrypt_profile_secret(p["password"])
+                disk_profiles.append(p)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=prof_dir, prefix="profiles-", suffix=".tmp", delete=False) as f:
+            temp_path = f.name
+            json.dump(disk_profiles, f, ensure_ascii=False, indent=2)
+        os.replace(temp_path, PROFILES_CONFIG_FILE)
+        temp_path = None
         if os.name == "posix":
             try:
                 os.chmod(PROFILES_CONFIG_FILE, 0o600)
@@ -1882,6 +2097,9 @@ def save_account_profiles(profiles):
     except Exception as e:
         print(f"[PROFILES] Lỗi lưu danh sách tài khoản: {e}")
         return False
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
 
 @app.route('/api/profiles', methods=['GET', 'POST', 'DELETE'])
 def handle_profiles():
@@ -1981,7 +2199,12 @@ def get_logs():
     except Exception:
         pass
 
-    for log_path in ['/var/log/emulator.log', '/var/log/emulator_err.log', '/var/log/supervisord.log']:
+    log_candidates = ['/var/log/emulator.log', '/var/log/emulator_err.log', '/var/log/supervisord.log']
+    extra_log = os.environ.get("EMULATOR_LOG_FILE", "").strip()
+    if extra_log and extra_log not in log_candidates:
+        log_candidates.insert(0, extra_log)
+
+    for log_path in log_candidates:
         if os.path.exists(log_path):
             try:
                 with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -1992,6 +2215,10 @@ def get_logs():
                         log_lines.append("\n")
             except Exception:
                 pass
+
+    st = get_bridge_status()
+    if st and st.get("bridge_online"):
+        log_lines.append(f"=== GAME BRIDGE LIVE ===\n{json.dumps(st, ensure_ascii=False, indent=2)}\n")
 
     if not log_lines:
         log_lines = ["[LOG] Chưa có bản ghi log nào được tạo."]
@@ -2033,4 +2260,4 @@ def upload_rom():
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)

@@ -60,6 +60,10 @@ RUN sed -i 's/\r$//' /app/scripts/start_emu.sh /app/scripts/MANIFEST.MF /etc/sup
 # Set execution permission for scripts
 RUN chmod +x /app/scripts/start_emu.sh
 
+# Create a dedicated non-root user for the web process (emulator still runs as root for X11)
+RUN groupadd -r nro && useradd -r -g nro -d /data -s /sbin/nologin nro && \
+    chown -R nro:nro /data
+
 EXPOSE 8080
 
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

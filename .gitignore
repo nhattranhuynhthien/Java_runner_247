@@ -1,5 +1,11 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
+.local-automations/
 .DS_Store
 .env
+security_config.json
+notify_config.json
+account_profiles.json
+.profile_key
