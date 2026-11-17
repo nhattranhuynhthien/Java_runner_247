@@ -172,6 +172,28 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
             if (clsCr != null) {
                 Method mcL = getTypedMethod(clsCr, "cL", true, void.class);
                 if (mcL != null) mcL.invoke(null);
+
+                // Also restore DragonBoy Canvas if an LCDUI Form/List (e.g. Thiết Lập) took over the Display
+                Field fCanvas = getTypedFieldByTypeName(clsCr, "a", "nro.cr");
+                Object canvas = (fCanvas != null) ? fCanvas.get(null) : null;
+                if (canvas != null) {
+                    Class<?> mbCls = Class.forName("org.microemu.MIDletBridge", false, ClassLoader.getSystemClassLoader());
+                    Object curMidlet = mbCls.getMethod("getCurrentMIDlet").invoke(null);
+                    if (curMidlet != null && !curMidlet.getClass().getName().endsWith("Launcher")) {
+                        ClassLoader midCl = canvas.getClass().getClassLoader();
+                        if (midCl == null) midCl = ClassLoader.getSystemClassLoader();
+                        Class<?> dispCls = Class.forName("javax.microedition.lcdui.Display", false, midCl);
+                        Class<?> midletCls = Class.forName("javax.microedition.lcdui.MIDlet", false, midCl);
+                        Class<?> displayableCls = Class.forName("javax.microedition.lcdui.Displayable", false, midCl);
+                        Object display = dispCls.getMethod("getDisplay", midletCls).invoke(null, curMidlet);
+                        if (display != null) {
+                            Object curDisp = dispCls.getMethod("getCurrent").invoke(display);
+                            if (curDisp != null && curDisp != canvas) {
+                                dispCls.getMethod("setCurrent", displayableCls).invoke(display, canvas);
+                            }
+                        }
+                    }
+                }
             }
         } catch (Throwable ignored) {}
     }
@@ -224,18 +246,17 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 Object common = fCommon.get(cur);
                 if (common == null) return false;
 
-                // Ensure Main.main() has completely finished initMIDlet(false) (which clears midletClassOrUrl to null)
+                // Clear midletClassOrUrl once Launcher menuList & entry are populated so initMIDlet(true) starts the MIDlet directly without re-opening the JAR
                 try {
-                    Field fUrl = common.getClass().getDeclaredField("midletClassOrUrl");
-                    fUrl.setAccessible(true);
-                    if (fUrl.get(common) != null) {
-                        return false;
+                    Field fUrl = getTypedField(common.getClass(), "midletClassOrUrl", String.class);
+                    if (fUrl != null && fUrl.get(common) != null) {
+                        fUrl.set(common, null);
                     }
                 } catch (Throwable ignored) {}
 
                 lastLaunchAttemptMs = now;
-                Method mInit = common.getClass().getMethod("initMIDlet", boolean.class);
-                mInit.setAccessible(true);
+                Class<?> commonIface = Class.forName("org.microemu.app.CommonInterface", false, ClassLoader.getSystemClassLoader());
+                Method mInit = commonIface.getMethod("initMIDlet", boolean.class);
                 mInit.invoke(common, Boolean.TRUE);
                 System.out.println("[BRIDGE] Auto-launched MIDlet from MicroEmulator Launcher!");
                 return true;
@@ -404,16 +425,16 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
 
             String hint = (fieldHint != null) ? fieldHint.trim().toLowerCase(Locale.ROOT) : "";
 
-            // 1. Explicit hint for LoginScr user / pass
+            // 1. Explicit hint for LoginScr user / pass (in nro.cJ: e = user, b = pass; in nro.au: bs = isFocus)
             if (("user".equals(hint) || "pass".equals(hint)) && clsCJ != null) {
                 Field fLoginScr = getTypedFieldByTypeName(clsCr, "a", "nro.cJ");
                 Object loginScr = (fLoginScr != null) ? fLoginScr.get(null) : null;
                 if (loginScr != null) {
-                    Field fUser = getTypedFieldByTypeName(clsCJ, "b", "nro.au");
-                    Field fPass = getTypedFieldByTypeName(clsCJ, "e", "nro.au");
+                    Field fUser = getTypedFieldByTypeName(clsCJ, "e", "nro.au");
+                    Field fPass = getTypedFieldByTypeName(clsCJ, "b", "nro.au");
                     Object tfUser = (fUser != null) ? fUser.get(loginScr) : null;
                     Object tfPass = (fPass != null) ? fPass.get(loginScr) : null;
-                    Field fFocus = getTypedField(clsAu, "bf", boolean.class);
+                    Field fFocus = getTypedField(clsAu, "bs", boolean.class);
                     if ("user".equals(hint) && tfUser != null) {
                         if (fFocus != null) {
                             fFocus.setBoolean(tfUser, true);
@@ -466,16 +487,16 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 }
             }
 
-            // 4. Check LoginScr (nro.cJ) TFields (b = user, e = pass)
+            // 4. Check LoginScr (nro.cJ) TFields (e = user, b = pass; bs = isFocus)
             if (clsCJ != null) {
                 Field fLoginScr = getTypedFieldByTypeName(clsCr, "a", "nro.cJ");
                 Object loginScr = (fLoginScr != null) ? fLoginScr.get(null) : null;
                 if (loginScr != null) {
-                    Field fUser = getTypedFieldByTypeName(clsCJ, "b", "nro.au");
-                    Field fPass = getTypedFieldByTypeName(clsCJ, "e", "nro.au");
+                    Field fUser = getTypedFieldByTypeName(clsCJ, "e", "nro.au");
+                    Field fPass = getTypedFieldByTypeName(clsCJ, "b", "nro.au");
                     Object tfUser = (fUser != null) ? fUser.get(loginScr) : null;
                     Object tfPass = (fPass != null) ? fPass.get(loginScr) : null;
-                    Field fFocus = getTypedField(clsAu, "bf", boolean.class);
+                    Field fFocus = getTypedField(clsAu, "bs", boolean.class);
                     if (fFocus != null) {
                         if (tfPass != null && fFocus.getBoolean(tfPass)) return tfPass;
                         if (tfUser != null && fFocus.getBoolean(tfUser)) return tfUser;
@@ -586,9 +607,9 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                     if (mCr != null) mCr.invoke(loginScr);
 
                     if (clsAu != null) {
-                        Field fUser = getTypedFieldByTypeName(clsCJ, "b", "nro.au");
-                        Field fPass = getTypedFieldByTypeName(clsCJ, "e", "nro.au");
-                        Field fFocus = getTypedField(clsAu, "bf", boolean.class);
+                        Field fUser = getTypedFieldByTypeName(clsCJ, "e", "nro.au");
+                        Field fPass = getTypedFieldByTypeName(clsCJ, "b", "nro.au");
+                        Field fFocus = getTypedField(clsAu, "bs", boolean.class);
                         if (fFocus != null) {
                             Object tfUser = (fUser != null) ? fUser.get(loginScr) : null;
                             Object tfPass = (fPass != null) ? fPass.get(loginScr) : null;
@@ -676,8 +697,8 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
             Method mGet = dfCls.getMethod("getDevice");
             Object dev = mGet.invoke(null);
             if (dev == null) return false;
-            Method mDisp = dev.getClass().getMethod("getDeviceDisplay");
-            mDisp.setAccessible(true);
+            Class<?> devIface = Class.forName("org.microemu.device.Device", false, ClassLoader.getSystemClassLoader());
+            Method mDisp = devIface.getMethod("getDeviceDisplay");
             return mDisp.invoke(dev) != null;
         } catch (Throwable ignored) {
             return isMidletLoaded();
@@ -1375,7 +1396,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
             }
             Thread.sleep(350);
 
-            // Populate LoginScr TFields (b=user, e=pass) using type-safe reflection
+            // Populate LoginScr TFields (e=user, b=pass) using type-safe reflection
             if (clsCr != null && clsCJ != null) {
                 Field fLoginScr = getTypedFieldByTypeName(clsCr, "a", "nro.cJ");
                 if (fLoginScr != null) {
@@ -1385,7 +1406,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                         fLoginScr.set(null, loginScr);
                     }
                     if (cleanUser != null && !cleanUser.isEmpty()) {
-                        Field fUser = getTypedFieldByTypeName(clsCJ, "b", "nro.au");
+                        Field fUser = getTypedFieldByTypeName(clsCJ, "e", "nro.au");
                         Object tfUser = (fUser != null) ? fUser.get(loginScr) : null;
                         if (tfUser != null) {
                             Method mT = getTypedMethod(tfUser.getClass(), "t", false, void.class, String.class);
@@ -1393,7 +1414,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                         }
                     }
                     if (cleanPass != null && !cleanPass.isEmpty()) {
-                        Field fPass = getTypedFieldByTypeName(clsCJ, "e", "nro.au");
+                        Field fPass = getTypedFieldByTypeName(clsCJ, "b", "nro.au");
                         Object tfPass = (fPass != null) ? fPass.get(loginScr) : null;
                         if (tfPass != null) {
                             Method mT = getTypedMethod(tfPass.getClass(), "t", false, void.class, String.class);
