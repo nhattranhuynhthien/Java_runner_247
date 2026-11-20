@@ -148,6 +148,93 @@ def _x11_grab_frame():
             return ImageGrab.grab(bbox=(0, MENU_BAR_OFFSET, SCREEN_WIDTH, MENU_BAR_OFFSET + SCREEN_HEIGHT))
     return None
 
+def _grab_game_frame_rgb():
+    """Chụp khung hình 240x360 dạng PIL RGB Image: ưu tiên X11 (nếu không đen), fallback sang Bridge JVM framebuffer."""
+    try:
+        raw_im = _x11_grab_frame()
+        if raw_im is not None:
+            try:
+                rgb_im = raw_im.convert('RGB')
+            finally:
+                raw_im.close()
+            if rgb_im.getextrema() != ((0, 0), (0, 0), (0, 0)):
+                return rgb_im
+            rgb_im.close()
+    except Exception:
+        pass
+
+    try:
+        req = urllib.request.Request("http://127.0.0.1:28888/api/game/screenshot", headers={"User-Agent": "NRO-Server"})
+        with urllib.request.urlopen(req, timeout=1.0) as resp:
+            if resp.status == 200:
+                data = resp.read()
+                if data and len(data) > 200:
+                    with Image.open(io.BytesIO(data)) as im_src:
+                        return im_src.convert('RGB')
+    except Exception:
+        pass
+    return None
+
+def _is_orange_btn(rgb):
+    r, g, b = rgb[:3]
+    return r > 180 and 100 < g < 185 and b < 90
+
+def _is_launcher_screen(im):
+    """Phát hiện màn hình Launcher trắng của MicroEmulator."""
+    if im is None or im.width < 121 or im.height < 181:
+        return False
+    p_top = im.getpixel((10, 10))[:3]
+    p_mid = im.getpixel((120, 180))[:3]
+    return p_top == (255, 255, 255) and p_mid == (255, 255, 255)
+
+def _is_download_data_screen(im):
+    """Phát hiện màn hình 'Vui lòng tải dữ liệu để chơi' (nền đen + nút cam ở y~229..243, không có nút ở y=144/158)."""
+    if im is None or im.width < 221 or im.height < 245:
+        return False
+    bg_l = im.getpixel((20, 20))[:3]
+    bg_r = im.getpixel((220, 20))[:3]
+    if max(bg_l) > 35 or max(bg_r) > 35:
+        return False
+    if _is_orange_btn(im.getpixel((120, 144))) or _is_orange_btn(im.getpixel((120, 158))):
+        return False
+    dl_pts = [(119, 229), (145, 234), (119, 243)]
+    return sum(1 for pt in dl_pts if _is_orange_btn(im.getpixel(pt))) >= 2
+
+def _trigger_launcher_start():
+    """Khởi chạy MIDlet từ MicroEmulator Launcher ưu tiên qua Bridge (tránh click chuột gây NPE và tránh gửi F2 gây Thoát game)."""
+    try:
+        res = bridge_call("http://127.0.0.1:28888/api/game/auto_launch", timeout=1.5, retries=1)
+        if res and (res.get("launched") or res.get("midlet_loaded") or res.get("restarting_jvm")):
+            invalidate_screenshot_cache()
+            return True
+    except Exception:
+        pass
+    if os.name == "posix":
+        with x11_lock:
+            focus_game_window()
+            safe_run(["xdotool", "key", "Return"], timeout=1)
+        invalidate_screenshot_cache()
+        return True
+    return False
+
+def _trigger_download_data_click():
+    """Bấm nút 'Tải dữ liệu' tại (120, 234) ưu tiên qua Bridge, fallback X11."""
+    try:
+        res = bridge_call("http://127.0.0.1:28888/api/game/input_click?x=120&y=234", timeout=1.5, retries=1)
+        if res and res.get("status") == "ok":
+            invalidate_screenshot_cache()
+            return True
+    except Exception:
+        pass
+    if os.name == "posix":
+        with x11_lock:
+            focus_game_window()
+            safe_run(["xdotool", "mousemove", "120", str(234 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+            safe_run(["xdotool", "key", "Return"], timeout=1)
+        invalidate_screenshot_cache()
+        return True
+    return False
+
 def _is_emulator_process_running():
     if os.name != "posix":
         return False
@@ -1178,12 +1265,8 @@ def handle_input():
 def is_chat_box_open():
     """Kiểm tra xem hộp thoại Chat có đang mở trên màn hình game hay không."""
     try:
-        raw_im = _x11_grab_frame()
-        if raw_im is not None:
-            try:
-                im = raw_im.convert('RGB')
-            finally:
-                raw_im.close()
+        im = _grab_game_frame_rgb()
+        if im is not None:
             try:
                 # Nút OK tại (80, 274) có màu cam đặc trưng (r > 190, 100 < g < 185, b < 100)
                 r, g, b = im.getpixel((80, 274))[:3]
@@ -1565,12 +1648,8 @@ def get_menu_layout():
     - 4 nút (Mới khởi động game): [Chơi mới, Đổi tài khoản, Máy chủ, Cấu hình]
     """
     try:
-        raw_im = _x11_grab_frame()
-        if raw_im is not None:
-            try:
-                im = raw_im.convert('RGB')
-            finally:
-                raw_im.close()
+        im = _grab_game_frame_rgb()
+        if im is not None:
             try:
                 # Kiểm tra pixel tại (120, 144)
                 # Với layout 5 nút: (120, 144) là tâm nút 'Chơi tiếp' màu cam (r > 180, g > 110)
@@ -1587,31 +1666,18 @@ def get_menu_layout():
 def dismiss_error_popup_if_any():
     """Tự động phát hiện và xử lý mọi màn hình trung gian: Launcher, Tải dữ liệu, Thông báo, Menu chính."""
     try:
-        raw_im = _x11_grab_frame()
-        if raw_im is not None:
-            try:
-                im = raw_im.convert('RGB')
-            finally:
-                raw_im.close()
+        im = _grab_game_frame_rgb()
+        if im is not None:
             try:
                 # 1. Phát hiện màn hình Launcher chờ Start (nền trắng tinh góc trên và giữa)
-                p_top = im.getpixel((10, 10))[:3]
-                p_mid = im.getpixel((120, 180))[:3]
-                if p_top == (255, 255, 255) and p_mid == (255, 255, 255):
-                    with x11_lock:
-                        safe_run(["xdotool", "mousemove", "160", str(208 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
-                        safe_run(["xdotool", "key", "F2"], timeout=1)
-                        safe_run(["xdotool", "key", "Return"], timeout=1)
+                if _is_launcher_screen(im):
+                    _trigger_launcher_start()
                     time.sleep(0.4)
                     return True
 
-                # 2. Phát hiện màn hình 'Vui lòng tải dữ liệu để chơi' (nút cam tại (119, 234), không có nút Chơi tiếp)
-                r_dl, g_dl, b_dl = im.getpixel((119, 234))[:3]
-                r_ct, g_ct, b_ct = im.getpixel((120, 144))[:3]
-                if (r_dl > 180 and 100 < g_dl < 185 and b_dl < 90) and r_ct < 130:
-                    with x11_lock:
-                        safe_run(["xdotool", "mousemove", "119", str(234 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
-                        safe_run(["xdotool", "key", "Return"], timeout=1)
+                # 2. Phát hiện màn hình 'Vui lòng tải dữ liệu để chơi' (nền đen + nút cam)
+                if _is_download_data_screen(im):
+                    _trigger_download_data_click()
                     time.sleep(1.0)
                     return True
 
@@ -1685,13 +1751,16 @@ def emulator_ui_watchdog_worker():
     """
     time.sleep(15.0)
     last_restart_ts = 0.0
+    last_dl_click_ts = 0.0
     down_streak = 0
+    launcher_stuck_streak = 0
     while True:
         st = None
         try:
             now = time.time()
             if not is_emulator_running():
                 down_streak += 1
+                launcher_stuck_streak = 0
                 if down_streak >= 2 and (now - last_restart_ts > 30.0):
                     last_restart_ts = now
                     down_streak = 0
@@ -1706,38 +1775,45 @@ def emulator_ui_watchdog_worker():
 
             st = get_bridge_status()
             if st and not st.get("midlet_loaded", True):
-                try:
-                    bridge_call("http://127.0.0.1:28888/api/game/auto_launch", timeout=1.5, retries=1)
-                except Exception:
-                    pass
+                _trigger_launcher_start()
+                launcher_stuck_streak += 1
+                if launcher_stuck_streak >= 5 and (now - last_restart_ts > 30.0):
+                    last_restart_ts = now
+                    launcher_stuck_streak = 0
+                    print("[WATCHDOG] MIDlet kẹt ở Launcher quá lâu, tự động restart emulator sạch...")
+                    try:
+                        restart_emulator(clean_cache=False)
+                    except Exception as re_err:
+                        print(f"[WATCHDOG] Lỗi restart emulator từ Launcher: {re_err}")
+                time.sleep(2.0)
+                continue
 
             if not st or not st.get("in_game"):
-                if x11_lock.acquire(blocking=False):
+                im = _grab_game_frame_rgb()
+                if im is not None:
                     try:
-                        raw_im = _x11_grab_frame()
-                        if raw_im is not None:
-                            try:
-                                im = raw_im.convert('RGB')
-                            finally:
-                                raw_im.close()
-                            try:
-                                # Chỉ tự động qua màn hình Launcher trắng hoặc màn hình 'Vui lòng tải dữ liệu để chơi'
-                                p_top = im.getpixel((10, 10))[:3]
-                                p_mid = im.getpixel((120, 180))[:3]
-                                if p_top == (255, 255, 255) and p_mid == (255, 255, 255):
-                                    safe_run(["xdotool", "mousemove", "160", str(208 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
-                                    safe_run(["xdotool", "key", "F2"], timeout=1)
-                                    safe_run(["xdotool", "key", "Return"], timeout=1)
-                                else:
-                                    r_dl, g_dl, b_dl = im.getpixel((119, 234))[:3]
-                                    r_ct, g_ct, b_ct = im.getpixel((120, 144))[:3]
-                                    if (r_dl > 180 and 100 < g_dl < 185 and b_dl < 90) and r_ct < 130:
-                                        safe_run(["xdotool", "mousemove", "119", str(234 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
-                                        safe_run(["xdotool", "key", "Return"], timeout=1)
-                            finally:
-                                im.close()
+                        # Chỉ tự động qua màn hình Launcher trắng hoặc màn hình 'Vui lòng tải dữ liệu để chơi'
+                        if _is_launcher_screen(im):
+                            launcher_stuck_streak += 1
+                            _trigger_launcher_start()
+                            if launcher_stuck_streak >= 4 and (now - last_restart_ts > 30.0):
+                                last_restart_ts = now
+                                launcher_stuck_streak = 0
+                                print("[WATCHDOG] Phát hiện màn hình Launcher trắng kéo dài, tự động restart emulator...")
+                                try:
+                                    restart_emulator(clean_cache=False)
+                                except Exception as re_err:
+                                    print(f"[WATCHDOG] Lỗi restart emulator từ màn hình trắng: {re_err}")
+                        else:
+                            launcher_stuck_streak = 0
+                            if _is_download_data_screen(im) and (now - last_dl_click_ts >= 8.0):
+                                last_dl_click_ts = now
+                                print("[WATCHDOG] Phát hiện màn hình 'Vui lòng tải dữ liệu để chơi', tự động bấm Tải dữ liệu...")
+                                _trigger_download_data_click()
                     finally:
-                        x11_lock.release()
+                        im.close()
+            else:
+                launcher_stuck_streak = 0
         except Exception:
             pass
         # Adaptive sleep: 2s nếu chưa in_game (theo dõi chặt hơn), 5s nếu đang chơi bình thường

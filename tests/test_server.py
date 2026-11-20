@@ -964,3 +964,56 @@ def test_notify_ssrf_validation_and_profiles_delete_and_concurrent_key(app_env, 
         t.join()
     assert len(keys) == 8
     assert len(set(keys)) == 1 and len(keys[0]) == 32
+
+
+def test_frame_bridge_fallback_and_launcher_download_detection(app_env):
+    from PIL import Image
+    srv, _ = app_env
+
+    # 1. _grab_game_frame_rgb falls back to Bridge JPEG when X11 grab raises OSError (e.g. Pillow without XCB)
+    sample = Image.new("RGB", (240, 360), color=(0, 0, 0))
+    # Draw realistic orange "Tải dữ liệu" button rectangle (x=87..152, y=226..247) with dark text pixel at (119, 234)
+    for bx in range(87, 153):
+        for by in range(226, 248):
+            sample.putpixel((bx, by), (235, 155, 60))
+    sample.putpixel((119, 234), (122, 41, 0))
+    buf = io.BytesIO()
+    sample.save(buf, format="JPEG", quality=90)
+    jpeg_bytes = buf.getvalue()
+    assert len(jpeg_bytes) > 200
+
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.read.return_value = jpeg_bytes
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch.object(srv, "_x11_grab_frame", side_effect=OSError("Pillow was built without XCB support")), \
+         patch("urllib.request.urlopen", return_value=mock_resp):
+        im = srv._grab_game_frame_rgb()
+    assert im is not None
+    try:
+        assert srv._is_download_data_screen(im) is True
+        assert srv._is_launcher_screen(im) is False
+    finally:
+        im.close()
+
+    # 2. Grey 4-button main menu must NOT falsely trigger _is_download_data_screen
+    menu4 = Image.new("RGB", (240, 360), color=(96, 96, 96))
+    for pt in [(120, 158), (119, 229), (119, 243)]:
+        menu4.putpixel(pt, (222, 135, 66))
+    assert srv._is_download_data_screen(menu4) is False
+    menu4.close()
+
+    # 3. White MicroEmulator Launcher screen triggers _is_launcher_screen & Bridge auto_launch
+    white = Image.new("RGB", (240, 360), color=(255, 255, 255))
+    assert srv._is_launcher_screen(white) is True
+    assert srv._is_download_data_screen(white) is False
+    white.close()
+
+    with patch.object(srv, "bridge_call", return_value={"status": "ok", "midlet_loaded": False, "restarting_jvm": True}) as mock_bc:
+        assert srv._trigger_launcher_start() is True
+        assert "/api/game/auto_launch" in mock_bc.call_args[0][0]
+
+    with patch.object(srv, "bridge_call", return_value={"status": "ok"}) as mock_bc:
+        assert srv._trigger_download_data_click() is True
+        assert "/api/game/input_click?x=120&y=234" in mock_bc.call_args[0][0]

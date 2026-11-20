@@ -37,6 +37,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
     private static final int TASK_DIRECT_LOGIN = 4;
     private static final int TASK_AUTO_FARM = 5;
     private static final int TASK_SHUTDOWN = 6;
+    private static final int TASK_JVM_RESTART = 7;
 
     private final int taskType;
     private final Socket clientSocket;
@@ -123,6 +124,8 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
             runAutoFarmWorker(farmNeedTravel, farmInitialMap, farmTargetMap, farmMode);
         } else if (taskType == TASK_SHUTDOWN) {
             shutdownBridge();
+        } else if (taskType == TASK_JVM_RESTART) {
+            runCleanJvmRestart();
         }
     }
 
@@ -291,16 +294,69 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
         } catch (Throwable ignored) {}
     }
 
+    private static volatile boolean everLoadedMidlet = false;
+    private static final AtomicBoolean jvmRestartScheduled = new AtomicBoolean(false);
+
+    private static void runCleanJvmRestart() {
+        try {
+            Thread.sleep(1200);
+        } catch (InterruptedException ignored) {}
+        if (Boolean.getBoolean("nro.bridge.no_exit")) {
+            System.out.println("[BRIDGE] nro.bridge.no_exit=true; skipping System.exit(1).");
+            jvmRestartScheduled.set(false);
+            return;
+        }
+        System.out.println("[BRIDGE] Exiting JVM cleanly so Supervisor starts a fresh MicroEmulator instance.");
+        System.out.flush();
+        System.exit(1);
+    }
+
+    private static boolean scheduleCleanJvmRestart() {
+        if (jvmRestartScheduled.compareAndSet(false, true)) {
+            System.out.println("[BRIDGE] MIDlet exited via notifyDestroyed() back to Launcher; scheduling clean JVM restart in 1.2s...");
+            Thread t = new Thread(
+                new GameBridgeAgent(TASK_JVM_RESTART, null, null, null, 0, false, null, -1, null),
+                "NRO-Bridge-Restart"
+            );
+            t.setDaemon(true);
+            t.start();
+        }
+        return true;
+    }
+
     // Check if the game MIDlet (nro.hero68) has started and left MicroEmulator's Launcher screen
     public static boolean isMidletLoaded() {
+        boolean microEmuPresent = false;
         try {
             Class<?> mbCls = Class.forName("org.microemu.MIDletBridge", false, ClassLoader.getSystemClassLoader());
+            microEmuPresent = true;
             Method mGetCur = mbCls.getMethod("getCurrentMIDlet");
             Object cur = mGetCur.invoke(null);
-            if (cur != null && !cur.getClass().getName().endsWith("Launcher")) {
+            if (cur != null) {
+                if (cur.getClass().getName().endsWith("Launcher")) {
+                    cachedClassLoader = null;
+                    return false;
+                }
+                everLoadedMidlet = true;
                 return true;
             }
+            Method mGetCtx = mbCls.getMethod("getMIDletContext");
+            Object ctx = mGetCtx.invoke(null);
+            if (ctx == null) {
+                cachedClassLoader = null;
+                return false;
+            }
+            Method mIsLauncher = ctx.getClass().getMethod("isLauncher");
+            if (Boolean.TRUE.equals(mIsLauncher.invoke(ctx))) {
+                cachedClassLoader = null;
+                return false;
+            }
+            everLoadedMidlet = true;
+            return true;
         } catch (Throwable ignored) {}
+        if (microEmuPresent) {
+            return false;
+        }
         try {
             Class<?> clsCr = getGameClass("nro.cr");
             if (clsCr != null) {
@@ -325,6 +381,15 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
             Method mGetCur = mbCls.getMethod("getCurrentMIDlet");
             Object cur = mGetCur.invoke(null);
             if (cur != null && cur.getClass().getName().endsWith("Launcher")) {
+                // DragonBoy static singletons (nro.cr/nro.br/nro.hero68) cannot be cleanly re-initialized
+                // inside MicroEmulator's reused MIDletClassLoader after notifyDestroyed(); trigger a clean JVM restart.
+                if (everLoadedMidlet) {
+                    lastLaunchAttemptMs = now;
+                    cachedClassLoader = null;
+                    scheduleCleanJvmRestart();
+                    return false;
+                }
+
                 Field fMenu = cur.getClass().getDeclaredField("menuList");
                 fMenu.setAccessible(true);
                 Object menuList = fMenu.get(cur);
@@ -347,6 +412,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                     }
                 } catch (Throwable ignored) {}
 
+                cachedClassLoader = null;
                 lastLaunchAttemptMs = now;
                 Class<?> commonIface = Class.forName("org.microemu.app.CommonInterface", false, ClassLoader.getSystemClassLoader());
                 Method mInit = commonIface.getMethod("initMIDlet", boolean.class);
@@ -419,8 +485,11 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
             int keyCode = mapKeyToJ2meCode(rawKey);
             if (keyCode == 0) return false;
 
-            if (!isMidletLoaded() && (keyCode == -5 || keyCode == -7 || keyCode == 32 || keyCode == 53)) {
-                if (autoLaunchMidletIfNeeded()) return true;
+            if (!isMidletLoaded()) {
+                if (keyCode == -5 || keyCode == -7 || keyCode == 32 || keyCode == 53) {
+                    autoLaunchMidletIfNeeded();
+                }
+                return true;
             }
 
             boolean delivered = false;
@@ -467,7 +536,8 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
             int cy = Math.max(0, Math.min(359, y));
 
             if (!isMidletLoaded()) {
-                if (autoLaunchMidletIfNeeded()) return true;
+                autoLaunchMidletIfNeeded();
+                return true;
             }
 
             boolean delivered = false;
@@ -759,7 +829,11 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
             Class<?> mbCls = Class.forName("org.microemu.MIDletBridge", false, ClassLoader.getSystemClassLoader());
             Method mGetCur = mbCls.getMethod("getCurrentMIDlet");
             Object cur = mGetCur.invoke(null);
-            if (cur != null && !cur.getClass().getName().endsWith("Launcher")) {
+            if (cur != null) {
+                if (cur.getClass().getName().endsWith("Launcher")) {
+                    cachedClassLoader = null;
+                    return null;
+                }
                 ClassLoader activeCl = cur.getClass().getClassLoader();
                 if (activeCl != null) {
                     cachedClassLoader = activeCl;
@@ -833,6 +907,9 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
 
     private static Class<?> getGameClass(String name) {
         if ("nro.F".equals(name) && !isDeviceReady()) {
+            return null;
+        }
+        if (name != null && name.startsWith("nro.") && !isMidletLoaded()) {
             return null;
         }
         ClassLoader cl = findMidletClassLoader();
@@ -2227,7 +2304,8 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
 
         while (running) {
             try {
-                Thread.sleep(5000);
+                boolean midletLoadedNow = isMidletLoaded();
+                Thread.sleep(midletLoadedNow ? 5000 : 2000);
                 if (!running) break;
 
                 // Ensure HTTP bridge server is always alive and listening
@@ -2821,7 +2899,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 jsonResp = toJson(getStatus());
             } else if (path.equals("/api/game/auto_launch")) {
                 boolean ok = autoLaunchMidletIfNeeded();
-                jsonResp = "{\"status\": \"ok\", \"midlet_loaded\": " + ok + "}";
+                jsonResp = "{\"status\": \"ok\", \"midlet_loaded\": " + ok + ", \"restarting_jvm\": " + jvmRestartScheduled.get() + "}";
             } else if (path.equals("/api/game/input_key")) {
                 String k = params.get("key");
                 boolean ok = sendKey(k);

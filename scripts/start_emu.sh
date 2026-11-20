@@ -119,16 +119,16 @@ if [ -f "$JAR_FILE" ]; then
                 break
             fi
 
-            # Only fall back to X11 clicks after giving GameBridgeAgent's own watchdog time to auto-launch cleanly
-            if [ "$i" -ge 5 ] && command -v xdotool >/dev/null 2>&1; then
+            # Only fall back to X11 Return if GameBridgeAgent HTTP API is completely unreachable.
+            # Never send F2 (Right Softkey) blindly because in DragonBoy F2 triggers Exit (notifyDestroyed).
+            if [ -z "$STATUS_JSON" ] && [ "$i" -ge 10 ] && command -v xdotool >/dev/null 2>&1; then
                 WID="$(DISPLAY=:1 xdotool search --onlyvisible --name "MicroEmulator" 2>/dev/null | tail -n 1)"
                 if [ -z "$WID" ]; then
                     WID="$(DISPLAY=:1 xdotool search --onlyvisible --class "org-microemu-app-Main" 2>/dev/null | tail -n 1)"
                 fi
                 if [ -n "$WID" ]; then
                     DISPLAY=:1 xdotool windowfocus "$WID" 2>/dev/null || true
-                    DISPLAY=:1 xdotool mousemove 160 232 click 1 2>/dev/null || true
-                    DISPLAY=:1 xdotool key F2 Return 2>/dev/null || true
+                    DISPLAY=:1 xdotool key Return 2>/dev/null || true
                 fi
             fi
         done
