@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="csrf-token" content="{{ csrf_token|default('') }}">
     <title>Cổng Xác Thực • NRO CYBER CLOUD 24/7</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
@@ -129,7 +130,7 @@
                         </span>
                         <span class="text-[10px] text-slate-500 font-mono">Bắt buộc</span>
                     </label>
-                    <input type="text" id="username-input" required autofocus placeholder="admin"
+                    <input type="text" id="username-input" required autofocus autocomplete="username" placeholder="admin"
                         class="w-full bg-slate-950/80 border border-white/15 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 font-mono transition">
                 </div>
 
@@ -142,7 +143,7 @@
                         <span class="text-[10px] text-slate-500 font-mono">Bảo mật</span>
                     </label>
                     <div class="relative">
-                        <input type="password" id="password-input" required placeholder="Nhập mật khẩu..."
+                        <input type="password" id="password-input" required autocomplete="current-password" placeholder="Nhập mật khẩu..."
                             class="w-full bg-slate-950/80 border border-white/15 rounded-xl pl-3.5 pr-14 py-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-fuchsia-400 focus:ring-1 focus:ring-fuchsia-400 font-mono tracking-wider transition">
                         <button type="button" id="btn-toggle-pass" class="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-900 border border-white/10 font-mono transition">
                             Hiện
@@ -161,7 +162,7 @@
                 <span class="flex items-center gap-1">
                     <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Server Socket: ONLINE
                 </span>
-                <span>Port: 8080</span>
+                <span id="login-port-info">TLS / HTTP</span>
             </div>
         </div>
 
@@ -175,97 +176,152 @@
 
     <!-- Script Handling -->
     <script>
-        const form = document.getElementById('login-form');
-        const usernameInput = document.getElementById('username-input');
-        const passwordInput = document.getElementById('password-input');
-        const btnTogglePass = document.getElementById('btn-toggle-pass');
-        const errorBanner = document.getElementById('error-banner');
-        const errorText = document.getElementById('error-text');
-        const errorSubtext = document.getElementById('error-subtext');
-        const btnSubmit = document.getElementById('btn-submit');
-        const btnText = document.getElementById('btn-text');
-        const btnSpinner = document.getElementById('btn-spinner');
+        (function() {
+            const form = document.getElementById('login-form');
+            const usernameInput = document.getElementById('username-input');
+            const passwordInput = document.getElementById('password-input');
+            const btnTogglePass = document.getElementById('btn-toggle-pass');
+            const errorBanner = document.getElementById('error-banner');
+            const errorText = document.getElementById('error-text');
+            const errorSubtext = document.getElementById('error-subtext');
+            const btnSubmit = document.getElementById('btn-submit');
+            const btnText = document.getElementById('btn-text');
+            const btnSpinner = document.getElementById('btn-spinner');
+            const portInfo = document.getElementById('login-port-info');
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
 
-        // Toggle mask
-        btnTogglePass.addEventListener('click', () => {
-            if (passwordInput.type === 'password') {
-                passwordInput.type = 'text';
-                btnTogglePass.textContent = 'Ẩn';
-            } else {
-                passwordInput.type = 'password';
-                btnTogglePass.textContent = 'Hiện';
-            }
-        });
-
-        // Submit Form
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const username = usernameInput.value.trim();
-            const password = passwordInput.value;
-
-            if (!username || !password) return;
-
-            errorBanner.classList.add('hidden');
-            btnSubmit.disabled = true;
-            btnText.textContent = "ĐANG XÁC THỰC...";
-            btnSpinner.classList.remove('hidden');
-
-            try {
-                const res = await fetch('/api/auth/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        username: username,
-                        password: password
-                    })
-                });
-
-                const data = await res.json();
-                if (res.ok && data.status === 'ok') {
-                    btnText.textContent = "XÁC THỰC THÀNH CÔNG!";
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 300);
+            if (portInfo) {
+                if (window.location.port) {
+                    portInfo.textContent = `Port: ${window.location.port}`;
                 } else {
-                    errorBanner.classList.remove('hidden');
-                    errorText.textContent = data.error || "Tài khoản hoặc mật khẩu không chính xác.";
-                    
-                    if (data.banned || data.locked) {
-                        errorSubtext.textContent = "Vui lòng đợi 5 phút rồi thử lại.";
-                    } else if (data.remaining !== undefined) {
-                        errorSubtext.textContent = `Còn ${data.remaining} lần thử trước khi tạm giới hạn đăng nhập.`;
+                    portInfo.textContent = window.location.protocol === 'https:' ? 'HTTPS • 443' : 'HTTP • 80';
+                }
+            }
+
+            // Toggle mask
+            if (btnTogglePass && passwordInput) {
+                btnTogglePass.addEventListener('click', () => {
+                    if (passwordInput.type === 'password') {
+                        passwordInput.type = 'text';
+                        btnTogglePass.textContent = 'Ẩn';
                     } else {
-                        errorSubtext.textContent = '';
+                        passwordInput.type = 'password';
+                        btnTogglePass.textContent = 'Hiện';
+                    }
+                });
+            }
+
+            // Submit Form
+            if (form) {
+                form.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const username = usernameInput ? usernameInput.value.trim() : '';
+                    const password = passwordInput ? passwordInput.value : '';
+
+                    if (!username || !password.trim()) {
+                        if (errorBanner && errorText && errorSubtext) {
+                            errorBanner.classList.remove('hidden');
+                            errorText.textContent = "Vui lòng nhập đầy đủ tài khoản và mật khẩu quản trị.";
+                            errorSubtext.textContent = '';
+                        }
+                        return;
                     }
 
-                    passwordInput.value = '';
-                    passwordInput.focus();
-                }
-            } catch (err) {
-                errorBanner.classList.remove('hidden');
-                errorText.textContent = "Lỗi kết nối tới máy chủ. Vui lòng kiểm tra lại mạng!";
-                errorSubtext.textContent = '';
-            } finally {
-                btnSubmit.disabled = false;
-                btnText.textContent = "ĐĂNG NHẬP HỆ THỐNG";
-                btnSpinner.classList.add('hidden');
-            }
-        });
+                    if (errorBanner) errorBanner.classList.add('hidden');
+                    if (btnSubmit) btnSubmit.disabled = true;
+                    if (btnText) btnText.textContent = "ĐANG XÁC THỰC...";
+                    if (btnSpinner) btnSpinner.classList.remove('hidden');
 
-        // Anti-Inspection & DevTools Protection
-        document.addEventListener('contextmenu', e => e.preventDefault());
-        window.addEventListener('keydown', e => {
-            if (
-                e.key === 'F12' ||
-                (e.ctrlKey && e.shiftKey && ['I', 'i', 'J', 'j', 'C', 'c'].includes(e.key)) ||
-                (e.ctrlKey && ['U', 'u', 'S', 's'].includes(e.key))
-            ) {
-                e.preventDefault();
-                return false;
+                    let loginSuccess = false;
+                    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+                    const timeoutId = controller ? setTimeout(() => controller.abort(), 15000) : null;
+
+                    try {
+                        const headers = { 'Content-Type': 'application/json' };
+                        if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+
+                        const res = await fetch('/api/auth/login', {
+                            method: 'POST',
+                            credentials: 'same-origin',
+                            headers,
+                            body: JSON.stringify({
+                                username: username,
+                                password: password
+                            }),
+                            signal: controller ? controller.signal : undefined
+                        });
+
+                        const data = await res.json().catch(() => ({}));
+                        if (res.ok && data.status === 'ok') {
+                            loginSuccess = true;
+                            if (btnText) btnText.textContent = "XÁC THỰC THÀNH CÔNG!";
+                            if (btnSpinner) btnSpinner.classList.add('hidden');
+                            setTimeout(() => {
+                                window.location.replace('/');
+                            }, 300);
+                        } else {
+                            if (errorBanner) errorBanner.classList.remove('hidden');
+                            if (res.status === 429 || data.banned || data.locked) {
+                                if (errorText) errorText.textContent = data.error || "Quá nhiều lần đăng nhập sai.";
+                                if (errorSubtext) errorSubtext.textContent = "Vui lòng đợi 5 phút rồi thử lại.";
+                            } else if (res.status === 403) {
+                                if (errorText) errorText.textContent = data.error || "Yêu cầu bị từ chối bảo vệ CSRF (HTTP 403).";
+                                if (errorSubtext) errorSubtext.textContent = "Hãy tải lại trang rồi thử đăng nhập lại.";
+                            } else if (res.status === 503) {
+                                if (errorText) errorText.textContent = data.error || "Máy chủ đang khởi động hoặc chưa cấu hình ADMIN_PASSWORD.";
+                                if (errorSubtext) errorSubtext.textContent = "Vui lòng đợi vài giây hoặc kiểm tra cấu hình Render.";
+                            } else {
+                                if (errorText) errorText.textContent = data.error || `Tài khoản hoặc mật khẩu không chính xác (HTTP ${res.status}).`;
+                                if (data.remaining !== undefined && errorSubtext) {
+                                    errorSubtext.textContent = `Còn ${data.remaining} lần thử trước khi tạm giới hạn đăng nhập.`;
+                                } else if (errorSubtext) {
+                                    errorSubtext.textContent = '';
+                                }
+                            }
+
+                            if (passwordInput) {
+                                passwordInput.value = '';
+                                passwordInput.focus();
+                            }
+                        }
+                    } catch (err) {
+                        if (errorBanner) errorBanner.classList.remove('hidden');
+                        if (errorText) {
+                            errorText.textContent = err && err.name === 'AbortError'
+                                ? "Máy chủ phản hồi chậm (quá thời gian chờ). Vui lòng thử lại!"
+                                : "Lỗi kết nối tới máy chủ. Vui lòng kiểm tra lại mạng!";
+                        }
+                        if (errorSubtext) errorSubtext.textContent = '';
+                    } finally {
+                        if (timeoutId) clearTimeout(timeoutId);
+                        if (!loginSuccess) {
+                            if (btnSubmit) btnSubmit.disabled = false;
+                            if (btnText) btnText.textContent = "ĐĂNG NHẬP HỆ THỐNG";
+                            if (btnSpinner) btnSpinner.classList.add('hidden');
+                        }
+                    }
+                });
             }
-        });
-        console.clear();
-        console.log = console.info = console.warn = console.debug = () => {};
+
+            // Anti-Inspection & DevTools Protection (keep right-click working inside inputs for paste)
+            document.addEventListener('contextmenu', e => {
+                if (!e.target || !['INPUT', 'TEXTAREA'].includes(e.target.tagName)) {
+                    e.preventDefault();
+                }
+            });
+            window.addEventListener('keydown', e => {
+                if (
+                    e.key === 'F12' ||
+                    (e.ctrlKey && e.shiftKey && ['I', 'i', 'J', 'j', 'C', 'c'].includes(e.key)) ||
+                    (e.ctrlKey && ['U', 'u', 'S', 's'].includes(e.key))
+                ) {
+                    e.preventDefault();
+                    return false;
+                }
+            });
+            try { console.clear(); } catch (e) {}
+            console.log = console.info = console.warn = console.debug = () => {};
+        })();
     </script>
 </body>
 </html>

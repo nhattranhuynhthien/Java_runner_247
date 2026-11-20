@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="csrf-token" content="{{ csrf_token|default('') }}">
     <title>NRO CYBER CLOUD 24/7 • RGB Edition</title>
     <!-- Tailwind CSS & Font Awesome -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -44,6 +45,7 @@
             overflow: hidden;
             border: 1px solid rgba(6, 182, 212, 0.4);
             box-shadow: 0 0 25px -5px rgba(6, 182, 212, 0.35), 0 20px 40px rgba(0, 0, 0, 0.9);
+            touch-action: manipulation;
         }
         @media (min-width: 640px) {
             .screen-wrapper {
@@ -57,6 +59,7 @@
             display: block;
             image-rendering: pixelated;
             cursor: crosshair;
+            touch-action: manipulation;
         }
 
         .cyber-card {
@@ -835,6 +838,8 @@
                     <input type="file" id="file-input" name="file" accept=".jar" class="hidden">
                 </div>
 
+                <div id="upload-error" class="hidden text-[11px] text-rose-400 bg-rose-500/10 p-2 rounded-xl border border-rose-500/20"></div>
+
                 <div class="flex items-center justify-end gap-2 pt-1">
                     <button type="button" id="btn-cancel-upload" class="px-3.5 py-1.5 rounded-xl bg-slate-900 text-xs text-slate-300 font-bold border border-white/10 transition active:scale-95">
                         Hủy
@@ -938,18 +943,52 @@
     <!-- JavaScript Controller -->
     <script>
         (function() {
-            // State
+            // State & Polling Lifecycle
             const validIntervals = [350, 700, 1500, 0];
-            let savedInterval = parseInt(localStorage.getItem('nro_interval') || '700', 10);
-            if (!validIntervals.includes(savedInterval)) savedInterval = 700;
+            let savedInterval = 700;
+            try {
+                const rawInterval = parseInt(localStorage.getItem('nro_interval') || '700', 10);
+                if (validIntervals.includes(rawInterval)) savedInterval = rawInterval;
+            } catch (e) {}
+
+            let csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+
+            function detectWebPSupport() {
+                try {
+                    const canvas = document.createElement('canvas');
+                    if (canvas && typeof canvas.toDataURL === 'function') {
+                        return canvas.toDataURL('image/webp').indexOf('data:image/webp') === 0;
+                    }
+                } catch (e) {}
+                return false;
+            }
+            const screenshotAcceptHeader = detectWebPSupport()
+                ? 'image/webp,image/jpeg,*/*'
+                : 'image/jpeg,*/*';
+
             const state = {
                 fpsInterval: savedInterval,
                 timer: null,
                 isFetching: false,
-                failCount: 0
+                pendingRefresh: false,
+                screenshotController: null,
+                currentObjectUrl: null,
+                failCount: 0,
+                statusTimer: null,
+                isFetchingStatus: false,
+                statusController: null,
+                statusFailCount: 0,
+                loginPollTimer: null,
+                touchMarkerTimer: null,
+                activeToast: null,
+                activeToastTimer: null,
+                activeToastRemoveTimer: null,
+                rmsAutoPopulated: false,
+                redirecting: false,
+                checkingSession: false
             };
 
-            // DOM Elements
+            // Core DOM Elements
             const fpsSelect = document.getElementById('select-fps');
             const screenImg = document.getElementById('screen-img');
             const screenWrapper = document.getElementById('screen-container');
@@ -962,57 +1001,372 @@
             const serverAlert = document.getElementById('server-alert');
             const serverAlertText = document.getElementById('server-alert-text');
 
-            // Initialize Controls
-            fpsSelect.value = state.fpsInterval.toString();
-
-            fpsSelect.addEventListener('change', (e) => {
-                state.fpsInterval = parseInt(e.target.value);
-                localStorage.setItem('nro_interval', state.fpsInterval.toString());
-                restartTimer();
-            });
-
-            // Chained Adaptive Screenshot Fetcher (Zero-stutter)
-            function fetchScreenshot() {
-                if (document.hidden) return;
-                if (state.isFetching) return;
-                state.isFetching = true;
-
-                const url = `/api/screenshot?t=${Date.now()}`;
-                const preloader = new Image();
-                
-                preloader.onload = function() {
-                    screenImg.src = preloader.src;
-                    screenOverlay.classList.add('opacity-0', 'pointer-events-none');
-                    state.failCount = 0;
-                    state.isFetching = false;
-                    
-                    // Schedule next frame seamlessly if mode > 0
-                    if (state.fpsInterval > 0) {
-                        if (state.timer) clearTimeout(state.timer);
-                        state.timer = setTimeout(fetchScreenshot, state.fpsInterval);
-                    }
-                };
-
-                preloader.onerror = function() {
-                    state.failCount++;
-                    if (state.failCount >= 3) {
-                        screenOverlay.classList.remove('opacity-0', 'pointer-events-none');
-                        overlayText.textContent = "Không tải được màn hình game. Hãy thử Làm mới hoặc Khởi động lại game.";
-                    }
-                    state.isFetching = false;
-                    if (state.fpsInterval > 0) {
-                        if (state.timer) clearTimeout(state.timer);
-                        state.timer = setTimeout(fetchScreenshot, 1000);
-                    }
-                };
-
-                preloader.src = url;
+            // Notification Toast Helper (replaces previous toast cleanly to avoid stacking overlap)
+            function showToast(message, color = 'emerald') {
+                if (state.activeToastTimer) clearTimeout(state.activeToastTimer);
+                if (state.activeToastRemoveTimer) clearTimeout(state.activeToastRemoveTimer);
+                if (state.activeToast) {
+                    state.activeToast.remove();
+                    state.activeToast = null;
+                }
+                const toast = document.createElement('div');
+                toast.className = `fixed bottom-5 left-1/2 -translate-x-1/2 z-50 px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow-2xl backdrop-blur-md bg-slate-900/95 border transition-all duration-300 pointer-events-none flex items-center gap-2 max-w-[92vw] text-center ${
+                    color === 'emerald' ? 'border-emerald-500/40 text-emerald-300 shadow-emerald-950/60' :
+                    color === 'rose' ? 'border-rose-500/40 text-rose-300 shadow-rose-950/60' :
+                    color === 'amber' ? 'border-amber-500/40 text-amber-300 shadow-amber-950/60' :
+                    'border-indigo-500/40 text-indigo-300 shadow-indigo-950/60'
+                }`;
+                toast.textContent = String(message || '');
+                document.body.appendChild(toast);
+                state.activeToast = toast;
+                state.activeToastTimer = setTimeout(() => {
+                    toast.classList.add('opacity-0', 'translate-y-2');
+                    state.activeToastRemoveTimer = setTimeout(() => {
+                        if (state.activeToast === toast) state.activeToast = null;
+                        toast.remove();
+                    }, 300);
+                }, 2800);
             }
 
-            function restartTimer() {
-                if (state.timer) clearTimeout(state.timer);
+            function stopAllPolling() {
+                if (state.timer) {
+                    clearTimeout(state.timer);
+                    state.timer = null;
+                }
+                if (state.statusTimer) {
+                    clearTimeout(state.statusTimer);
+                    state.statusTimer = null;
+                }
+                if (state.loginPollTimer) {
+                    clearInterval(state.loginPollTimer);
+                    state.loginPollTimer = null;
+                }
+                if (state.screenshotController) {
+                    try { state.screenshotController.abort(); } catch (e) {}
+                    state.screenshotController = null;
+                }
+                if (state.statusController) {
+                    try { state.statusController.abort(); } catch (e) {}
+                    state.statusController = null;
+                }
                 state.isFetching = false;
-                fetchScreenshot();
+                state.isFetchingStatus = false;
+                state.pendingRefresh = false;
+            }
+
+            function redirectToLogin(reason) {
+                if (state.redirecting) return;
+                state.redirecting = true;
+                stopAllPolling();
+                showToast(reason || 'Phiên đăng nhập đã hết hạn. Đang chuyển về trang đăng nhập...', 'amber');
+                setTimeout(() => {
+                    window.location.replace('/');
+                }, 400);
+            }
+
+            async function verifySessionAndMaybeRedirect() {
+                if (state.redirecting || state.checkingSession) return false;
+                state.checkingSession = true;
+                try {
+                    const res = await fetch('/api/auth/status', { credentials: 'same-origin' });
+                    const data = await res.json().catch(() => ({}));
+                    if (data && data.csrf_token) csrfToken = data.csrf_token;
+                    if (res.status === 401 || res.status === 403 || data.authenticated === false) {
+                        redirectToLogin();
+                        return true;
+                    }
+                } catch (e) {}
+                finally {
+                    state.checkingSession = false;
+                }
+                return false;
+            }
+
+            async function handleHttpAuthError(status, data) {
+                const errMsg = String((data && data.error) || '');
+                if (status === 401) {
+                    redirectToLogin();
+                    return { redirected: true, message: errMsg || 'Phiên đăng nhập đã hết hạn.' };
+                }
+                if (status === 403) {
+                    if (/csrf|cross-origin/i.test(errMsg)) {
+                        // Refresh CSRF token from server without causing a redirect loop
+                        verifySessionAndMaybeRedirect();
+                        return {
+                            redirected: false,
+                            message: errMsg || 'Yêu cầu bị từ chối bảo vệ CSRF (HTTP 403). Vui lòng tải lại trang.'
+                        };
+                    }
+                    if (/unauthorized|invalid pin/i.test(errMsg)) {
+                        redirectToLogin();
+                        return { redirected: true, message: 'Phiên đăng nhập đã hết hạn.' };
+                    }
+                    const didRedirect = await verifySessionAndMaybeRedirect();
+                    return {
+                        redirected: didRedirect,
+                        message: didRedirect
+                            ? 'Phiên đăng nhập đã hết hạn.'
+                            : (errMsg || 'Không có quyền thực hiện thao tác này (HTTP 403).')
+                    };
+                }
+                if (status === 429) {
+                    return {
+                        redirected: false,
+                        message: errMsg || 'Quá nhiều yêu cầu (HTTP 429). Vui lòng đợi một lát rồi thử lại.'
+                    };
+                }
+                if (status === 413) {
+                    return {
+                        redirected: false,
+                        message: errMsg || 'File tải lên vượt quá giới hạn 64 MB.'
+                    };
+                }
+                return { redirected: false, message: errMsg };
+            }
+
+            // Centralized CSRF-aware, timeout-safe API client
+            async function apiFetch(url, options = {}) {
+                const method = (options.method || 'GET').toUpperCase();
+                const isMutating = method === 'POST' || method === 'PUT' || method === 'DELETE' || method === 'PATCH';
+                const headers = Object.assign({}, options.headers || {});
+                let body = options.body;
+
+                if (body !== undefined && body !== null && !(body instanceof FormData) && typeof body !== 'string') {
+                    body = JSON.stringify(body);
+                    if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
+                }
+                if (isMutating && csrfToken && !headers['X-CSRF-Token']) {
+                    headers['X-CSRF-Token'] = csrfToken;
+                }
+
+                const timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : 15000;
+                const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+                let onExternalAbort = null;
+                if (controller && options.signal) {
+                    if (options.signal.aborted) {
+                        controller.abort();
+                    } else {
+                        onExternalAbort = () => controller.abort();
+                        options.signal.addEventListener('abort', onExternalAbort, { once: true });
+                    }
+                }
+                const timeoutId = (controller && timeoutMs > 0)
+                    ? setTimeout(() => controller.abort(), timeoutMs)
+                    : null;
+
+                try {
+                    const res = await fetch(url, {
+                        method,
+                        credentials: 'same-origin',
+                        headers,
+                        body,
+                        signal: controller ? controller.signal : options.signal
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    if (res.status === 401 || res.status === 403 || res.status === 429 || res.status === 413) {
+                        const handled = await handleHttpAuthError(res.status, data);
+                        return {
+                            ok: false,
+                            status: res.status,
+                            data,
+                            redirected: handled.redirected,
+                            error: handled.message || `Yêu cầu thất bại (HTTP ${res.status})`
+                        };
+                    }
+                    if (!res.ok) {
+                        return {
+                            ok: false,
+                            status: res.status,
+                            data,
+                            redirected: false,
+                            error: (data && data.error) || `Yêu cầu thất bại (HTTP ${res.status})`
+                        };
+                    }
+                    return { ok: true, status: res.status, data, redirected: false, error: null };
+                } catch (err) {
+                    const isAbort = Boolean(err && err.name === 'AbortError');
+                    return {
+                        ok: false,
+                        status: 0,
+                        data: {},
+                        aborted: isAbort,
+                        redirected: false,
+                        error: isAbort
+                            ? 'Máy chủ phản hồi quá chậm (hết thời gian chờ).'
+                            : 'Lỗi kết nối tới máy chủ.'
+                    };
+                } finally {
+                    if (timeoutId) clearTimeout(timeoutId);
+                    if (options.signal && onExternalAbort) {
+                        options.signal.removeEventListener('abort', onExternalAbort);
+                    }
+                }
+            }
+
+            // Initialize FPS Control
+            if (fpsSelect) {
+                fpsSelect.value = state.fpsInterval.toString();
+                fpsSelect.addEventListener('change', (e) => {
+                    const parsed = parseInt(e.target.value, 10);
+                    state.fpsInterval = validIntervals.includes(parsed) ? parsed : 700;
+                    try { localStorage.setItem('nro_interval', state.fpsInterval.toString()); } catch (err) {}
+                    if (state.fpsInterval === 0) {
+                        if (state.timer) {
+                            clearTimeout(state.timer);
+                            state.timer = null;
+                        }
+                    } else {
+                        restartTimer();
+                    }
+                });
+            }
+
+            function scheduleNextScreenshot(delayMs) {
+                if (state.redirecting || document.hidden || state.fpsInterval <= 0) return;
+                if (state.timer) clearTimeout(state.timer);
+                state.timer = setTimeout(() => fetchScreenshot(), delayMs);
+            }
+
+            // Request one immediate frame after a user action without piling up concurrent requests
+            function requestActionScreenshot(delayMs = 80) {
+                if (state.redirecting || document.hidden) return;
+                if (state.isFetching) {
+                    state.pendingRefresh = true;
+                    return;
+                }
+                if (state.timer) {
+                    clearTimeout(state.timer);
+                    state.timer = null;
+                }
+                const single = state.fpsInterval === 0;
+                state.timer = setTimeout(() => fetchScreenshot({ single }), delayMs);
+            }
+
+            function decodeObjectUrl(url) {
+                return new Promise((resolve, reject) => {
+                    const preloader = new Image();
+                    preloader.onload = () => resolve();
+                    preloader.onerror = () => reject(new Error('Image decode failed'));
+                    preloader.src = url;
+                });
+            }
+
+            // Deduplicated, WebP-aware, leak-free Blob Screenshot Fetcher with exponential backoff
+            async function fetchScreenshot(opts = {}) {
+                const single = Boolean(opts && opts.single);
+                if (state.redirecting || document.hidden) return;
+                if (state.isFetching) {
+                    state.pendingRefresh = true;
+                    return;
+                }
+                if (state.timer) {
+                    clearTimeout(state.timer);
+                    state.timer = null;
+                }
+
+                state.isFetching = true;
+                state.pendingRefresh = false;
+
+                const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+                state.screenshotController = controller;
+                const timeoutId = controller ? setTimeout(() => controller.abort(), 12000) : null;
+                let fetchedOk = false;
+                let wasAbortedByHide = false;
+
+                try {
+                    const res = await fetch(`/api/screenshot?t=${Date.now()}`, {
+                        method: 'GET',
+                        credentials: 'same-origin',
+                        headers: { 'Accept': screenshotAcceptHeader },
+                        signal: controller ? controller.signal : undefined
+                    });
+
+                    if (res.status === 401 || res.status === 403) {
+                        const errData = await res.json().catch(() => ({}));
+                        await handleHttpAuthError(res.status, errData);
+                        return;
+                    }
+                    if (!res.ok) {
+                        throw new Error(`HTTP ${res.status}`);
+                    }
+                    const contentType = (res.headers.get('Content-Type') || '').toLowerCase();
+                    if (!contentType.startsWith('image/')) {
+                        throw new Error('Unexpected screenshot content type');
+                    }
+
+                    const blob = await res.blob();
+                    if (!blob || blob.size === 0) {
+                        throw new Error('Empty screenshot payload');
+                    }
+                    if ((controller && controller.signal.aborted) || state.redirecting) {
+                        wasAbortedByHide = true;
+                        return;
+                    }
+
+                    const nextUrl = URL.createObjectURL(blob);
+                    try {
+                        await decodeObjectUrl(nextUrl);
+                    } catch (decodeErr) {
+                        URL.revokeObjectURL(nextUrl);
+                        throw decodeErr;
+                    }
+
+                    if ((controller && controller.signal.aborted) || state.redirecting) {
+                        URL.revokeObjectURL(nextUrl);
+                        wasAbortedByHide = true;
+                        return;
+                    }
+
+                    const prevUrl = state.currentObjectUrl;
+                    state.currentObjectUrl = nextUrl;
+                    if (screenImg) screenImg.src = nextUrl;
+                    if (prevUrl) URL.revokeObjectURL(prevUrl);
+
+                    if (screenOverlay) screenOverlay.classList.add('opacity-0', 'pointer-events-none');
+                    state.failCount = 0;
+                    fetchedOk = true;
+                } catch (err) {
+                    if (err && err.name === 'AbortError' && (document.hidden || state.redirecting)) {
+                        wasAbortedByHide = true;
+                    } else if (!state.redirecting) {
+                        state.failCount++;
+                        if (state.failCount >= 3 && screenOverlay && overlayText) {
+                            screenOverlay.classList.remove('opacity-0', 'pointer-events-none');
+                            overlayText.textContent = "Không tải được màn hình game (đang tự kết nối lại...). Hãy thử Làm mới hoặc Khởi động lại game.";
+                        }
+                    }
+                } finally {
+                    if (timeoutId) clearTimeout(timeoutId);
+                    if (state.screenshotController === controller) {
+                        state.screenshotController = null;
+                    }
+                    state.isFetching = false;
+
+                    if (!state.redirecting && !document.hidden && !wasAbortedByHide) {
+                        const isPaused = state.fpsInterval <= 0;
+                        if (state.pendingRefresh) {
+                            state.pendingRefresh = false;
+                            state.timer = setTimeout(() => fetchScreenshot({ single: isPaused }), 60);
+                        } else if (!isPaused) {
+                            const nextDelay = fetchedOk
+                                ? state.fpsInterval
+                                : Math.min(15000, 1000 * Math.pow(2, Math.min(Math.max(state.failCount - 1, 0), 4)));
+                            scheduleNextScreenshot(nextDelay);
+                        }
+                    }
+                }
+            }
+
+            function restartTimer(opts = {}) {
+                if (state.timer) {
+                    clearTimeout(state.timer);
+                    state.timer = null;
+                }
+                if (state.isFetching) {
+                    state.pendingRefresh = true;
+                    return;
+                }
+                fetchScreenshot(opts);
             }
 
             // Format numbers with Vietnamese dot separators
@@ -1021,7 +1375,15 @@
                 return Number(val).toLocaleString('vi-VN');
             }
 
-            // Update Live Character Telemetry, Mod State Badges & SKH Equipment List
+            function setPlaceholderText(container, text) {
+                if (!container) return;
+                const span = document.createElement('span');
+                span.className = 'text-slate-500';
+                span.textContent = text;
+                container.replaceChildren(span);
+            }
+
+            // Update Live Character Telemetry, Mod State Badges & SKH Equipment List (XSS-safe DOM API)
             function updateGameTelemetry(game) {
                 const dot = document.getElementById('telemetry-dot');
                 const badgeWd = document.getElementById('badge-watchdog');
@@ -1033,6 +1395,39 @@
                 const elBag = document.getElementById('stat-bag');
                 const elSkhCount = document.getElementById('stat-skh-count');
                 const elSkhList = document.getElementById('stat-skh-list');
+                const elSkillCount = document.getElementById('stat-skill-count');
+                const elSkillList = document.getElementById('stat-skill-list');
+                const autoFarmBtn = document.getElementById('btn-auto-farm');
+                const autoFarmTxt = document.getElementById('txt-auto-farm');
+                const autoTdltBtn = document.getElementById('btn-auto-tdlt');
+                const autoTdltTxt = document.getElementById('txt-auto-tdlt');
+                const autoTsBtn = document.getElementById('btn-auto-ts');
+                const autoTsTxt = document.getElementById('txt-auto-ts');
+                const flagCmds = ['locdo', 'anhat', 'gb', 'kvt', 'nb', 'cflag', 'xdh', 'annguoi', 'alogin'];
+
+                function resetCharStats(skhPlaceholder, skillPlaceholder) {
+                    if (elLoc) elLoc.textContent = '--';
+                    if (elPower) elPower.textContent = '--';
+                    if (elPotential) elPotential.textContent = '--';
+                    if (elHpMp) elHpMp.textContent = '--';
+                    if (elBag) elBag.textContent = '--';
+                    if (elSkhCount) elSkhCount.textContent = '0 món';
+                    setPlaceholderText(elSkhList, skhPlaceholder);
+                    if (elSkillCount) elSkillCount.textContent = '0 chiêu';
+                    setPlaceholderText(elSkillList, skillPlaceholder);
+                }
+
+                function clearModHighlights() {
+                    flagCmds.forEach(cmd => {
+                        const btn = document.querySelector(`[data-cmd="${cmd}"]`);
+                        if (btn) btn.classList.remove('ring-1', 'ring-emerald-400', 'bg-emerald-900/40', 'text-emerald-200');
+                    });
+                    if (autoFarmTxt && !autoFarmBtn?.disabled) autoFarmTxt.textContent = 'COMBO TDLT + TÀN SÁT (24/7)';
+                    if (autoTdltTxt && !autoTdltBtn?.disabled) autoTdltTxt.textContent = 'Chỉ TDLT';
+                    if (autoTdltBtn) autoTdltBtn.classList.remove('ring-1', 'ring-emerald-400');
+                    if (autoTsTxt && !autoTsBtn?.disabled) autoTsTxt.textContent = 'Chỉ Tàn Sát';
+                    if (autoTsBtn) autoTsBtn.classList.remove('ring-1', 'ring-cyan-400');
+                }
 
                 if (!game || !game.bridge_online) {
                     if (dot) dot.className = 'w-2 h-2 rounded-full bg-slate-500';
@@ -1040,6 +1435,12 @@
                         badgeWd.textContent = 'Bridge: Offline';
                         badgeWd.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-slate-800 text-slate-400 border border-white/10';
                     }
+                    if (elName) {
+                        elName.textContent = 'Bridge chưa kết nối';
+                        elName.className = 'font-semibold text-slate-400 font-mono';
+                    }
+                    resetCharStats('Chưa kết nối GameBridge.', 'Chưa kết nối GameBridge.');
+                    clearModHighlights();
                     return;
                 }
 
@@ -1057,12 +1458,13 @@
                 if (game.in_game) {
                     if (dot) dot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
                     if (elName) {
-                        elName.textContent = game.char_name + (game.has_pet ? ' (+Đệ tử)' : '');
+                        const charName = game.char_name ? String(game.char_name) : 'Chưa rõ';
+                        elName.textContent = charName + (game.has_pet ? ' (+Đệ tử)' : '');
                         elName.className = 'font-bold text-emerald-400 font-mono';
                     }
                     if (elLoc) {
-                        const mName = game.map_name && game.map_name !== 'Unknown' ? game.map_name : `Map ${game.map_id}`;
-                        elLoc.textContent = `${mName} [${game.map_id}] • Khu ${game.zone ?? '--'}`;
+                        const mName = game.map_name && game.map_name !== 'Unknown' ? game.map_name : `Map ${game.map_id ?? '--'}`;
+                        elLoc.textContent = `${mName} [${game.map_id ?? '--'}] • Khu ${game.zone ?? '--'}`;
                     }
                     if (elPower) elPower.textContent = fmtNum(game.power);
                     if (elPotential) elPotential.textContent = fmtNum(game.potential);
@@ -1073,9 +1475,79 @@
                     }
                     if (elBag) {
                         if (game.bag_total !== undefined) {
-                            elBag.textContent = `${game.bag_used}/${game.bag_total} ô (Trống ${game.bag_free}) • ${fmtNum(game.gold)} vàng`;
+                            elBag.textContent = `${game.bag_used ?? 0}/${game.bag_total} ô (Trống ${game.bag_free ?? 0}) • ${fmtNum(game.gold)} vàng`;
                         } else {
                             elBag.textContent = `${fmtNum(game.gold)} vàng`;
+                        }
+                    }
+
+                    // Highlight SKH items found in bag or body (safe DOM nodes)
+                    const skhItems = Array.isArray(game.skh_items) ? game.skh_items : [];
+                    if (elSkhCount) elSkhCount.textContent = `${skhItems.length} món`;
+                    if (elSkhList) {
+                        if (skhItems.length === 0) {
+                            setPlaceholderText(elSkhList, 'Chưa phát hiện đồ SKH trong hành trang.');
+                        } else {
+                            const frag = document.createDocumentFragment();
+                            skhItems.forEach(item => {
+                                const row = document.createElement('div');
+                                row.className = 'text-amber-300 bg-amber-950/30 border border-amber-500/20 rounded px-1.5 py-0.5';
+                                row.textContent = `✨ ${String(item)}`;
+                                frag.appendChild(row);
+                            });
+                            elSkhList.replaceChildren(frag);
+                        }
+                    }
+
+                    // Render character learned skills (safe DOM nodes + addEventListener)
+                    const rawSkills = Array.isArray(game.skills) ? game.skills : [];
+                    const validSkills = rawSkills.filter(sk => sk && typeof sk === 'object');
+                    if (elSkillCount) elSkillCount.textContent = `${validSkills.length} chiêu`;
+                    if (elSkillList) {
+                        if (validSkills.length === 0) {
+                            setPlaceholderText(elSkillList, 'Chưa tải được danh sách chiêu thức.');
+                        } else {
+                            const frag = document.createDocumentFragment();
+                            validSkills.forEach(sk => {
+                                const row = document.createElement('div');
+                                row.className = 'flex items-center justify-between bg-slate-900/80 border border-white/5 rounded px-2 py-1';
+
+                                const info = document.createElement('div');
+                                info.className = 'flex items-center gap-1.5 min-w-0';
+
+                                const nameEl = document.createElement('span');
+                                nameEl.className = 'text-cyan-300 font-bold truncate';
+                                nameEl.textContent = `⚡ ${sk.name ? String(sk.name) : 'Chiêu #' + String(sk.index ?? '?')}`;
+                                info.appendChild(nameEl);
+
+                                const lvlEl = document.createElement('span');
+                                lvlEl.className = 'text-amber-300 text-[10px] whitespace-nowrap';
+                                lvlEl.textContent = `Cấp ${sk.point ?? 0}`;
+                                info.appendChild(lvlEl);
+
+                                if (sk.is_melee) {
+                                    const meleeEl = document.createElement('span');
+                                    meleeEl.className = 'text-emerald-400 text-[9px] bg-emerald-950/60 px-1 py-0.5 rounded border border-emerald-500/30 whitespace-nowrap';
+                                    meleeEl.textContent = 'Cận chiến';
+                                    info.appendChild(meleeEl);
+                                }
+
+                                row.appendChild(info);
+
+                                const skillIdx = Number(sk.index);
+                                if (Number.isInteger(skillIdx) && skillIdx >= 1 && skillIdx <= 10) {
+                                    const btn = document.createElement('button');
+                                    btn.type = 'button';
+                                    btn.className = 'text-[9px] px-1.5 py-0.5 rounded bg-cyan-950 hover:bg-cyan-900 text-cyan-300 border border-cyan-500/30 active:scale-95 transition whitespace-nowrap';
+                                    btn.title = 'Gán vào ô chiêu đánh auto';
+                                    btn.textContent = 'Gán Auto';
+                                    btn.addEventListener('click', () => setSkillForAuto(skillIdx));
+                                    row.appendChild(btn);
+                                }
+
+                                frag.appendChild(row);
+                            });
+                            elSkillList.replaceChildren(frag);
                         }
                     }
                 } else {
@@ -1084,53 +1556,10 @@
                         elName.textContent = 'Đang ở màn hình chờ / Kết nối...';
                         elName.className = 'font-semibold text-amber-300 font-mono';
                     }
-                }
-
-                // Highlight SKH items found in bag or body
-                if (elSkhCount && Array.isArray(game.skh_items)) {
-                    const count = game.skh_items.length;
-                    elSkhCount.textContent = `${count} món`;
-                    if (elSkhList) {
-                        if (count === 0) {
-                            elSkhList.innerHTML = '<span class="text-slate-500">Chưa phát hiện đồ SKH trong hành trang.</span>';
-                        } else {
-                            elSkhList.innerHTML = game.skh_items.map(item =>
-                                `<div class="text-amber-300 bg-amber-950/30 border border-amber-500/20 rounded px-1.5 py-0.5">✨ ${item}</div>`
-                            ).join('');
-                        }
-                    }
-                }
-
-                // Render character learned skills
-                const elSkillCount = document.getElementById('stat-skill-count');
-                const elSkillList = document.getElementById('stat-skill-list');
-                if (elSkillCount && Array.isArray(game.skills)) {
-                    elSkillCount.textContent = `${game.skills.length} chiêu`;
-                    if (elSkillList) {
-                        if (game.skills.length === 0) {
-                            elSkillList.innerHTML = '<span class="text-slate-500">Chưa tải được danh sách chiêu thức.</span>';
-                        } else {
-                            elSkillList.innerHTML = game.skills.map(sk => {
-                                const isMelee = sk.is_melee ? '<span class="text-emerald-400 text-[9px] bg-emerald-950/60 px-1 py-0.2 rounded border border-emerald-500/30">Cận chiến</span>' : '';
-                                return `
-                                    <div class="flex items-center justify-between bg-slate-900/80 border border-white/5 rounded px-2 py-1">
-                                        <div class="flex items-center gap-1.5">
-                                            <span class="text-cyan-300 font-bold">⚡ ${sk.name}</span>
-                                            <span class="text-amber-300 text-[10px]">Cấp ${sk.point}</span>
-                                            ${isMelee}
-                                        </div>
-                                        <button onclick="setSkillForAuto(${sk.index})" class="text-[9px] px-1.5 py-0.5 rounded bg-cyan-950 hover:bg-cyan-900 text-cyan-300 border border-cyan-500/30 active:scale-95 transition" title="Gán vào ô chiêu đánh auto">
-                                            Gán Auto
-                                        </button>
-                                    </div>
-                                `;
-                            }).join('');
-                        }
-                    }
+                    resetCharStats('Chưa vào game.', 'Chưa vào game.');
                 }
 
                 // Sync real-time mod button active states
-                const flagCmds = ['locdo', 'anhat', 'gb', 'kvt', 'nb', 'cflag', 'xdh', 'annguoi', 'alogin'];
                 flagCmds.forEach(cmd => {
                     const btn = document.querySelector(`[data-cmd="${cmd}"]`);
                     if (!btn) return;
@@ -1144,118 +1573,159 @@
 
                 const tdltActive = Boolean(game.mod_tdlt || game.ingame_tdlt);
                 const tsActive = Boolean(game.mod_ts);
-                if (txtAutoFarm && !btnAutoFarm?.disabled) {
-                    if (tdltActive && tsActive) {
-                        txtAutoFarm.textContent = '🟢 COMBO TDLT + TÀN SÁT: ĐANG CHẠY';
-                    } else {
-                        txtAutoFarm.textContent = 'COMBO TDLT + TÀN SÁT (24/7)';
-                    }
+                if (autoFarmTxt && !autoFarmBtn?.disabled) {
+                    autoFarmTxt.textContent = (tdltActive && tsActive)
+                        ? '🟢 COMBO TDLT + TÀN SÁT: ĐANG CHẠY'
+                        : 'COMBO TDLT + TÀN SÁT (24/7)';
                 }
-                if (txtAutoTdlt && !btnAutoTdlt?.disabled) {
-                    txtAutoTdlt.textContent = tdltActive ? '🟢 TDLT: ĐANG BẬT' : 'Chỉ TDLT';
+                if (autoTdltTxt && !autoTdltBtn?.disabled) {
+                    autoTdltTxt.textContent = tdltActive ? '🟢 TDLT: ĐANG BẬT' : 'Chỉ TDLT';
                 }
-                if (btnAutoTdlt) {
-                    btnAutoTdlt.classList.toggle('ring-1', tdltActive && !tsActive);
-                    btnAutoTdlt.classList.toggle('ring-emerald-400', tdltActive && !tsActive);
+                if (autoTdltBtn) {
+                    autoTdltBtn.classList.toggle('ring-1', tdltActive && !tsActive);
+                    autoTdltBtn.classList.toggle('ring-emerald-400', tdltActive && !tsActive);
                 }
-                if (txtAutoTs && !btnAutoTs?.disabled) {
-                    txtAutoTs.textContent = tsActive ? '🟢 Tàn Sát: ĐANG BẬT' : 'Chỉ Tàn Sát';
+                if (autoTsTxt && !autoTsBtn?.disabled) {
+                    autoTsTxt.textContent = tsActive ? '🟢 Tàn Sát: ĐANG BẬT' : 'Chỉ Tàn Sát';
                 }
-                if (btnAutoTs) {
-                    btnAutoTs.classList.toggle('ring-1', tsActive && !tdltActive);
-                    btnAutoTs.classList.toggle('ring-cyan-400', tsActive && !tdltActive);
+                if (autoTsBtn) {
+                    autoTsBtn.classList.toggle('ring-1', tsActive && !tdltActive);
+                    autoTsBtn.classList.toggle('ring-cyan-400', tsActive && !tdltActive);
                 }
             }
 
-            // Fetch System Status & Live Game Telemetry
-            function fetchStatus() {
-                if (document.hidden) return;
-                fetch('/api/status')
-                    .then(res => res.json())
-                    .then(data => {
-                        if (data.status === 'online') {
-                            txtUptime.textContent = data.uptime || '--';
-                            if (data.ram) {
-                                txtRam.textContent = `RAM: ${data.ram.used_mb}/${data.ram.total_mb}MB (${data.ram.percent}%)`;
-                            }
-                            const badgeRunning = document.getElementById('badge-running');
-                            if (data.emulator_running) {
-                                txtStatus.textContent = "Đang chạy 24/7";
-                                if (badgeRunning) {
-                                    badgeRunning.className = "flex items-center gap-1 text-emerald-400 font-sans font-semibold";
-                                }
-                            } else {
-                                txtStatus.textContent = "Game chưa bật";
-                                if (badgeRunning) {
-                                    badgeRunning.className = "flex items-center gap-1 text-amber-400 font-sans font-semibold";
-                                }
-                            }
+            function scheduleNextStatus(delayMs) {
+                if (state.redirecting || document.hidden) return;
+                if (state.statusTimer) clearTimeout(state.statusTimer);
+                state.statusTimer = setTimeout(fetchStatus, delayMs);
+            }
 
-                            // Check TeaMobi Server Socket
+            // Fetch System Status & Live Game Telemetry (deduplicated chained polling + backoff)
+            async function fetchStatus() {
+                if (state.redirecting || document.hidden || state.isFetchingStatus) return;
+                if (state.statusTimer) {
+                    clearTimeout(state.statusTimer);
+                    state.statusTimer = null;
+                }
+                state.isFetchingStatus = true;
+
+                const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+                state.statusController = controller;
+                let ok = false;
+
+                try {
+                    const res = await apiFetch('/api/status', {
+                        method: 'GET',
+                        timeoutMs: 10000,
+                        signal: controller ? controller.signal : undefined
+                    });
+                    if (res.redirected) return;
+                    if (res.ok && res.data && res.data.status === 'online') {
+                        const data = res.data;
+                        ok = true;
+                        state.statusFailCount = 0;
+
+                        if (txtUptime) txtUptime.textContent = data.uptime || '--';
+                        if (txtRam && data.ram) {
+                            txtRam.textContent = `RAM: ${data.ram.used_mb}/${data.ram.total_mb}MB (${data.ram.percent}%)`;
+                        }
+                        const badgeRunning = document.getElementById('badge-running');
+                        if (data.emulator_running) {
+                            if (txtStatus) txtStatus.textContent = "Đang chạy 24/7";
+                            if (badgeRunning) {
+                                badgeRunning.className = "flex items-center gap-1 text-emerald-400 font-sans font-semibold";
+                            }
+                        } else {
+                            if (txtStatus) txtStatus.textContent = "Game chưa bật";
+                            if (badgeRunning) {
+                                badgeRunning.className = "flex items-center gap-1 text-amber-400 font-sans font-semibold";
+                            }
+                        }
+
+                        // Check TeaMobi Server Socket
+                        if (serverAlert && serverAlertText) {
                             if (!data.server_socket_online) {
                                 serverAlert.classList.remove('hidden');
                                 serverAlertText.textContent = "Máy chủ TeaMobi NRO hiện đang bảo trì hoặc mất sóng!";
                             } else {
                                 serverAlert.classList.add('hidden');
                             }
-
-                            // Auto-populate saved RMS credentials if empty
-                            if (data.saved_account && data.saved_account.has_saved) {
-                                if (loginUser && !loginUser.value && data.saved_account.username) {
-                                    loginUser.value = data.saved_account.username;
-                                }
-                                if (loginServer && (!loginServer.value || loginServer.value === "0") && data.saved_account.server) {
-                                    loginServer.value = data.saved_account.server.toString();
-                                }
-                            }
-
-                            updateGameTelemetry(data.game || null);
                         }
-                    })
-                    .catch(() => {});
+
+                        // Auto-populate saved RMS credentials once if fields are empty and unfocused
+                        if (!state.rmsAutoPopulated && data.saved_account && data.saved_account.has_saved) {
+                            const userEl = document.getElementById('login-user');
+                            const serverEl = document.getElementById('login-server');
+                            if (userEl && !userEl.value && document.activeElement !== userEl && data.saved_account.username) {
+                                userEl.value = data.saved_account.username;
+                            }
+                            if (serverEl && (!serverEl.value || serverEl.value === "0") && document.activeElement !== serverEl && data.saved_account.server) {
+                                serverEl.value = String(data.saved_account.server);
+                            }
+                            state.rmsAutoPopulated = true;
+                        }
+
+                        updateGameTelemetry(data.game || null);
+                    } else if (!res.aborted) {
+                        state.statusFailCount++;
+                    }
+                } finally {
+                    if (state.statusController === controller) {
+                        state.statusController = null;
+                    }
+                    state.isFetchingStatus = false;
+                    if (!state.redirecting && !document.hidden) {
+                        const delay = ok
+                            ? 4000
+                            : Math.min(15000, 4000 * Math.pow(2, Math.min(state.statusFailCount, 2)));
+                        scheduleNextStatus(delay);
+                    }
+                }
             }
 
             // Fast API Input Sender (Immediate response)
-            function sendInput(payload) {
-                return fetch('/api/input', {
+            async function sendInput(payload) {
+                const res = await apiFetch('/api/input', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                }).then(async res => {
-                    const data = await res.json().catch(() => ({}));
-                    if (!res.ok || data.status !== 'ok') {
-                        throw new Error(data.error || `Lệnh thất bại (HTTP ${res.status})`);
-                    }
-                    // Trigger fast frame capture after action (60ms and 220ms)
-                    state.isFetching = false;
-                    setTimeout(fetchScreenshot, 60);
-                    setTimeout(fetchScreenshot, 220);
-                    return data;
-                }).catch(err => {
-                    showToast(err.message || 'Không gửi được lệnh tới game.', 'rose');
-                    console.error(err);
-                    return null;
+                    body: payload,
+                    timeoutMs: 10000
                 });
+                if (res.redirected) return null;
+                if (!res.ok || !res.data || res.data.status !== 'ok') {
+                    showToast(res.error || 'Không gửi được lệnh tới game.', 'rose');
+                    return null;
+                }
+                // Request a fresh frame cleanly without creating parallel screenshot fetches
+                requestActionScreenshot(80);
+                return res.data;
             }
 
-            // Touch / Click on Screen Canvas
-            screenWrapper.addEventListener('click', (e) => {
-                const rect = screenWrapper.getBoundingClientRect();
-                const clickX = e.clientX - rect.left;
-                const clickY = e.clientY - rect.top;
+            // Touch / Click on Screen Canvas (measured against exact image box, clamped to 240x360)
+            if (screenWrapper && screenImg) {
+                screenWrapper.addEventListener('click', (e) => {
+                    const imgRect = screenImg.getBoundingClientRect();
+                    if (!imgRect.width || !imgRect.height) return;
 
-                // Scale to 240x360 virtual resolution
-                const normX = (clickX / rect.width) * 240;
-                const normY = (clickY / rect.height) * 360;
+                    const clickX = e.clientX - imgRect.left;
+                    const clickY = e.clientY - imgRect.top;
 
-                // Show ripple marker
-                touchMarker.style.left = `${clickX}px`;
-                touchMarker.style.top = `${clickY}px`;
-                touchMarker.classList.remove('hidden');
-                setTimeout(() => touchMarker.classList.add('hidden'), 250);
+                    // Scale and clamp to 240x360 virtual resolution
+                    const normX = Math.max(0, Math.min(239, Math.round((clickX / imgRect.width) * 240)));
+                    const normY = Math.max(0, Math.min(359, Math.round((clickY / imgRect.height) * 360)));
 
-                sendInput({ action: 'click', x: normX, y: normY });
-            });
+                    // Show ripple marker relative to screenWrapper
+                    if (touchMarker) {
+                        const wrapRect = screenWrapper.getBoundingClientRect();
+                        touchMarker.style.left = `${e.clientX - wrapRect.left}px`;
+                        touchMarker.style.top = `${e.clientY - wrapRect.top}px`;
+                        touchMarker.classList.remove('hidden');
+                        if (state.touchMarkerTimer) clearTimeout(state.touchMarkerTimer);
+                        state.touchMarkerTimer = setTimeout(() => touchMarker.classList.add('hidden'), 250);
+                    }
+
+                    sendInput({ action: 'click', x: normX, y: normY });
+                });
+            }
 
             // Keypad Event Handlers
             document.querySelectorAll('[data-key]').forEach(btn => {
@@ -1269,18 +1739,21 @@
             });
 
             // Quick Mod Chips
-            function sendModAction(cmd) {
-                return fetch('/api/mod_action', {
+            async function sendModAction(cmd) {
+                const res = await apiFetch('/api/mod_action', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ cmd })
-                }).then(async response => {
-                    const data = await response.json().catch(() => ({}));
-                    if (!response.ok || data.status !== 'ok') {
-                        throw new Error(data.error || `Không thực thi được thao tác (HTTP ${response.status})`);
-                    }
-                    return data;
+                    body: { cmd },
+                    timeoutMs: 15000
                 });
+                if (res.redirected) {
+                    const err = new Error('');
+                    err.redirected = true;
+                    throw err;
+                }
+                if (!res.ok || !res.data || res.data.status !== 'ok') {
+                    throw new Error(res.error || `Không thực thi được thao tác (HTTP ${res.status})`);
+                }
+                return res.data;
             }
 
             document.querySelectorAll('[data-cmd]').forEach(btn => {
@@ -1292,38 +1765,48 @@
                     showToast(`Đang thực thi: ${cmd}`, 'indigo');
                     sendModAction(cmd).then(() => {
                         showToast(`Đã thực thi: ${cmd}`, 'emerald');
-                        setTimeout(fetchScreenshot, 400);
+                        requestActionScreenshot(350);
                         setTimeout(fetchStatus, 500);
-                    }).catch(err => showToast(err.message || 'Lỗi thực thi thao tác', 'rose'));
+                    }).catch(err => {
+                        if (!err || !err.redirected) {
+                            showToast((err && err.message) || 'Lỗi thực thi thao tác', 'rose');
+                        }
+                    });
                 });
             });
 
             // Custom Command Sender
             const inputCmd = document.getElementById('input-cmd');
             const btnSendCmd = document.getElementById('btn-send-cmd');
-            function handleSendCmd() {
+            async function handleSendCmd() {
+                if (!inputCmd) return;
                 const text = inputCmd.value.trim();
                 if (!text) return;
+                if (btnSendCmd) btnSendCmd.disabled = true;
                 showToast(`Đang gửi: ${text}`, 'indigo');
-                fetch('/api/quick_cmd', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ cmd: text })
-                }).then(r => r.json()).then(res => {
-                    inputCmd.value = '';
-                    if (res.error) {
-                        showToast(res.error, 'rose');
+                try {
+                    const res = await apiFetch('/api/quick_cmd', {
+                        method: 'POST',
+                        body: { cmd: text }
+                    });
+                    if (res.redirected) return;
+                    if (!res.ok || !res.data || res.data.status !== 'ok') {
+                        showToast(res.error || 'Không gửi được lệnh', 'rose');
                     } else {
+                        inputCmd.value = '';
                         showToast(`Đã gửi: ${text}`, 'emerald');
+                        requestActionScreenshot(400);
                     }
-                    setTimeout(fetchScreenshot, 400);
-                }).catch(() => {
-                    showToast('Lỗi kết nối', 'rose');
-                });
+                } finally {
+                    if (btnSendCmd) btnSendCmd.disabled = false;
+                }
             }
             if (btnSendCmd) btnSendCmd.addEventListener('click', handleSendCmd);
             if (inputCmd) inputCmd.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') handleSendCmd();
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleSendCmd();
+                }
             });
 
             // Auto Up SKH & Farm Zone Controller
@@ -1359,35 +1842,40 @@
                 showToast("Đang mở Menu Xmap trên màn hình game...", "indigo");
                 sendModAction('xmap').then(() => {
                     showToast("Bảng Xmap đã mở! Dùng phím Lên/Xuống + OK để chọn map", "emerald");
-                    setTimeout(fetchScreenshot, 400);
-                }).catch(err => showToast(err.message || "Lỗi mở Xmap", "rose"));
+                    requestActionScreenshot(400);
+                }).catch(err => {
+                    if (!err || !err.redirected) {
+                        showToast((err && err.message) || "Lỗi mở Xmap", "rose");
+                    }
+                });
             }
 
             // Direct Xmap travel to selected dropdown map
-            function flyToSelectedMap() {
+            async function flyToSelectedMap() {
                 const val = selectFarmMap ? selectFarmMap.value : "-1";
                 if (!val || val === "-1" || val === "xmap") {
                     triggerXmap();
                     return;
                 }
                 const txt = selectFarmMap.options[selectFarmMap.selectedIndex]?.text || `Map ${val}`;
+                if (btnFlySelectedMap) btnFlySelectedMap.disabled = true;
                 showToast(`🚀 Đang kích hoạt Xmap bay tới ${txt}...`, "indigo");
-                fetch('/api/xmap', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ map: val })
-                })
-                .then(r => r.json())
-                .then(res => {
-                    if (res.error) {
-                        showToast(res.error, "rose");
+                try {
+                    const res = await apiFetch('/api/xmap', {
+                        method: 'POST',
+                        body: { map: val }
+                    });
+                    if (res.redirected) return;
+                    if (!res.ok || !res.data || res.data.status !== 'ok') {
+                        showToast(res.error || "Không thể kích hoạt Xmap", "rose");
                     } else {
-                        showToast(res.message || `🚀 Đang bay tới ${txt}!`, "emerald");
+                        showToast(res.data.message || `🚀 Đang bay tới ${txt}!`, "emerald");
                     }
-                    setTimeout(fetchScreenshot, 500);
+                    requestActionScreenshot(500);
                     setTimeout(fetchStatus, 600);
-                })
-                .catch(() => showToast("Lỗi kết nối máy chủ", "rose"));
+                } finally {
+                    if (btnFlySelectedMap) btnFlySelectedMap.disabled = false;
+                }
             }
 
             if (btnOpenXmap) btnOpenXmap.addEventListener('click', triggerXmap);
@@ -1417,43 +1905,57 @@
 
             // Quick Switch Zone
             if (btnQuickSwitchZone && farmZone) {
-                btnQuickSwitchZone.addEventListener('click', () => {
-                    const z = parseInt(farmZone.value, 10);
-                    if (isNaN(z) || z < 0) {
+                btnQuickSwitchZone.addEventListener('click', async () => {
+                    const rawZone = farmZone.value.trim();
+                    const z = parseInt(rawZone, 10);
+                    if (!rawZone || isNaN(z) || z < 0 || z > 29) {
                         showToast("Vui lòng nhập số khu hợp lệ (0 - 29)", "amber");
                         farmZone.focus();
                         return;
                     }
                     try { localStorage.setItem('nro_farm_zone', z.toString()); } catch (e) {}
+                    btnQuickSwitchZone.disabled = true;
                     showToast(`Đang chuyển sang Khu ${z}...`, "indigo");
-                    sendModAction(`k${z}`).then(() => {
+                    try {
+                        await sendModAction(`k${z}`);
                         showToast(`Đã đổi sang Khu ${z}!`, "emerald");
-                        setTimeout(fetchScreenshot, 400);
-                    }).catch(err => showToast(err.message || "Lỗi kết nối", "rose"));
+                        requestActionScreenshot(400);
+                        setTimeout(fetchStatus, 600);
+                    } catch (err) {
+                        if (!err || !err.redirected) {
+                            showToast((err && err.message) || "Lỗi kết nối", "rose");
+                        }
+                    } finally {
+                        btnQuickSwitchZone.disabled = false;
+                    }
                 });
             }
 
             // Execute Auto Batch Function (Auto Farm SKH 1-Chạm)
-            function runAutoFarm(mode) {
-                const z = farmZone ? parseInt(farmZone.value, 10) : NaN;
+            async function runAutoFarm(mode) {
+                const rawZone = farmZone ? farmZone.value.trim() : "";
+                let z = NaN;
+                if (rawZone !== "") {
+                    z = parseInt(rawZone, 10);
+                    if (isNaN(z) || z < 0 || z > 29) {
+                        showToast("Số khu (Zone) phải nằm trong khoảng 0 - 29!", "amber");
+                        if (farmZone) farmZone.focus();
+                        return;
+                    }
+                }
                 const mapVal = selectFarmMap ? selectFarmMap.value : "-1";
                 const mapName = selectFarmMap && selectFarmMap.selectedIndex >= 0 ? selectFarmMap.options[selectFarmMap.selectedIndex].text : "";
 
-                if (mode === 'all') {
-                    if (btnAutoFarm) {
-                        btnAutoFarm.disabled = true;
-                        if (txtAutoFarm) txtAutoFarm.textContent = "Đang kích hoạt Auto Combo...";
-                    }
-                } else if (mode === 'tdlt') {
-                    if (btnAutoTdlt) {
-                        btnAutoTdlt.disabled = true;
-                        if (txtAutoTdlt) txtAutoTdlt.textContent = "Đang bật TDLT...";
-                    }
-                } else if (mode === 'ts') {
-                    if (btnAutoTs) {
-                        btnAutoTs.disabled = true;
-                        if (txtAutoTs) txtAutoTs.textContent = "Đang bật Tàn Sát...";
-                    }
+                if (btnAutoFarm) btnAutoFarm.disabled = true;
+                if (btnAutoTdlt) btnAutoTdlt.disabled = true;
+                if (btnAutoTs) btnAutoTs.disabled = true;
+
+                if (mode === 'all' && txtAutoFarm) {
+                    txtAutoFarm.textContent = "Đang kích hoạt Auto Combo...";
+                } else if (mode === 'tdlt' && txtAutoTdlt) {
+                    txtAutoTdlt.textContent = "Đang bật TDLT...";
+                } else if (mode === 'ts' && txtAutoTs) {
+                    txtAutoTs.textContent = "Đang bật Tàn Sát...";
                 }
 
                 const modeLabel = mode === 'all' ? 'TDLT + TÀN SÁT' : mode.toUpperCase();
@@ -1463,38 +1965,33 @@
                     showToast(`⚡ Đang đổi sang Khu ${!isNaN(z) ? z : 'hiện tại'} & kích hoạt Auto ${modeLabel}...`, "emerald");
                 }
 
-                fetch('/api/auto_farm', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        map: mapVal,
-                        zone: !isNaN(z) ? z.toString() : "",
-                        mode: mode
-                    })
-                }).then(r => r.json()).then(res => {
-                    if (res.error) {
-                        showToast(res.error, "rose");
+                try {
+                    const res = await apiFetch('/api/auto_farm', {
+                        method: 'POST',
+                        body: {
+                            map: mapVal,
+                            zone: !isNaN(z) ? z.toString() : "",
+                            mode: mode
+                        },
+                        timeoutMs: 20000
+                    });
+                    if (res.redirected) return;
+                    if (!res.ok || !res.data || res.data.status !== 'ok') {
+                        showToast(res.error || "Không kích hoạt được Auto Farm", "rose");
                     } else {
-                        showToast(res.message || "Đã kích hoạt chế độ Auto thành công!", "emerald");
+                        showToast(res.data.message || "Đã kích hoạt chế độ Auto thành công!", "emerald");
                     }
-                    setTimeout(fetchScreenshot, 500);
-                    setTimeout(fetchScreenshot, 1500);
+                    requestActionScreenshot(500);
                     setTimeout(fetchStatus, 900);
                     setTimeout(fetchStatus, 2500);
-                }).catch(() => {
-                    showToast("Lỗi kết nối máy chủ", "rose");
-                }).finally(() => {
-                    if (btnAutoFarm) {
-                        btnAutoFarm.disabled = false;
-                        if (txtAutoFarm) txtAutoFarm.textContent = "COMBO TDLT + TÀN SÁT (24/7)";
-                    }
-                    if (btnAutoTdlt) {
-                        btnAutoTdlt.disabled = false;
-                    }
-                    if (btnAutoTs) {
-                        btnAutoTs.disabled = false;
-                    }
-                });
+                } finally {
+                    if (btnAutoFarm) btnAutoFarm.disabled = false;
+                    if (txtAutoFarm) txtAutoFarm.textContent = "COMBO TDLT + TÀN SÁT (24/7)";
+                    if (btnAutoTdlt) btnAutoTdlt.disabled = false;
+                    if (txtAutoTdlt) txtAutoTdlt.textContent = "Chỉ TDLT";
+                    if (btnAutoTs) btnAutoTs.disabled = false;
+                    if (txtAutoTs) txtAutoTs.textContent = "Chỉ Tàn Sát";
+                }
             }
 
             if (btnAutoFarm) btnAutoFarm.addEventListener('click', () => runAutoFarm('all'));
@@ -1502,90 +1999,139 @@
             if (btnAutoTs) btnAutoTs.addEventListener('click', () => runAutoFarm('ts'));
 
             if (btnStopAllAuto) {
-                btnStopAllAuto.addEventListener('click', () => {
+                btnStopAllAuto.addEventListener('click', async () => {
+                    btnStopAllAuto.disabled = true;
                     showToast("Đang dừng Auto 24/7 & khôi phục đồ họa bình thường...", "amber");
-                    fetch('/api/stop_farm', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({})
-                    }).then(r => r.json()).then(res => {
-                        if (res.error) {
-                            showToast(res.error, "rose");
+                    try {
+                        const res = await apiFetch('/api/stop_farm', {
+                            method: 'POST',
+                            body: {}
+                        });
+                        if (res.redirected) return;
+                        if (!res.ok || !res.data || res.data.status !== 'ok') {
+                            showToast(res.error || "Không dừng được Auto", "rose");
                         } else {
-                            showToast(res.message || "Đã dừng tự động & bật lại hiển thị!", "emerald");
+                            showToast(res.data.message || "Đã dừng tự động & bật lại hiển thị!", "emerald");
                         }
-                        setTimeout(fetchScreenshot, 400);
+                        requestActionScreenshot(400);
                         setTimeout(fetchStatus, 500);
-                    }).catch(() => showToast("Lỗi kết nối máy chủ", "rose"));
+                    } finally {
+                        btnStopAllAuto.disabled = false;
+                    }
                 });
             }
 
             // Anti-Stuck Button
-            function triggerAntiStuck() {
+            async function triggerAntiStuck() {
                 showToast("Đang gửi lệnh chống kẹt & đóng hộp thoại...", "indigo");
-                sendInput({ action: 'anti_stuck' }).then(() => {
-                    showToast("Đã xử lý chống kẹt!", "emerald");
-                });
+                const data = await sendInput({ action: 'anti_stuck' });
+                if (data) {
+                    showToast(data.message || "Đã xử lý chống kẹt!", "emerald");
+                }
             }
             const btnAntiStuck = document.getElementById('btn-anti-stuck');
             if (btnAntiStuck) btnAntiStuck.addEventListener('click', triggerAntiStuck);
             const btnFixStuck = document.getElementById('btn-fix-stuck');
             if (btnFixStuck) btnFixStuck.addEventListener('click', triggerAntiStuck);
 
-            window.setSkillForAuto = async function(idx) {
-                showToast(`⚡ Đang gán chiêu ô ${idx} làm chiêu auto...`, "indigo");
-                try {
-                    const resp = await fetch('/api/mod_action', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ cmd: `skill${idx} 1,ats` })
-                    });
-                    const data = await resp.json();
-                    if (resp.ok) {
-                        showToast(`✅ Đã gán chiêu ô ${idx} và kích hoạt Auto Skill!`, "emerald");
-                    } else {
-                        showToast(data.error || "Không thể gán chiêu", "rose");
-                    }
-                } catch (e) {
-                    showToast("Lỗi kết nối", "rose");
+            async function setSkillForAuto(idx) {
+                const skillNum = Number(idx);
+                if (!Number.isInteger(skillNum) || skillNum < 1 || skillNum > 10) {
+                    showToast("Chỉ số chiêu thức không hợp lệ (1 - 10)", "amber");
+                    return;
                 }
-            };
+                showToast(`⚡ Đang gán chiêu ô ${skillNum} làm chiêu auto...`, "indigo");
+                const res = await apiFetch('/api/mod_action', {
+                    method: 'POST',
+                    body: { cmd: `skill${skillNum} 1,ats` }
+                });
+                if (res.redirected) return;
+                if (res.ok && res.data && res.data.status === 'ok') {
+                    showToast(`✅ Đã gán chiêu ô ${skillNum} và kích hoạt Auto Skill!`, "emerald");
+                    setTimeout(fetchStatus, 500);
+                } else {
+                    showToast(res.error || "Không thể gán chiêu", "rose");
+                }
+            }
 
             // Restart Button
-            document.getElementById('btn-restart').addEventListener('click', () => {
-                if (!confirm("Bạn có chắc chắn muốn khởi động lại game không?")) return;
-                fetch('/api/restart', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({})
-                }).then(async res => {
-                    const data = await res.json().catch(() => ({}));
-                    if (!res.ok || data.status !== 'ok') {
-                        throw new Error(data.error || `Không thể khởi động lại (HTTP ${res.status})`);
+            const btnRestart = document.getElementById('btn-restart');
+            if (btnRestart) {
+                btnRestart.addEventListener('click', async () => {
+                    if (!confirm("Bạn có chắc chắn muốn khởi động lại game không?")) return;
+                    btnRestart.disabled = true;
+                    try {
+                        const res = await apiFetch('/api/restart', {
+                            method: 'POST',
+                            body: {},
+                            timeoutMs: 20000
+                        });
+                        if (res.redirected) return;
+                        if (!res.ok || !res.data || res.data.status !== 'ok') {
+                            showToast(res.error || 'Không thể khởi động lại game.', 'rose');
+                            return;
+                        }
+                        if (screenOverlay && overlayText) {
+                            screenOverlay.classList.remove('opacity-0', 'pointer-events-none');
+                            overlayText.textContent = "Đang khởi động lại game...";
+                        }
+                        requestActionScreenshot(3000);
+                        setTimeout(fetchStatus, 3200);
+                        showToast(res.data.message || 'Đang khởi động lại game.');
+                    } finally {
+                        btnRestart.disabled = false;
                     }
-                    screenOverlay.classList.remove('opacity-0', 'pointer-events-none');
-                    overlayText.textContent = "Đang khởi động lại game...";
-                    setTimeout(fetchScreenshot, 3000);
-                    showToast(data.message || 'Đang khởi động lại game.');
-                }).catch(err => showToast(err.message || 'Không thể khởi động lại game.', 'rose'));
-            });
+                });
+            }
 
             // Refresh Screen Button
-            document.getElementById('btn-refresh').addEventListener('click', () => {
-                showToast("Đang làm mới khung hình...", "indigo");
-                restartTimer();
-                fetchStatus();
-            });
+            const btnRefresh = document.getElementById('btn-refresh');
+            if (btnRefresh) {
+                btnRefresh.addEventListener('click', () => {
+                    showToast("Đang làm mới khung hình...", "indigo");
+                    restartTimer({ single: state.fpsInterval === 0 });
+                    fetchStatus();
+                });
+            }
 
-            // Download Screenshot
-            document.getElementById('btn-download-shot').addEventListener('click', () => {
-                const a = document.createElement('a');
-                a.href = `/api/screenshot?download=1`;
-                a.download = `NRO_Capture_${Date.now()}.jpg`;
-                a.click();
-            });
+            // Download Screenshot (checks auth/HTTP status so 403 JSON is never downloaded as .jpg)
+            const btnDownloadShot = document.getElementById('btn-download-shot');
+            if (btnDownloadShot) {
+                btnDownloadShot.addEventListener('click', async () => {
+                    btnDownloadShot.disabled = true;
+                    try {
+                        const res = await fetch('/api/screenshot?download=1', {
+                            method: 'GET',
+                            credentials: 'same-origin'
+                        });
+                        if (res.status === 401 || res.status === 403) {
+                            const errData = await res.json().catch(() => ({}));
+                            const handled = await handleHttpAuthError(res.status, errData);
+                            if (!handled.redirected) showToast(handled.message, 'rose');
+                            return;
+                        }
+                        if (!res.ok) {
+                            showToast(`Không tải được ảnh chụp màn hình (HTTP ${res.status})`, 'rose');
+                            return;
+                        }
+                        const blob = await res.blob();
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `NRO_Capture_${Date.now()}.jpg`;
+                        document.body.appendChild(a);
+                        a.click();
+                        a.remove();
+                        setTimeout(() => URL.revokeObjectURL(url), 1000);
+                    } catch (err) {
+                        showToast('Lỗi tải ảnh màn hình.', 'rose');
+                    } finally {
+                        btnDownloadShot.disabled = false;
+                    }
+                });
+            }
 
-            // Modal: Upload ROM
+            // Modal: Upload ROM (with Drag & Drop + Validation + Inline Errors)
             const modalUpload = document.getElementById('modal-upload');
             const btnOpenUpload = document.getElementById('btn-open-upload');
             const btnCloseUpload = document.getElementById('btn-close-upload');
@@ -1593,54 +2139,141 @@
             const fileInput = document.getElementById('file-input');
             const dropZone = document.getElementById('drop-zone');
             const fileLabel = document.getElementById('file-label');
+            const uploadError = document.getElementById('upload-error');
             const formUpload = document.getElementById('form-upload');
+            const btnSubmitUpload = document.getElementById('btn-submit-upload');
+            const MAX_UPLOAD_BYTES = 64 * 1024 * 1024;
+            let selectedUploadFile = null;
 
-            btnOpenUpload.addEventListener('click', () => modalUpload.classList.remove('hidden'));
-            [btnCloseUpload, btnCancelUpload].forEach(btn => {
-                btn.addEventListener('click', () => modalUpload.classList.add('hidden'));
-            });
-
-            dropZone.addEventListener('click', () => fileInput.click());
-            fileInput.addEventListener('change', () => {
-                if (fileInput.files.length > 0) {
-                    fileLabel.textContent = fileInput.files[0].name;
+            function setUploadError(msg) {
+                if (!uploadError) return;
+                if (msg) {
+                    uploadError.textContent = msg;
+                    uploadError.classList.remove('hidden');
+                } else {
+                    uploadError.textContent = '';
+                    uploadError.classList.add('hidden');
                 }
-            });
+            }
 
-            formUpload.addEventListener('submit', (e) => {
-                e.preventDefault();
-                if (!fileInput.files.length) {
-                    alert("Vui lòng chọn file .jar!");
+            function resetUploadModal() {
+                selectedUploadFile = null;
+                if (fileInput) fileInput.value = '';
+                if (fileLabel) fileLabel.textContent = 'Chọn hoặc kéo thả file .jar vào đây';
+                setUploadError('');
+            }
+
+            function selectJarFile(file) {
+                setUploadError('');
+                if (!file) return;
+                if (!file.name || !file.name.toLowerCase().endsWith('.jar')) {
+                    selectedUploadFile = null;
+                    if (fileLabel) fileLabel.textContent = 'Chọn hoặc kéo thả file .jar vào đây';
+                    setUploadError('Chỉ chấp nhận file định dạng .jar!');
                     return;
                 }
-                const fd = new FormData();
-                fd.append('file', fileInput.files[0]);
+                if (file.size > MAX_UPLOAD_BYTES) {
+                    selectedUploadFile = null;
+                    if (fileLabel) fileLabel.textContent = 'Chọn hoặc kéo thả file .jar vào đây';
+                    setUploadError('File vượt quá giới hạn 64 MB.');
+                    return;
+                }
+                selectedUploadFile = file;
+                const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
+                if (fileLabel) fileLabel.textContent = `${file.name} (${sizeMb} MB)`;
+            }
 
-                const btnSubmit = document.getElementById('btn-submit-upload');
-                btnSubmit.disabled = true;
-                btnSubmit.textContent = "Đang nạp...";
-
-                fetch('/api/upload_rom', {
-                    method: 'POST',
-                    body: fd
-                })
-                .then(res => res.json())
-                .then(data => {
-                    btnSubmit.disabled = false;
-                    btnSubmit.innerHTML = '<i class="fa-solid fa-upload"></i><span>Bắt đầu nạp</span>';
-                    if (data.status === 'ok') {
-                        alert(data.message);
-                        modalUpload.classList.add('hidden');
-                        setTimeout(fetchScreenshot, 3000);
-                    } else {
-                        alert("Lỗi: " + (data.error || "Không thể tải lên"));
-                    }
-                })
-                .catch(err => {
-                    btnSubmit.disabled = false;
-                    alert("Lỗi khi tải file: " + err);
+            if (btnOpenUpload && modalUpload) {
+                btnOpenUpload.addEventListener('click', () => {
+                    setUploadError('');
+                    modalUpload.classList.remove('hidden');
                 });
+            }
+            [btnCloseUpload, btnCancelUpload].forEach(btn => {
+                if (btn && modalUpload) {
+                    btn.addEventListener('click', () => modalUpload.classList.add('hidden'));
+                }
             });
+            if (modalUpload) {
+                modalUpload.addEventListener('click', (e) => {
+                    if (e.target === modalUpload) modalUpload.classList.add('hidden');
+                });
+            }
+
+            if (dropZone && fileInput) {
+                dropZone.addEventListener('click', () => fileInput.click());
+                dropZone.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    dropZone.classList.add('border-cyan-400', 'bg-cyan-950/30');
+                });
+                dropZone.addEventListener('dragleave', () => {
+                    dropZone.classList.remove('border-cyan-400', 'bg-cyan-950/30');
+                });
+                dropZone.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    dropZone.classList.remove('border-cyan-400', 'bg-cyan-950/30');
+                    const files = e.dataTransfer && e.dataTransfer.files;
+                    if (files && files.length > 0) {
+                        selectJarFile(files[0]);
+                    }
+                });
+                fileInput.addEventListener('change', () => {
+                    if (fileInput.files && fileInput.files.length > 0) {
+                        selectJarFile(fileInput.files[0]);
+                    }
+                });
+            }
+
+            if (formUpload) {
+                formUpload.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    setUploadError('');
+                    const file = selectedUploadFile || (fileInput && fileInput.files && fileInput.files[0]);
+                    if (!file) {
+                        setUploadError("Vui lòng chọn file .jar trước khi nạp!");
+                        return;
+                    }
+                    if (!file.name.toLowerCase().endsWith('.jar')) {
+                        setUploadError("Chỉ chấp nhận file định dạng .jar!");
+                        return;
+                    }
+                    if (file.size > MAX_UPLOAD_BYTES) {
+                        setUploadError("File tải lên vượt quá giới hạn 64 MB.");
+                        return;
+                    }
+
+                    const fd = new FormData();
+                    fd.append('file', file);
+
+                    if (btnSubmitUpload) {
+                        btnSubmitUpload.disabled = true;
+                        btnSubmitUpload.textContent = "Đang nạp...";
+                    }
+
+                    try {
+                        const res = await apiFetch('/api/upload_rom', {
+                            method: 'POST',
+                            body: fd,
+                            timeoutMs: 60000
+                        });
+                        if (res.redirected) return;
+                        if (res.ok && res.data && res.data.status === 'ok') {
+                            showToast(res.data.message || "Đã nạp file .jar thành công và đang khởi động lại game!", "emerald");
+                            resetUploadModal();
+                            if (modalUpload) modalUpload.classList.add('hidden');
+                            requestActionScreenshot(3000);
+                            setTimeout(fetchStatus, 3200);
+                        } else {
+                            setUploadError(res.error || "Không thể tải lên file .jar.");
+                        }
+                    } finally {
+                        if (btnSubmitUpload) {
+                            btnSubmitUpload.disabled = false;
+                            btnSubmitUpload.textContent = "Nạp Mod";
+                        }
+                    }
+                });
+            }
 
             // Modal: Console Logs
             const modalLogs = document.getElementById('modal-logs');
@@ -1650,44 +2283,41 @@
             const logsContent = document.getElementById('logs-content');
             const btnReloadLogs = document.getElementById('btn-reload-logs');
 
-            function loadLogs() {
+            async function loadLogs() {
+                if (!logsContent) return;
                 logsContent.textContent = "Đang lấy log từ máy chủ...";
-                fetch('/api/logs')
-                    .then(res => res.json())
-                    .then(data => {
-                        logsContent.textContent = data.logs || "Chưa có log.";
+                if (btnReloadLogs) btnReloadLogs.disabled = true;
+                try {
+                    const res = await apiFetch('/api/logs', { method: 'GET' });
+                    if (res.redirected) return;
+                    if (res.ok && res.data) {
+                        logsContent.textContent = res.data.logs || "Chưa có log.";
                         logsContent.scrollTop = logsContent.scrollHeight;
-                    })
-                    .catch(() => {
-                        logsContent.textContent = "Không thể tải nhật ký log.";
-                    });
+                    } else {
+                        logsContent.textContent = res.error || "Không thể tải nhật ký log.";
+                    }
+                } finally {
+                    if (btnReloadLogs) btnReloadLogs.disabled = false;
+                }
             }
 
-            btnOpenLogs.addEventListener('click', () => {
-                modalLogs.classList.remove('hidden');
-                loadLogs();
-            });
+            if (btnOpenLogs && modalLogs) {
+                btnOpenLogs.addEventListener('click', () => {
+                    modalLogs.classList.remove('hidden');
+                    loadLogs();
+                });
+            }
             [btnCloseLogs, btnCloseLogs2].forEach(btn => {
-                btn.addEventListener('click', () => modalLogs.classList.add('hidden'));
+                if (btn && modalLogs) {
+                    btn.addEventListener('click', () => modalLogs.classList.add('hidden'));
+                }
             });
-            btnReloadLogs.addEventListener('click', loadLogs);
-
-            // Notification Toast Helper
-            function showToast(message, color = 'emerald') {
-                const toast = document.createElement('div');
-                toast.className = `fixed bottom-5 left-1/2 -translate-x-1/2 z-50 px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow-2xl backdrop-blur-md bg-slate-900/95 border transition-all duration-300 pointer-events-none flex items-center gap-2 ${
-                    color === 'emerald' ? 'border-emerald-500/40 text-emerald-300 shadow-emerald-950/60' :
-                    color === 'rose' ? 'border-rose-500/40 text-rose-300 shadow-rose-950/60' :
-                    color === 'amber' ? 'border-amber-500/40 text-amber-300 shadow-amber-950/60' :
-                    'border-indigo-500/40 text-indigo-300 shadow-indigo-950/60'
-                }`;
-                toast.textContent = message;
-                document.body.appendChild(toast);
-                setTimeout(() => {
-                    toast.classList.add('opacity-0', 'translate-y-2');
-                    setTimeout(() => toast.remove(), 300);
-                }, 2800);
+            if (modalLogs) {
+                modalLogs.addEventListener('click', (e) => {
+                    if (e.target === modalLogs) modalLogs.classList.add('hidden');
+                });
             }
+            if (btnReloadLogs) btnReloadLogs.addEventListener('click', loadLogs);
 
             // Quick Login & Dialog Input Handler
             const loginUser = document.getElementById('login-user');
@@ -1730,19 +2360,33 @@
             try {
                 const savedRemember = localStorage.getItem('nro_remember_login');
                 if (savedRemember === '0') {
-                    chkRememberLogin.checked = false;
+                    if (chkRememberLogin) chkRememberLogin.checked = false;
                 } else {
-                    chkRememberLogin.checked = true;
+                    if (chkRememberLogin) chkRememberLogin.checked = true;
                     const savedU = localStorage.getItem('nro_saved_user');
                     const savedP = localStorage.getItem('nro_saved_pass');
-                    if (savedU) loginUser.value = savedU;
-                    if (savedP) loginPass.value = unmaskSecret(savedP);
+                    if (savedU && loginUser) loginUser.value = savedU;
+                    if (savedP && loginPass) loginPass.value = unmaskSecret(savedP);
                 }
                 const savedS = localStorage.getItem('nro_saved_server');
                 if (savedS !== null && loginServer) {
                     loginServer.value = savedS;
                 }
             } catch (e) {}
+
+            if (chkRememberLogin) {
+                chkRememberLogin.addEventListener('change', () => {
+                    if (!chkRememberLogin.checked) {
+                        try {
+                            localStorage.removeItem('nro_saved_user');
+                            localStorage.removeItem('nro_saved_pass');
+                            localStorage.setItem('nro_remember_login', '0');
+                        } catch (e) {}
+                    } else {
+                        try { localStorage.setItem('nro_remember_login', '1'); } catch (e) {}
+                    }
+                });
+            }
 
             if (loginServer) {
                 loginServer.addEventListener('change', () => {
@@ -1752,11 +2396,11 @@
 
             // Handle Immediate Server Switch
             if (btnSwitchServer) {
-                btnSwitchServer.addEventListener('click', () => {
+                btnSwitchServer.addEventListener('click', async () => {
                     const sVal = loginServer ? parseInt(loginServer.value, 10) : 0;
-                    if (!sVal || sVal < 1) {
+                    if (!sVal || sVal < 1 || sVal > 13) {
                         showToast("Vui lòng chọn một máy chủ cụ thể (Vũ trụ 1 - 12 hoặc Võ Đài)", "amber");
-                        loginServer.focus();
+                        if (loginServer) loginServer.focus();
                         return;
                     }
                     btnSwitchServer.disabled = true;
@@ -1764,77 +2408,73 @@
                     btnSwitchServer.textContent = "Đang đổi...";
                     showToast(`Đang chuyển sang Máy chủ: Vũ trụ ${sVal}...`, "indigo");
 
-                    fetch('/api/select_server', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ server: sVal })
-                    })
-                    .then(r => r.json())
-                    .then(data => {
-                        if (data.status === 'ok') {
-                            showToast(data.message, "emerald");
+                    try {
+                        const res = await apiFetch('/api/select_server', {
+                            method: 'POST',
+                            body: { server: sVal },
+                            timeoutMs: 20000
+                        });
+                        if (res.redirected) return;
+                        if (res.ok && res.data && res.data.status === 'ok') {
+                            showToast(res.data.message || `Đã chuyển sang Vũ trụ ${sVal}!`, "emerald");
                             try { localStorage.setItem('nro_saved_server', sVal.toString()); } catch (e) {}
                         } else {
-                            showToast(data.error || "Lỗi khi đổi máy chủ", "rose");
+                            showToast(res.error || "Lỗi khi đổi máy chủ", "rose");
                         }
-                    })
-                    .catch(() => {
-                        showToast("Lỗi kết nối máy chủ", "rose");
-                    })
-                    .finally(() => {
+                    } finally {
                         btnSwitchServer.disabled = false;
                         btnSwitchServer.textContent = origText;
-                        setTimeout(fetchScreenshot, 400);
-                        setTimeout(fetchScreenshot, 1000);
-                    });
+                        requestActionScreenshot(400);
+                        setTimeout(fetchStatus, 1000);
+                    }
                 });
             }
 
             // Open Account Dialog directly via keyboard arrow navigation
             if (btnOpenAccountDialog) {
-                btnOpenAccountDialog.addEventListener('click', () => {
+                btnOpenAccountDialog.addEventListener('click', async () => {
                     btnOpenAccountDialog.disabled = true;
                     showToast("Đang mở hộp thoại Đổi tài khoản...", "indigo");
-                    fetch('/api/open_account_dialog', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({})
-                    })
-                    .then(r => r.json())
-                    .then(data => {
-                        if (data.status === 'ok') {
-                            showToast(data.message, "emerald");
+                    try {
+                        const res = await apiFetch('/api/open_account_dialog', {
+                            method: 'POST',
+                            body: {}
+                        });
+                        if (res.redirected) return;
+                        if (res.ok && res.data && res.data.status === 'ok') {
+                            showToast(res.data.message || "Đã mở hộp thoại Đổi tài khoản!", "emerald");
                         } else {
-                            showToast(data.error || "Lỗi mở hộp thoại", "rose");
+                            showToast(res.error || "Lỗi mở hộp thoại", "rose");
                         }
-                    })
-                    .catch(() => showToast("Lỗi kết nối máy chủ", "rose"))
-                    .finally(() => {
+                    } finally {
                         btnOpenAccountDialog.disabled = false;
-                        setTimeout(fetchScreenshot, 350);
-                        setTimeout(fetchScreenshot, 900);
-                    });
+                        requestActionScreenshot(350);
+                    }
                 });
             }
 
             // Toggle password visibility
-            btnLoginToggleMask.addEventListener('click', () => {
-                if (loginPass.type === 'password') {
-                    loginPass.type = 'text';
-                    loginIconMask.textContent = 'Ẩn';
-                } else {
-                    loginPass.type = 'password';
-                    loginIconMask.textContent = 'Hiện';
-                }
-            });
+            if (btnLoginToggleMask && loginPass && loginIconMask) {
+                btnLoginToggleMask.addEventListener('click', () => {
+                    if (loginPass.type === 'password') {
+                        loginPass.type = 'text';
+                        loginIconMask.textContent = 'Ẩn';
+                    } else {
+                        loginPass.type = 'password';
+                        loginIconMask.textContent = 'Hiện';
+                    }
+                });
+            }
 
             // Handle Quick Login (1-Click Auto Login)
-            function executeQuickLogin() {
+            async function executeQuickLogin() {
+                if (!loginUser || !loginPass) return;
                 const username = loginUser.value.trim();
                 const password = loginPass.value;
-                const serverVal = loginServer ? parseInt(loginServer.value, 10) : 0;
-                const fromMenu = chkFromMenu.checked;
-                const remember = chkRememberLogin.checked;
+                const parsedServer = loginServer ? parseInt(loginServer.value, 10) : 0;
+                const serverVal = Number.isNaN(parsedServer) ? 0 : parsedServer;
+                const fromMenu = chkFromMenu ? chkFromMenu.checked : true;
+                const remember = chkRememberLogin ? chkRememberLogin.checked : true;
 
                 if (!username) {
                     showToast("Vui lòng nhập tài khoản (hoặc SĐT/Email)", "amber");
@@ -1856,146 +2496,118 @@
                     }
                 } catch (e) {}
 
-                btnDoQuickLogin.disabled = true;
-                txtQuickLoginBtn.textContent = "Đang nạp RMS & kết nối...";
+                if (btnDoQuickLogin) btnDoQuickLogin.disabled = true;
+                if (txtQuickLoginBtn) txtQuickLoginBtn.textContent = "Đang nạp RMS & kết nối...";
                 showToast("Đang ghi cấu hình RMS và tự động kết nối vào game...", "indigo");
 
-                // Live polling so screen updates in real time during login sequence
-                const loginPollTimer = setInterval(() => {
-                    state.isFetching = false;
-                    fetchScreenshot();
-                }, 400);
-
-                fetch('/api/quick_login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        username: username,
-                        password: password,
-                        server: serverVal,
-                        auto_enter: true
-                    })
-                })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.status === 'ok') {
-                        showToast(data.message || "Đã lưu RMS & đang tự động kết nối!", "emerald");
-                    } else {
-                        showToast(data.error || "Lỗi khi đăng nhập", "rose");
+                // Deduplicated live polling so screen updates during login without piling requests
+                if (state.loginPollTimer) clearInterval(state.loginPollTimer);
+                state.loginPollTimer = setInterval(() => {
+                    if (!document.hidden && !state.isFetching && !state.redirecting) {
+                        fetchScreenshot({ single: true });
                     }
-                })
-                .catch(() => {
-                    showToast("Lỗi kết nối máy chủ", "rose");
-                })
-                .finally(() => {
-                    clearInterval(loginPollTimer);
-                    btnDoQuickLogin.disabled = false;
-                    txtQuickLoginBtn.textContent = "ĐĂNG NHẬP TỰ ĐỘNG";
-                    state.isFetching = false;
-                    setTimeout(fetchScreenshot, 200);
-                    setTimeout(fetchScreenshot, 800);
+                }, 500);
+
+                try {
+                    const res = await apiFetch('/api/quick_login', {
+                        method: 'POST',
+                        body: {
+                            username: username,
+                            password: password,
+                            server: serverVal,
+                            auto_enter: fromMenu
+                        },
+                        timeoutMs: 25000
+                    });
+                    if (res.redirected) return;
+                    if (res.ok && res.data && res.data.status === 'ok') {
+                        showToast(res.data.message || "Đã lưu RMS & đang tự động kết nối!", "emerald");
+                    } else {
+                        showToast(res.error || "Lỗi khi đăng nhập", "rose");
+                    }
+                } finally {
+                    if (state.loginPollTimer) {
+                        clearInterval(state.loginPollTimer);
+                        state.loginPollTimer = null;
+                    }
+                    if (btnDoQuickLogin) btnDoQuickLogin.disabled = false;
+                    if (txtQuickLoginBtn) txtQuickLoginBtn.textContent = "ĐĂNG NHẬP TỰ ĐỘNG";
+                    requestActionScreenshot(250);
+                    setTimeout(fetchStatus, 1000);
+                }
+            }
+
+            if (btnDoQuickLogin) btnDoQuickLogin.addEventListener('click', executeQuickLogin);
+
+            // Pressing Enter in loginPass triggers quick login
+            if (loginPass) {
+                loginPass.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        executeQuickLogin();
+                    }
                 });
             }
 
-            btnDoQuickLogin.addEventListener('click', executeQuickLogin);
-
-            // Pressing Enter in loginPass triggers quick login
-            loginPass.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    executeQuickLogin();
-                }
-            });
-
             // Single field fill shortcuts
-            btnFillUser.addEventListener('click', () => {
-                const u = loginUser.value.trim();
-                if (!u) {
-                    showToast("Vui lòng nhập tài khoản vào ô trước", "amber");
-                    loginUser.focus();
-                    return;
-                }
-                showToast("Đang điền tài khoản vào ô...", "indigo");
-                sendInput({ action: 'text', value: u, field: 'user', f2: true }).then(() => {
-                    setTimeout(fetchScreenshot, 300);
+            if (btnFillUser && loginUser) {
+                btnFillUser.addEventListener('click', async () => {
+                    const u = loginUser.value.trim();
+                    if (!u) {
+                        showToast("Vui lòng nhập tài khoản vào ô trước", "amber");
+                        loginUser.focus();
+                        return;
+                    }
+                    showToast("Đang điền tài khoản vào ô...", "indigo");
+                    const res = await sendInput({ action: 'text', value: u, field: 'user', f2: true });
+                    if (res) requestActionScreenshot(300);
                 });
-            });
+            }
 
-            btnFillPass.addEventListener('click', () => {
-                const p = loginPass.value;
-                if (!p) {
-                    showToast("Vui lòng nhập mật khẩu vào ô trước", "amber");
-                    loginPass.focus();
-                    return;
-                }
-                showToast("Đang điền mật khẩu vào ô...", "indigo");
-                sendInput({ action: 'text', value: p, field: 'pass', f2: true }).then(() => {
-                    setTimeout(fetchScreenshot, 300);
+            if (btnFillPass && loginPass) {
+                btnFillPass.addEventListener('click', async () => {
+                    const p = loginPass.value;
+                    if (!p) {
+                        showToast("Vui lòng nhập mật khẩu vào ô trước", "amber");
+                        loginPass.focus();
+                        return;
+                    }
+                    showToast("Đang điền mật khẩu vào ô...", "indigo");
+                    const res = await sendInput({ action: 'text', value: p, field: 'pass', f2: true });
+                    if (res) requestActionScreenshot(300);
                 });
-            });
+            }
 
             // Dialog shortcut buttons
-            btnTextOk.addEventListener('click', () => {
-                sendInput({ action: 'key', value: 'f2' });
-            });
-
-            btnTextClear.addEventListener('click', () => {
-                sendInput({ action: 'clear_text' });
-            });
-
-            btnTextEnter.addEventListener('click', () => {
-                sendInput({ action: 'key', value: 'Return' });
-            });
-
-            btnTextCancel.addEventListener('click', () => {
-                sendInput({ action: 'key', value: 'f1' });
-            });
-
-            // Keyboard Pass-through (Desktop users)
-            window.addEventListener('keydown', (e) => {
-                if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
-                
-                const keyMap = {
-                    'ArrowUp': 'up',
-                    'ArrowDown': 'down',
-                    'ArrowLeft': 'left',
-                    'ArrowRight': 'right',
-                    'Enter': 'ok',
-                    'F1': 'f1',
-                    'F2': 'f2',
-                    'Escape': 'f1',
-                    'Backspace': 'backspace',
-                    'Tab': 'Tab'
-                };
-
-                if (keyMap[e.key]) {
-                    e.preventDefault();
-                    sendInput({ action: 'key', value: keyMap[e.key] });
-                    return;
-                }
-
-                // Any printable single character (letters a-z, A-Z, numbers 0-9, space, symbols @ . _ - etc.)
-                if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
-                    e.preventDefault();
-                    sendInput({ action: 'key', value: e.key });
-                }
-            });
+            if (btnTextOk) {
+                btnTextOk.addEventListener('click', () => sendInput({ action: 'key', value: 'f2' }));
+            }
+            if (btnTextClear) {
+                btnTextClear.addEventListener('click', () => sendInput({ action: 'clear_text' }));
+            }
+            if (btnTextEnter) {
+                btnTextEnter.addEventListener('click', () => sendInput({ action: 'key', value: 'Return' }));
+            }
+            if (btnTextCancel) {
+                btnTextCancel.addEventListener('click', () => sendInput({ action: 'key', value: 'f1' }));
+            }
 
             // Security & Authentication Handlers
             const btnLogout = document.getElementById('btn-logout');
             if (btnLogout) {
                 btnLogout.addEventListener('click', async () => {
                     if (!confirm("Bạn có chắc chắn muốn khóa bảng điều khiển và đăng xuất?")) return;
+                    btnLogout.disabled = true;
+                    stopAllPolling();
                     try {
-                        await fetch('/api/auth/logout', { method: 'POST' });
-                        window.location.reload();
-                    } catch (e) {
-                        window.location.href = '/';
+                        await apiFetch('/api/auth/logout', { method: 'POST', body: {} });
+                    } finally {
+                        window.location.replace('/');
                     }
                 });
             }
 
-            // Modal: Change Auth (Tài khoản & Mật khẩu & IP Blacklist)
+            // Modal: Change Auth (Tài khoản & Mật khẩu)
             const modalChangeAuth = document.getElementById('modal-change-auth');
             const btnOpenChangeAuth = document.getElementById('btn-open-change-auth');
             const btnBannerChangePin = document.getElementById('btn-banner-change-pin');
@@ -2019,81 +2631,136 @@
                 if (inputNewUser) inputNewUser.value = currentAdminUser;
                 if (inputNewPass) inputNewPass.value = '';
                 if (inputConfirmPass) inputConfirmPass.value = '';
-                modalChangeAuth.classList.remove('hidden');
+                if (modalChangeAuth) modalChangeAuth.classList.remove('hidden');
                 if (inputOldPass) inputOldPass.focus();
             }
 
             if (btnOpenChangeAuth) btnOpenChangeAuth.addEventListener('click', openChangeAuthModal);
             if (btnBannerChangePin) btnBannerChangePin.addEventListener('click', openChangeAuthModal);
-            if (btnCloseChangeAuth) btnCloseChangeAuth.addEventListener('click', () => modalChangeAuth.classList.add('hidden'));
-            if (btnCancelChangeAuth) btnCancelChangeAuth.addEventListener('click', () => modalChangeAuth.classList.add('hidden'));
+            if (btnCloseChangeAuth && modalChangeAuth) btnCloseChangeAuth.addEventListener('click', () => modalChangeAuth.classList.add('hidden'));
+            if (btnCancelChangeAuth && modalChangeAuth) btnCancelChangeAuth.addEventListener('click', () => modalChangeAuth.classList.add('hidden'));
+            if (modalChangeAuth) {
+                modalChangeAuth.addEventListener('click', (e) => {
+                    if (e.target === modalChangeAuth) modalChangeAuth.classList.add('hidden');
+                });
+            }
 
             if (formChangeAuth) {
                 formChangeAuth.addEventListener('submit', async (e) => {
                     e.preventDefault();
-                    authChangeError.classList.add('hidden');
+                    if (authChangeError) authChangeError.classList.add('hidden');
 
-                    const oldUser = inputOldUser.value.trim();
-                    const oldPass = inputOldPass.value;
-                    const newUser = inputNewUser.value.trim();
-                    const newPass = inputNewPass.value;
-                    const confirmPass = inputConfirmPass.value;
+                    const oldUser = inputOldUser ? inputOldUser.value.trim() : '';
+                    const oldPass = inputOldPass ? inputOldPass.value : '';
+                    const newUser = inputNewUser ? inputNewUser.value.trim() : '';
+                    const newPass = inputNewPass ? inputNewPass.value : '';
+                    const confirmPass = inputConfirmPass ? inputConfirmPass.value : '';
+
+                    function showAuthErr(msg) {
+                        if (authChangeError) {
+                            authChangeError.textContent = msg;
+                            authChangeError.classList.remove('hidden');
+                        }
+                    }
 
                     if (!oldPass) {
-                        authChangeError.textContent = "Vui lòng nhập mật khẩu hiện tại";
-                        authChangeError.classList.remove('hidden');
+                        showAuthErr("Vui lòng nhập mật khẩu hiện tại");
                         return;
                     }
                     if (!newUser) {
-                        authChangeError.textContent = "Tài khoản mới không được để trống";
-                        authChangeError.classList.remove('hidden');
+                        showAuthErr("Tài khoản mới không được để trống");
                         return;
                     }
                     if (newPass.length < 4) {
-                        authChangeError.textContent = "Mật khẩu mới phải có ít nhất 4 ký tự";
-                        authChangeError.classList.remove('hidden');
+                        showAuthErr("Mật khẩu mới phải có ít nhất 4 ký tự");
                         return;
                     }
                     if (newPass !== confirmPass) {
-                        authChangeError.textContent = "Xác nhận mật khẩu mới không trùng khớp!";
-                        authChangeError.classList.remove('hidden');
+                        showAuthErr("Xác nhận mật khẩu mới không trùng khớp!");
                         return;
                     }
 
-                    btnSubmitChangeAuth.disabled = true;
-                    btnSubmitChangeAuth.textContent = "Đang lưu...";
+                    if (btnSubmitChangeAuth) {
+                        btnSubmitChangeAuth.disabled = true;
+                        btnSubmitChangeAuth.textContent = "Đang lưu...";
+                    }
 
                     try {
-                        const res = await fetch('/api/auth/change_credentials', {
+                        const res = await apiFetch('/api/auth/change_credentials', {
                             method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
+                            body: {
                                 old_user: oldUser,
                                 old_pass: oldPass,
                                 new_user: newUser,
                                 new_pass: newPass
-                            })
+                            }
                         });
-                        const data = await res.json();
-                        if (res.ok && data.status === 'ok') {
+                        if (res.redirected) return;
+                        if (res.ok && res.data && res.data.status === 'ok') {
                             showToast("Đã đổi tài khoản và mật khẩu thành công!", "emerald");
                             currentAdminUser = newUser;
-                            modalChangeAuth.classList.add('hidden');
+                            if (modalChangeAuth) modalChangeAuth.classList.add('hidden');
                             const defaultWarn = document.getElementById('default-pin-warning');
                             if (defaultWarn) defaultWarn.classList.add('hidden');
                         } else {
-                            authChangeError.textContent = data.error || "Không thể đổi thông tin";
-                            authChangeError.classList.remove('hidden');
+                            showAuthErr(res.error || "Không thể đổi thông tin");
                         }
-                    } catch (err) {
-                        authChangeError.textContent = "Lỗi kết nối tới máy chủ!";
-                        authChangeError.classList.remove('hidden');
                     } finally {
-                        btnSubmitChangeAuth.disabled = false;
-                        btnSubmitChangeAuth.textContent = "Lưu Cấu Hình Mới";
+                        if (btnSubmitChangeAuth) {
+                            btnSubmitChangeAuth.disabled = false;
+                            btnSubmitChangeAuth.textContent = "Lưu Cấu Hình";
+                        }
                     }
                 });
             }
+
+            // Keyboard Pass-through (Desktop users, modal-aware & backend ALLOWED_KEYS safe)
+            const allowedSingleKeyRegex = /^[a-zA-Z0-9@._\-+/:!?$%&]$/;
+            window.addEventListener('keydown', (e) => {
+                const openModals = [modalUpload, modalLogs, modalChangeAuth].filter(
+                    m => m && !m.classList.contains('hidden')
+                );
+                if (openModals.length > 0) {
+                    if (e.key === 'Escape') {
+                        openModals.forEach(m => m.classList.add('hidden'));
+                    }
+                    return;
+                }
+
+                const activeEl = document.activeElement;
+                const activeTag = activeEl ? activeEl.tagName : '';
+                if (['INPUT', 'SELECT', 'TEXTAREA'].includes(activeTag) || (activeEl && activeEl.isContentEditable)) {
+                    return;
+                }
+
+                const keyMap = {
+                    'ArrowUp': 'up',
+                    'ArrowDown': 'down',
+                    'ArrowLeft': 'left',
+                    'ArrowRight': 'right',
+                    'Enter': 'ok',
+                    'F1': 'f1',
+                    'F2': 'f2',
+                    'Escape': 'f1',
+                    'Backspace': 'backspace',
+                    'Tab': 'Tab',
+                    ' ': 'space',
+                    '*': 'star',
+                    '#': 'hash'
+                };
+
+                if (Object.prototype.hasOwnProperty.call(keyMap, e.key)) {
+                    e.preventDefault();
+                    sendInput({ action: 'key', value: keyMap[e.key] });
+                    return;
+                }
+
+                // Printable single characters accepted by backend ALLOWED_KEYS
+                if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey && allowedSingleKeyRegex.test(e.key)) {
+                    e.preventDefault();
+                    sendInput({ action: 'key', value: e.key });
+                }
+            });
 
             // =====================================================================
             // HẠNG MỤC 5: Quản Lý Danh Sách Tài Khoản (Multi-Account Profiles)
@@ -2108,25 +2775,52 @@
                 savedProfiles = Array.isArray(profiles) ? profiles : [];
                 if (!selectAccountProfile) return;
                 const currentVal = selectedId !== undefined ? selectedId : selectAccountProfile.value;
-                selectAccountProfile.innerHTML = '<option value="">-- Chọn Acc đã lưu (' + savedProfiles.length + ') --</option>';
+                const frag = document.createDocumentFragment();
+                const defaultOpt = document.createElement('option');
+                defaultOpt.value = '';
+                defaultOpt.textContent = `-- Chọn Acc đã lưu (${savedProfiles.length}) --`;
+                frag.appendChild(defaultOpt);
+
                 savedProfiles.forEach(p => {
+                    if (!p || typeof p !== 'object') return;
                     const opt = document.createElement('option');
-                    opt.value = p.id;
-                    const mapInfo = p.map && p.map !== '-1' ? ` • Map ${p.map}` : '';
-                    const zoneInfo = p.zone !== undefined && p.zone !== '' ? `/K${p.zone}` : '';
-                    opt.textContent = `${p.label || p.username}${mapInfo}${zoneInfo}`;
-                    selectAccountProfile.appendChild(opt);
+                    opt.value = p.id !== undefined ? String(p.id) : '';
+                    const mapInfo = p.map && String(p.map) !== '-1' ? ` • Map ${p.map}` : '';
+                    const zoneInfo = p.zone !== undefined && String(p.zone) !== '' ? `/K${p.zone}` : '';
+                    opt.textContent = `${p.label || p.username || 'Account'}${mapInfo}${zoneInfo}`;
+                    frag.appendChild(opt);
                 });
-                if (currentVal) selectAccountProfile.value = currentVal;
+                selectAccountProfile.replaceChildren(frag);
+                if (currentVal) selectAccountProfile.value = String(currentVal);
             }
 
-            function loadProfiles() {
-                fetch('/api/profiles')
-                    .then(r => r.json())
-                    .then(d => {
-                        if (d.status === 'ok') renderProfilesList(d.profiles);
-                    })
-                    .catch(() => {});
+            function applyProfileToForm(prof) {
+                if (!prof) return;
+                if (loginUser) loginUser.value = prof.username || '';
+                // Always overwrite password (including clearing when profile has empty password)
+                if (loginPass) loginPass.value = prof.password || '';
+                if (loginServer && prof.server !== undefined && prof.server !== null) {
+                    loginServer.value = String(prof.server);
+                    try { localStorage.setItem('nro_saved_server', String(prof.server)); } catch (e) {}
+                }
+                if (selectFarmMap && prof.map !== undefined && prof.map !== null) {
+                    const mapStr = String(prof.map);
+                    selectFarmMap.value = mapStr;
+                    if (selectFarmMap.value !== mapStr) selectFarmMap.value = '-1';
+                    try { localStorage.setItem('nro_farm_map_v2', selectFarmMap.value); } catch (e) {}
+                }
+                if (farmZone && prof.zone !== undefined && prof.zone !== null) {
+                    farmZone.value = String(prof.zone);
+                    try { localStorage.setItem('nro_farm_zone', String(prof.zone)); } catch (e) {}
+                }
+            }
+
+            async function loadProfiles() {
+                const res = await apiFetch('/api/profiles', { method: 'GET' });
+                if (res.redirected) return;
+                if (res.ok && res.data && res.data.status === 'ok') {
+                    renderProfilesList(res.data.profiles);
+                }
             }
 
             if (selectAccountProfile) {
@@ -2134,65 +2828,62 @@
                     const id = selectAccountProfile.value;
                     const prof = savedProfiles.find(p => String(p.id) === String(id));
                     if (!prof) return;
-                    if (loginUser) loginUser.value = prof.username || '';
-                    if (loginPass && prof.password) loginPass.value = prof.password;
-                    if (loginServer && prof.server) loginServer.value = String(prof.server);
-                    if (selectFarmMap && prof.map !== undefined) {
-                        selectFarmMap.value = String(prof.map);
-                        try { localStorage.setItem('nro_farm_map_v2', String(prof.map)); } catch (e) {}
-                    }
-                    if (farmZone && prof.zone !== undefined) {
-                        farmZone.value = String(prof.zone);
-                        try { localStorage.setItem('nro_farm_zone', String(prof.zone)); } catch (e) {}
-                    }
+                    applyProfileToForm(prof);
                     showToast(`Đã điền thông tin Acc: ${prof.label || prof.username}`, 'indigo');
                 });
             }
 
             if (btnSaveProfile) {
-                btnSaveProfile.addEventListener('click', () => {
+                btnSaveProfile.addEventListener('click', async () => {
                     const u = loginUser ? loginUser.value.trim() : '';
                     const p = loginPass ? loginPass.value : '';
-                    const sv = loginServer ? parseInt(loginServer.value, 10) || 7 : 7;
+                    const parsedSv = loginServer ? parseInt(loginServer.value, 10) : 7;
+                    const sv = Number.isNaN(parsedSv) ? 7 : parsedSv;
                     const m = selectFarmMap ? selectFarmMap.value : '-1';
-                    const z = farmZone ? farmZone.value : '5';
+                    const z = farmZone ? farmZone.value.trim() : '';
 
                     if (!u) {
                         showToast('Vui lòng nhập Tài khoản trước khi bấm Lưu Acc!', 'amber');
                         if (loginUser) loginUser.focus();
                         return;
                     }
-                    const defaultLabel = `${u.split('@')[0]} (VT${sv})`;
+                    const svLabel = sv > 0 ? `VT${sv}` : 'Auto SV';
+                    const defaultLabel = `${u.split('@')[0]} (${svLabel})`;
                     const label = prompt('Nhập tên gợi nhớ cho Acc này (để trống sẽ tự đặt):', defaultLabel);
                     if (label === null) return;
 
-                    fetch('/api/profiles', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            label: label.trim() || defaultLabel,
-                            username: u,
-                            password: p,
-                            server: sv,
-                            map: m,
-                            zone: z
-                        })
-                    })
-                    .then(r => r.json())
-                    .then(d => {
-                        if (d.status === 'ok') {
-                            renderProfilesList(d.profiles);
-                            showToast(d.message || 'Đã lưu tài khoản vào danh sách!', 'emerald');
+                    btnSaveProfile.disabled = true;
+                    try {
+                        const res = await apiFetch('/api/profiles', {
+                            method: 'POST',
+                            body: {
+                                label: label.trim() || defaultLabel,
+                                username: u,
+                                password: p,
+                                server: sv,
+                                map: m,
+                                zone: z
+                            }
+                        });
+                        if (res.redirected) return;
+                        if (res.ok && res.data && res.data.status === 'ok') {
+                            const updatedList = Array.isArray(res.data.profiles) ? res.data.profiles : [];
+                            const matched = updatedList.find(
+                                item => String(item.username || '').toLowerCase() === u.toLowerCase() && Number(item.server) === sv
+                            );
+                            renderProfilesList(updatedList, matched ? matched.id : undefined);
+                            showToast(res.data.message || 'Đã lưu tài khoản vào danh sách!', 'emerald');
                         } else {
-                            showToast(d.error || 'Không thể lưu tài khoản', 'rose');
+                            showToast(res.error || 'Không thể lưu tài khoản', 'rose');
                         }
-                    })
-                    .catch(() => showToast('Lỗi kết nối máy chủ', 'rose'));
+                    } finally {
+                        btnSaveProfile.disabled = false;
+                    }
                 });
             }
 
             if (btnDeleteProfile) {
-                btnDeleteProfile.addEventListener('click', () => {
+                btnDeleteProfile.addEventListener('click', async () => {
                     const id = selectAccountProfile ? selectAccountProfile.value : '';
                     if (!id) {
                         showToast('Hãy chọn một Acc trong danh sách để xóa!', 'amber');
@@ -2201,21 +2892,22 @@
                     const prof = savedProfiles.find(p => String(p.id) === String(id));
                     if (!confirm(`Bạn có chắc muốn xóa Acc [${prof ? prof.label : id}] khỏi danh sách lưu?`)) return;
 
-                    fetch('/api/profiles', {
-                        method: 'DELETE',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ id })
-                    })
-                    .then(r => r.json())
-                    .then(d => {
-                        if (d.status === 'ok') {
-                            renderProfilesList(d.profiles, '');
-                            showToast(d.message || 'Đã xóa tài khoản!', 'emerald');
+                    btnDeleteProfile.disabled = true;
+                    try {
+                        const res = await apiFetch(`/api/profiles?id=${encodeURIComponent(id)}`, {
+                            method: 'DELETE',
+                            body: { id }
+                        });
+                        if (res.redirected) return;
+                        if (res.ok && res.data && res.data.status === 'ok') {
+                            renderProfilesList(res.data.profiles, '');
+                            showToast(res.data.message || 'Đã xóa tài khoản!', 'emerald');
                         } else {
-                            showToast(d.error || 'Lỗi xóa tài khoản', 'rose');
+                            showToast(res.error || 'Lỗi xóa tài khoản', 'rose');
                         }
-                    })
-                    .catch(() => showToast('Lỗi kết nối máy chủ', 'rose'));
+                    } finally {
+                        btnDeleteProfile.disabled = false;
+                    }
                 });
             }
 
@@ -2228,11 +2920,7 @@
                         return;
                     }
                     if (prof) {
-                        if (loginUser) loginUser.value = prof.username || '';
-                        if (loginPass && prof.password) loginPass.value = prof.password;
-                        if (loginServer && prof.server) loginServer.value = String(prof.server);
-                        if (selectFarmMap && prof.map) selectFarmMap.value = String(prof.map);
-                        if (farmZone && prof.zone !== undefined) farmZone.value = String(prof.zone);
+                        applyProfileToForm(prof);
                     }
                     executeQuickLogin();
                 });
@@ -2263,26 +2951,23 @@
                 }
             }
 
-            function loadNotifyConfig() {
-                fetch('/api/notify_config')
-                    .then(r => r.json())
-                    .then(d => {
-                        if (d.status === 'ok' && d.config) {
-                            const c = d.config;
-                            if (inputTgToken) inputTgToken.value = c.telegram_bot_token || '';
-                            if (inputTgChat) inputTgChat.value = c.telegram_chat_id || '';
-                            if (inputDiscordWebhook) inputDiscordWebhook.value = c.discord_webhook_url || '';
-                            if (chkNotifySkh) chkNotifySkh.checked = c.notify_skh !== false;
-                            if (chkNotifyBag) chkNotifyBag.checked = c.notify_full_bag !== false;
-                            if (chkNotifyDisc) chkNotifyDisc.checked = Boolean(c.notify_disconnect);
-                            updateNotifyBadge(c);
-                        }
-                    })
-                    .catch(() => {});
+            async function loadNotifyConfig() {
+                const res = await apiFetch('/api/notify_config', { method: 'GET' });
+                if (res.redirected) return;
+                if (res.ok && res.data && res.data.status === 'ok' && res.data.config) {
+                    const c = res.data.config;
+                    if (inputTgToken) inputTgToken.value = c.telegram_bot_token || '';
+                    if (inputTgChat) inputTgChat.value = c.telegram_chat_id || '';
+                    if (inputDiscordWebhook) inputDiscordWebhook.value = c.discord_webhook_url || '';
+                    if (chkNotifySkh) chkNotifySkh.checked = c.notify_skh !== false;
+                    if (chkNotifyBag) chkNotifyBag.checked = c.notify_full_bag !== false;
+                    if (chkNotifyDisc) chkNotifyDisc.checked = Boolean(c.notify_disconnect);
+                    updateNotifyBadge(c);
+                }
             }
 
             if (btnSaveNotify) {
-                btnSaveNotify.addEventListener('click', () => {
+                btnSaveNotify.addEventListener('click', async () => {
                     btnSaveNotify.disabled = true;
                     const payload = {
                         enabled: true,
@@ -2293,87 +2978,96 @@
                         notify_full_bag: chkNotifyBag ? chkNotifyBag.checked : true,
                         notify_disconnect: chkNotifyDisc ? chkNotifyDisc.checked : false
                     };
-                    fetch('/api/notify_config', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    })
-                    .then(r => r.json())
-                    .then(d => {
-                        if (d.status === 'ok') {
-                            updateNotifyBadge(d.config);
-                            showToast(d.message || 'Đã lưu cấu hình thông báo!', 'emerald');
+                    try {
+                        const res = await apiFetch('/api/notify_config', {
+                            method: 'POST',
+                            body: payload
+                        });
+                        if (res.redirected) return;
+                        if (res.ok && res.data && res.data.status === 'ok') {
+                            updateNotifyBadge(res.data.config);
+                            showToast(res.data.message || 'Đã lưu cấu hình thông báo!', 'emerald');
                         } else {
-                            showToast(d.error || 'Lỗi lưu cấu hình', 'rose');
+                            showToast(res.error || 'Lỗi lưu cấu hình', 'rose');
                         }
-                    })
-                    .catch(() => showToast('Lỗi kết nối máy chủ', 'rose'))
-                    .finally(() => { btnSaveNotify.disabled = false; });
+                    } finally {
+                        btnSaveNotify.disabled = false;
+                    }
                 });
             }
 
             if (btnTestNotify) {
-                btnTestNotify.addEventListener('click', () => {
+                btnTestNotify.addEventListener('click', async () => {
                     btnTestNotify.disabled = true;
                     btnTestNotify.textContent = 'Đang gửi...';
                     showToast('Đang gửi tin nhắn & ảnh chụp màn hình thử nghiệm...', 'indigo');
 
-                    fetch('/api/notify_test', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            telegram_bot_token: inputTgToken ? inputTgToken.value.trim() : '',
-                            telegram_chat_id: inputTgChat ? inputTgChat.value.trim() : '',
-                            discord_webhook_url: inputDiscordWebhook ? inputDiscordWebhook.value.trim() : ''
-                        })
-                    })
-                    .then(r => r.json())
-                    .then(d => {
-                        if (d.status === 'ok') {
-                            showToast(d.message || 'Đã gửi thông báo thử nghiệm thành công!', 'emerald');
+                    try {
+                        const res = await apiFetch('/api/notify_test', {
+                            method: 'POST',
+                            body: {
+                                telegram_bot_token: inputTgToken ? inputTgToken.value.trim() : '',
+                                telegram_chat_id: inputTgChat ? inputTgChat.value.trim() : '',
+                                discord_webhook_url: inputDiscordWebhook ? inputDiscordWebhook.value.trim() : ''
+                            },
+                            timeoutMs: 20000
+                        });
+                        if (res.redirected) return;
+                        if (res.ok && res.data && res.data.status === 'ok') {
+                            showToast(res.data.message || 'Đã gửi thông báo thử nghiệm thành công!', 'emerald');
                         } else {
-                            showToast(d.error || 'Không gửi được thông báo', 'rose');
+                            showToast(res.error || 'Không gửi được thông báo', 'rose');
                         }
-                    })
-                    .catch(() => showToast('Lỗi kết nối máy chủ', 'rose'))
-                    .finally(() => {
+                    } finally {
                         btnTestNotify.disabled = false;
                         btnTestNotify.textContent = 'Gửi Thử';
-                    });
+                    }
                 });
             }
 
-            // Check Master Auth Status
-            function checkAuthStatus() {
-                fetch('/api/auth/status')
-                    .then(r => r.json())
-                    .then(d => {
-                        if (d.admin_user) currentAdminUser = d.admin_user;
-                        const defaultWarn = document.getElementById('default-pin-warning');
-                        if (defaultWarn) {
-                            if (d.is_default) defaultWarn.classList.remove('hidden');
-                            else defaultWarn.classList.add('hidden');
-                        }
-                    })
-                    .catch(() => {});
+            // Check Master Auth Status (syncs CSRF token & detects expired session)
+            async function checkAuthStatus() {
+                const res = await apiFetch('/api/auth/status', { method: 'GET' });
+                if (res.redirected || !res.ok || !res.data) return;
+                const d = res.data;
+                if (d.csrf_token) csrfToken = d.csrf_token;
+                if (d.authenticated === false) {
+                    redirectToLogin();
+                    return;
+                }
+                if (d.admin_user) currentAdminUser = d.admin_user;
+                const defaultWarn = document.getElementById('default-pin-warning');
+                if (defaultWarn) {
+                    if (d.is_default) defaultWarn.classList.remove('hidden');
+                    else defaultWarn.classList.add('hidden');
+                }
             }
+
+            // Initial bootstrap
             checkAuthStatus();
             loadProfiles();
             loadNotifyConfig();
 
-            // Auto-run on start
-            restartTimer();
+            // Start initial screenshot (single frame when paused in Eco mode, loop otherwise) & status polling
+            fetchScreenshot({ single: state.fpsInterval === 0 });
             fetchStatus();
-            let statusTimer = setInterval(fetchStatus, 4000);
+
             document.addEventListener('visibilitychange', () => {
                 if (document.hidden) {
-                    if (state.timer) clearTimeout(state.timer);
-                    state.timer = null;
-                    clearInterval(statusTimer);
-                } else {
+                    stopAllPolling();
+                } else if (!state.redirecting) {
                     fetchStatus();
-                    fetchScreenshot();
-                    statusTimer = setInterval(fetchStatus, 4000);
+                    if (state.fpsInterval > 0) {
+                        fetchScreenshot();
+                    }
+                }
+            });
+
+            window.addEventListener('beforeunload', () => {
+                stopAllPolling();
+                if (state.currentObjectUrl) {
+                    URL.revokeObjectURL(state.currentObjectUrl);
+                    state.currentObjectUrl = null;
                 }
             });
         })();

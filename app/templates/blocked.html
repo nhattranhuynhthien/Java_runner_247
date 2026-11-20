@@ -65,7 +65,7 @@
             </h1>
 
             <p class="text-xs text-slate-300 leading-relaxed max-w-sm">
-                Địa chỉ IP của bạn (<code class="text-rose-300 font-mono font-bold bg-rose-950/60 px-1.5 py-0.5 rounded border border-rose-500/30">{{ ip }}</code>) đã bị đưa vào danh sách đen do <strong class="text-rose-400 font-semibold">nhập sai thông tin đăng nhập quá nhiều lần</strong>.
+                Địa chỉ IP của bạn (<code class="text-rose-300 font-mono font-bold bg-rose-950/60 px-1.5 py-0.5 rounded border border-rose-500/30">{{ ip|default('Không xác định', true) }}</code>) đã bị đưa vào danh sách đen do <strong class="text-rose-400 font-semibold">nhập sai thông tin đăng nhập quá nhiều lần</strong>.
             </p>
 
             <div class="w-full bg-slate-950/80 rounded-xl p-3.5 border border-white/10 text-left text-[11px] text-slate-400 flex flex-col gap-2 font-mono">
