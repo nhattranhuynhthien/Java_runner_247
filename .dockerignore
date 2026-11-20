@@ -1,11 +1,17 @@
 .git
 .DS_Store
 __pycache__
+**/__pycache__
 *.pyc
+**/*.pyc
+**/*.pyo
 .pytest_cache
 .local-automations
 tests
 .env
+.env.*
+.venv
+venv
 microemulator.jar
 app/security_config.json
 security_config.json

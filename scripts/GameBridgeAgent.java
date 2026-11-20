@@ -11,20 +11,32 @@ import java.awt.Window;
 import java.awt.image.BufferedImage;
 import javax.imageio.ImageIO;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
 
 public class GameBridgeAgent implements Runnable, ThreadFactory {
     private static Instrumentation instrumentation;
     private static int serverPort = 28888;
     private static volatile boolean running = true;
     private static volatile Thread serverThread = null;
+    private static volatile Thread watchdogThread = null;
+    private static volatile ServerSocket activeServerSocket = null;
     private static volatile ExecutorService httpExecutor = null;
-    private static volatile int workerCounter = 0;
+    private static final AtomicInteger workerCounter = new AtomicInteger(0);
+    private static final AtomicBoolean shutdownHookRegistered = new AtomicBoolean(false);
+    private static final Object farmLock = new Object();
+    private static final Object loginLock = new Object();
+    private static final Object screenshotLock = new Object();
+    private static volatile Thread directLoginThread = null;
+    private static final int MAX_HTTP_BODY_BYTES = 65536;
+    private static final int MAX_HTTP_HEADER_LINES = 64;
+    private static final int MAX_HTTP_LINE_BYTES = 8192;
 
     private static final int TASK_HTTP_SERVER = 1;
     private static final int TASK_HANDLE_CLIENT = 2;
     private static final int TASK_WATCHDOG = 3;
     private static final int TASK_DIRECT_LOGIN = 4;
     private static final int TASK_AUTO_FARM = 5;
+    private static final int TASK_SHUTDOWN = 6;
 
     private final int taskType;
     private final Socket clientSocket;
@@ -54,16 +66,48 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
     }
 
     public Thread newThread(Runnable r) {
-        Thread t = new Thread(r, "NRO-Bridge-Worker-" + (++workerCounter));
+        Thread t = new Thread(r, "NRO-Bridge-Worker-" + workerCounter.incrementAndGet());
         t.setDaemon(true);
         return t;
     }
 
     private static synchronized ExecutorService getHttpExecutor() {
-        if (httpExecutor == null) {
-            httpExecutor = Executors.newFixedThreadPool(8, new GameBridgeAgent());
+        if (httpExecutor == null || httpExecutor.isShutdown()) {
+            ThreadPoolExecutor exec = new ThreadPoolExecutor(
+                4,
+                8,
+                60L,
+                TimeUnit.SECONDS,
+                new ArrayBlockingQueue<Runnable>(32),
+                new GameBridgeAgent()
+            );
+            exec.allowCoreThreadTimeOut(true);
+            httpExecutor = exec;
         }
         return httpExecutor;
+    }
+
+    private static void registerShutdownHook() {
+        if (shutdownHookRegistered.compareAndSet(false, true)) {
+            try {
+                Runtime.getRuntime().addShutdownHook(new Thread(
+                    new GameBridgeAgent(TASK_SHUTDOWN, null, null, null, 0, false, null, -1, null),
+                    "NRO-Bridge-Shutdown"
+                ));
+            } catch (Throwable ignored) {}
+        }
+    }
+
+    private static void shutdownBridge() {
+        running = false;
+        ServerSocket ss = activeServerSocket;
+        if (ss != null && !ss.isClosed()) {
+            try { ss.close(); } catch (Throwable ignored) {}
+        }
+        ExecutorService exec = httpExecutor;
+        if (exec != null) {
+            try { exec.shutdownNow(); } catch (Throwable ignored) {}
+        }
     }
 
     public void run() {
@@ -77,11 +121,13 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
             runDirectLoginWorker(loginUser, loginPass, loginServer);
         } else if (taskType == TASK_AUTO_FARM) {
             runAutoFarmWorker(farmNeedTravel, farmInitialMap, farmTargetMap, farmMode);
+        } else if (taskType == TASK_SHUTDOWN) {
+            shutdownBridge();
         }
     }
 
     // Keep track of background farm task & persistent 24/7 state
-    private static Thread farmThread = null;
+    private static volatile Thread farmThread = null;
     private static volatile boolean autoFarmActive = false;
     private static volatile int autoFarmMap = -1;
     private static volatile int autoFarmZone = -1;
@@ -89,6 +135,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
     private static volatile long lastWatchdogTravelMs = 0L;
     private static volatile long buyingTdltSinceMs = 0L;
     private static volatile long lastTdltBuyAttemptMs = 0L;
+    private static volatile long lastTdltLogMs = 0L;
 
     private static File getStateFile() {
         File dataDir = new File("/data");
@@ -100,30 +147,56 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
     }
 
     public static synchronized void saveAutoFarmState() {
+        FileOutputStream fos = null;
+        File tmp = null;
         try {
             File f = getStateFile();
+            File parent = f.getParentFile();
+            if (parent != null && !parent.exists()) {
+                parent.mkdirs();
+            }
+            String modeVal = (autoFarmMode != null && !autoFarmMode.isEmpty()) ? autoFarmMode : "all";
             String json = "{\"active\":" + autoFarmActive +
                           ",\"map\":" + autoFarmMap +
                           ",\"zone\":" + autoFarmZone +
-                          ",\"mode\":\"" + (autoFarmMode != null ? autoFarmMode : "all") + "\"" +
+                          ",\"mode\":\"" + escapeJson(modeVal) + "\"" +
                           ",\"updated_at\":" + System.currentTimeMillis() + "}";
-            FileOutputStream fos = new FileOutputStream(f);
-            fos.write(json.getBytes("UTF-8"));
+            byte[] payload = json.getBytes("UTF-8");
+            tmp = new File(f.getAbsolutePath() + ".tmp");
+            fos = new FileOutputStream(tmp);
+            fos.write(payload);
+            fos.getFD().sync();
             fos.close();
+            fos = null;
+            if (!tmp.renameTo(f)) {
+                fos = new FileOutputStream(f);
+                fos.write(payload);
+                fos.close();
+                fos = null;
+                tmp.delete();
+            }
+            tmp = null;
         } catch (Throwable t) {
             System.out.println("[BRIDGE] saveAutoFarmState error: " + t);
+        } finally {
+            if (fos != null) {
+                try { fos.close(); } catch (Throwable ignored) {}
+            }
+            if (tmp != null && tmp.exists()) {
+                try { tmp.delete(); } catch (Throwable ignored) {}
+            }
         }
     }
 
     public static synchronized void loadAutoFarmState() {
+        BufferedReader br = null;
         try {
             File f = getStateFile();
             if (!f.exists()) return;
-            BufferedReader br = new BufferedReader(new InputStreamReader(new FileInputStream(f), "UTF-8"));
+            br = new BufferedReader(new InputStreamReader(new FileInputStream(f), "UTF-8"));
             StringBuilder sb = new StringBuilder();
             String line;
             while ((line = br.readLine()) != null) sb.append(line);
-            br.close();
             String s = sb.toString();
             autoFarmActive = s.contains("\"active\":true") || s.contains("\"active\": true");
             autoFarmMap = extractIntJson(s, "map", -1);
@@ -134,6 +207,10 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                                ", map=" + autoFarmMap + ", zone=" + autoFarmZone + ", mode=" + autoFarmMode);
         } catch (Throwable t) {
             System.out.println("[BRIDGE] loadAutoFarmState error: " + t);
+        } finally {
+            if (br != null) {
+                try { br.close(); } catch (Throwable ignored) {}
+            }
         }
     }
 
@@ -156,12 +233,28 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
 
     private static String extractStrJson(String json, String key, String defVal) {
         try {
-            String pat = "\"" + key + "\":\"";
+            String pat = "\"" + key + "\":";
             int idx = json.indexOf(pat);
             if (idx < 0) return defVal;
             int start = idx + pat.length();
-            int end = json.indexOf("\"", start);
-            if (end > start) return json.substring(start, end);
+            while (start < json.length() && Character.isWhitespace(json.charAt(start))) start++;
+            if (start >= json.length() || json.charAt(start) != '"') return defVal;
+            start++;
+            StringBuilder out = new StringBuilder();
+            for (int i = start; i < json.length(); i++) {
+                char c = json.charAt(i);
+                if (c == '\\' && i + 1 < json.length()) {
+                    char next = json.charAt(++i);
+                    if (next == 'n') out.append('\n');
+                    else if (next == 'r') out.append('\r');
+                    else if (next == 't') out.append('\t');
+                    else out.append(next);
+                } else if (c == '"') {
+                    return out.toString();
+                } else {
+                    out.append(c);
+                }
+            }
         } catch (Throwable ignored) {}
         return defVal;
     }
@@ -299,6 +392,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
 
     public static int mapKeyToJ2meCode(String rawKey) {
         if (rawKey == null) return 0;
+        if (" ".equals(rawKey)) return 32;
         String k = rawKey.trim();
         String lower = k.toLowerCase(Locale.ROOT);
         if ("up".equals(lower) || "arrowup".equals(lower)) return -1;
@@ -311,7 +405,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
         if ("backspace".equals(lower) || "clear".equals(lower) || "delete".equals(lower)) return -8;
         if ("star".equals(lower) || "asterisk".equals(lower) || "*".equals(k)) return 42;
         if ("hash".equals(lower) || "numbersign".equals(lower) || "pound".equals(lower) || "#".equals(k)) return 35;
-        if ("space".equals(lower) || "kp_space".equals(lower) || " ".equals(k)) return 32;
+        if ("space".equals(lower) || "kp_space".equals(lower)) return 32;
         if ("tab".equals(lower)) return 9;
         if (k.length() == 1) {
             return (int) k.charAt(0);
@@ -574,8 +668,10 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                     handled = true;
                 }
             }
-            sendKey("backspace");
-            repaintDisplay();
+            if (handled) {
+                sendKey("backspace");
+                repaintDisplay();
+            }
         } catch (Throwable t) {
             System.out.println("[BRIDGE] clearActiveText error: " + t);
         }
@@ -631,6 +727,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
         try {
             instrumentation = inst;
             System.out.println("[BRIDGE] GameBridgeAgent premain loaded!");
+            registerShutdownHook();
             loadAutoFarmState();
             startHttpServer();
             startWatchdogThread();
@@ -644,6 +741,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
         try {
             instrumentation = inst;
             System.out.println("[BRIDGE] GameBridgeAgent agentmain loaded!");
+            registerShutdownHook();
             loadAutoFarmState();
             startHttpServer();
             startWatchdogThread();
@@ -654,6 +752,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
     }
 
     private static volatile ClassLoader cachedClassLoader = null;
+    private static volatile long lastLoadedClassesScanMs = 0L;
 
     private static ClassLoader findMidletClassLoader() {
         try {
@@ -670,20 +769,37 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
         } catch (Throwable ignored) {}
 
         if (cachedClassLoader != null) return cachedClassLoader;
-        for (Thread t : Thread.getAllStackTraces().keySet()) {
-            ClassLoader cl = t.getContextClassLoader();
-            if (cl != null && cl.getClass().getName().contains("MIDletClassLoader")) {
-                cachedClassLoader = cl;
-                return cl;
-            }
-        }
-        if (instrumentation != null) {
-            for (Class<?> c : instrumentation.getAllLoadedClasses()) {
-                if (c.getName().startsWith("nro.")) {
-                    ClassLoader cl = c.getClassLoader();
-                    if (cl != null) {
+        try {
+            ThreadGroup rootGroup = Thread.currentThread().getThreadGroup();
+            if (rootGroup != null) {
+                while (rootGroup.getParent() != null) {
+                    rootGroup = rootGroup.getParent();
+                }
+                int est = Math.max(rootGroup.activeCount() + 16, 32);
+                Thread[] threads = new Thread[est];
+                int count = rootGroup.enumerate(threads, true);
+                for (int i = 0; i < count; i++) {
+                    Thread t = threads[i];
+                    if (t == null) continue;
+                    ClassLoader cl = t.getContextClassLoader();
+                    if (cl != null && cl.getClass().getName().contains("MIDletClassLoader")) {
                         cachedClassLoader = cl;
                         return cl;
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
+        if (instrumentation != null) {
+            long now = System.currentTimeMillis();
+            if (now - lastLoadedClassesScanMs >= 500L) {
+                lastLoadedClassesScanMs = now;
+                for (Class<?> c : instrumentation.getAllLoadedClasses()) {
+                    if (c.getName().startsWith("nro.")) {
+                        ClassLoader cl = c.getClassLoader();
+                        if (cl != null) {
+                            cachedClassLoader = cl;
+                            return cl;
+                        }
                     }
                 }
             }
@@ -725,7 +841,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 return Class.forName(name, false, cl);
             } catch (Throwable ignored) {}
         }
-        if (instrumentation != null) {
+        if (instrumentation != null && (cl != null || !name.startsWith("nro."))) {
             for (Class<?> c : instrumentation.getAllLoadedClasses()) {
                 if (c.getName().equals(name)) return c;
             }
@@ -976,7 +1092,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
 
             // enable == true: Ensure mod controller is initialized, keep nro.p.z = true, nro.ct.cT = true, and Goback enabled
             ensureModControllerInitialized();
-            configurePunchSkill();
+            ensureAutoSkillConfigured();
             if (clsP != null) {
                 Field fZ = getTypedField(clsP, "z", boolean.class);
                 if (fZ != null) fZ.setBoolean(null, true);
@@ -1023,7 +1139,11 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                     Field fCt = getTypedField(clsCt, "cT", boolean.class);
                     if (fCt != null) fCt.setBoolean(null, true);
                 }
-                System.out.println("[BRIDGE] TDLT active with " + tdltMinutes + " minutes remaining.");
+                long nowLog = System.currentTimeMillis();
+                if (nowLog - lastTdltLogMs >= 60000L) {
+                    lastTdltLogMs = nowLog;
+                    System.out.println("[BRIDGE] TDLT active with " + tdltMinutes + " minutes remaining.");
+                }
                 return;
             }
 
@@ -1091,7 +1211,10 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 Field fN = getTypedField(clsJ, "n", boolean.class);
                 if (fN != null) fN.setBoolean(null, true);
             }
-            System.out.println("[BRIDGE] TDLT enabled (cT=true, ts=true, slot=" + slot + ", mins=" + itemMins + "); attacking immediately.");
+            if (now - lastTdltLogMs >= 60000L) {
+                lastTdltLogMs = now;
+                System.out.println("[BRIDGE] TDLT enabled (cT=true, ts=true, slot=" + slot + ", mins=" + itemMins + "); attacking immediately.");
+            }
         } catch (Throwable t) {
             System.out.println("[BRIDGE] syncInGameTdltState error: " + t);
         }
@@ -1107,9 +1230,9 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 setModFlag("gb", true);
                 updateGobackTarget(autoFarmMap, autoFarmZone);
             }
-            // Special dependency: ts requires a valid auto-skill in nro.j.a before enabling
-            if ("ts".equals(c) && desired) {
-                configurePunchSkill();
+            // Special dependency: ts/ats requires a valid auto-skill in nro.j.a before enabling
+            if (("ts".equals(c) || "ats".equals(c)) && desired) {
+                ensureAutoSkillConfigured();
             }
 
             // Set directly on the typed boolean static field
@@ -1369,12 +1492,18 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
             }
 
             // 2. Spawn asynchronous worker inside JVM to disconnect old session and trigger LoginScr login
-            Thread loginWorker = new Thread(
-                new GameBridgeAgent(TASK_DIRECT_LOGIN, null, cleanUser, cleanPass, serverNum, false, null, -1, null),
-                "NRO-DirectLogin-Worker"
-            );
-            loginWorker.setDaemon(true);
-            loginWorker.start();
+            synchronized (loginLock) {
+                if (directLoginThread != null && directLoginThread.isAlive()) {
+                    directLoginThread.interrupt();
+                }
+                Thread loginWorker = new Thread(
+                    new GameBridgeAgent(TASK_DIRECT_LOGIN, null, cleanUser, cleanPass, serverNum, false, null, -1, null),
+                    "NRO-DirectLogin-Worker"
+                );
+                loginWorker.setDaemon(true);
+                directLoginThread = loginWorker;
+                loginWorker.start();
+            }
             return true;
         } catch (Throwable t) {
             System.out.println("[BRIDGE] directLogin error: " + t);
@@ -1385,6 +1514,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
     private static void runDirectLoginWorker(String cleanUser, String cleanPass, int serverNum) {
         try {
             autoLaunchMidletIfNeeded();
+            if (Thread.currentThread().isInterrupted()) return;
             Class<?> clsCr = getGameClass("nro.cr");
             Class<?> clsCJ = getGameClass("nro.cJ");
             Class<?> clsE = getGameClass("nro.e");
@@ -1395,6 +1525,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 if (mH != null) mH.invoke(null);
             }
             Thread.sleep(350);
+            if (Thread.currentThread().isInterrupted()) return;
 
             // Populate LoginScr TFields (e=user, b=pass) using type-safe reflection
             if (clsCr != null && clsCJ != null) {
@@ -1432,12 +1563,17 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
             // Wait up to 4.5s; if still not in_game, trigger hS() once more
             for (int i = 0; i < 9; i++) {
                 Thread.sleep(500);
+                if (Thread.currentThread().isInterrupted()) return;
                 Map<String, Object> st = getStatus();
                 if (Boolean.TRUE.equals(st.get("in_game"))) {
                     return;
                 }
             }
-            if (mJ != null) mJ.invoke(null);
+            if (!Thread.currentThread().isInterrupted() && mJ != null) {
+                mJ.invoke(null);
+            }
+        } catch (InterruptedException ie) {
+            System.out.println("[BRIDGE] DirectLogin-Worker superseded by newer login request.");
         } catch (Throwable t) {
             System.out.println("[BRIDGE] DirectLogin-Worker error: " + t);
         }
@@ -1468,33 +1604,38 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
     }
 
     public static byte[] captureScreenshotJpeg() {
-        try {
-            Component comp = cachedCanvasComp;
-            if (comp == null || !comp.isDisplayable() || comp.getWidth() <= 0 || comp.getHeight() <= 0) {
-                Window[] windows = Window.getWindows();
-                for (int i = 0; i < windows.length; i++) {
-                    if (windows[i].isShowing()) {
-                        comp = findDisplayCanvas(windows[i]);
-                        if (comp != null) {
-                            cachedCanvasComp = comp;
-                            break;
+        synchronized (screenshotLock) {
+            try {
+                Component comp = cachedCanvasComp;
+                if (comp == null || !comp.isDisplayable() || comp.getWidth() <= 0 || comp.getHeight() <= 0) {
+                    Window[] windows = Window.getWindows();
+                    for (int i = 0; i < windows.length; i++) {
+                        if (windows[i].isShowing()) {
+                            comp = findDisplayCanvas(windows[i]);
+                            if (comp != null) {
+                                cachedCanvasComp = comp;
+                                break;
+                            }
                         }
                     }
                 }
+                if (comp == null) return null;
+
+                BufferedImage img = new BufferedImage(240, 360, BufferedImage.TYPE_INT_RGB);
+                Graphics2D g2 = img.createGraphics();
+                try {
+                    comp.paint(g2);
+                } finally {
+                    g2.dispose();
+                }
+
+                ByteArrayOutputStream baos = new ByteArrayOutputStream(16384);
+                ImageIO.write(img, "jpg", baos);
+                byte[] bytes = baos.toByteArray();
+                return (bytes != null && bytes.length > 200) ? bytes : null;
+            } catch (Throwable ignored) {
+                return null;
             }
-            if (comp == null) return null;
-
-            BufferedImage img = new BufferedImage(240, 360, BufferedImage.TYPE_INT_RGB);
-            Graphics2D g2 = img.createGraphics();
-            comp.paint(g2);
-            g2.dispose();
-
-            ByteArrayOutputStream baos = new ByteArrayOutputStream(16384);
-            ImageIO.write(img, "jpg", baos);
-            byte[] bytes = baos.toByteArray();
-            return (bytes != null && bytes.length > 200) ? bytes : null;
-        } catch (Throwable ignored) {
-            return null;
         }
     }
 
@@ -1574,7 +1715,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 try {
                     ensureModControllerInitialized();
                     int targetZone = Integer.parseInt(lower.substring(1).trim());
-                    autoFarmZone = targetZone;
+                    boolean sent = false;
                     // Direct network packet via nro.am.a().K(targetZone)
                     Class<?> clsAm = getGameClass("nro.am");
                     if (clsAm != null) {
@@ -1582,18 +1723,27 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                         Object instAm = (mA != null) ? mA.invoke(null) : null;
                         if (instAm != null) {
                             Method mK = getTypedMethod(clsAm, "K", false, void.class, int.class);
-                            if (mK != null) mK.invoke(instAm, targetZone);
+                            if (mK != null) {
+                                mK.invoke(instAm, targetZone);
+                                sent = true;
+                            }
                         }
                     }
                     // In-game mod zone tracker via nro.q.f(targetZone)
                     Class<?> clsQ = getGameClass("nro.q");
                     if (clsQ != null) {
                         Method mF = getTypedMethod(clsQ, "f", true, void.class, int.class);
-                        if (mF != null) mF.invoke(null, targetZone);
+                        if (mF != null) {
+                            mF.invoke(null, targetZone);
+                            sent = true;
+                        }
                     }
-                    updateGobackTarget(-1, targetZone);
-                    System.out.println("[BRIDGE] Switched to Zone " + targetZone + " via direct nro.am.K and nro.q.f");
-                    return true;
+                    if (sent) {
+                        autoFarmZone = targetZone;
+                        updateGobackTarget(-1, targetZone);
+                        System.out.println("[BRIDGE] Switched to Zone " + targetZone + " via direct nro.am.K and nro.q.f");
+                        return true;
+                    }
                 } catch (Throwable t) {
                     System.out.println("[BRIDGE] Error switching zone: " + t);
                 }
@@ -1614,49 +1764,34 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                             Method dMeth = getTypedMethod(clsF, "d", false, boolean.class, String.class);
                             if (dMeth != null) dMeth.invoke(instF, lower);
                         }
+                        return true;
                     }
-                    return true;
                 } catch (Throwable ignored) {}
             }
 
-            // 6. Direct TDLT chip toggle
+            // 6. Direct TDLT chip toggle (setModFlag handles gb dependency & syncInGameTdltState once)
             if ("tdlt".equals(lower)) {
                 Boolean curTdlt = getModFlag("tdlt");
                 boolean turnOn = (curTdlt == null || !curTdlt.booleanValue());
-                if (turnOn) {
-                    setModFlag("gb", true);
-                    updateGobackTarget(autoFarmMap, autoFarmZone);
-                    setModFlag("tdlt", true);
-                    syncInGameTdltState(true);
-                } else {
-                    setModFlag("tdlt", false);
-                    syncInGameTdltState(false);
-                }
-                return true;
+                return setModFlag("tdlt", turnOn);
             }
 
             // 7. Direct Tàn Sát chip toggle
-            if ("ts".equals(lower)) {
+            if ("ts".equals(lower) || "ats".equals(lower)) {
                 Boolean curTs = getModFlag("ts");
                 boolean turnOn = (curTs == null || !curTs.booleanValue());
-                if (turnOn) {
-                    configurePunchSkill();
-                    setModFlag("ts", true);
-                } else {
-                    setModFlag("ts", false);
-                }
-                return true;
+                return setModFlag("ts", turnOn);
             }
 
             // 8. Direct Goback chip toggle
             if ("gb".equals(lower)) {
                 Boolean curGb = getModFlag("gb");
                 boolean turnOn = (curGb == null || !curGb.booleanValue());
-                setModFlag("gb", turnOn);
-                if (turnOn) {
+                boolean ok = setModFlag("gb", turnOn);
+                if (ok && turnOn) {
                     updateGobackTarget(-1, -1);
                 }
-                return true;
+                return ok;
             }
 
             Boolean beforeFlag = getModFlag(lower);
@@ -2027,17 +2162,28 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
         }
     }
 
-    private static boolean containsAutoSkill(Vector autoSkills, int skillId) {
-        if (autoSkills == null || skillId < 0) return false;
+    private static boolean hasValidAutoSkill() {
         try {
+            Class<?> clsJ = getGameClass("nro.j");
+            if (clsJ == null) return false;
+            Field fAutoA = getTypedField(clsJ, "a", Vector.class);
+            if (fAutoA == null) return false;
+            Vector autoSkills = (Vector) fAutoA.get(null);
+            if (autoSkills == null || autoSkills.isEmpty()) return false;
             for (int i = 0; i < autoSkills.size(); i++) {
                 Object skill = autoSkills.elementAt(i);
-                if (skill != null && getSkillTemplateId(skill) == skillId) {
+                if (skill != null && getSkillTemplateId(skill) >= 0) {
                     return true;
                 }
             }
         } catch (Throwable ignored) {}
         return false;
+    }
+
+    private static void ensureAutoSkillConfigured() {
+        if (!hasValidAutoSkill()) {
+            configurePunchSkill();
+        }
     }
 
     // Apply the requested farming mode ("all", "tdlt", or "ts") immediately
@@ -2057,13 +2203,14 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
     }
 
     // 24/7 Watchdog Thread: Ensures Auto-Launch from Launcher, Auto-Reconnect (alogin + sz) and Auto-Resume Farm
-    private static void startWatchdogThread() {
-        Thread wd = new Thread(
+    private static synchronized void startWatchdogThread() {
+        if (watchdogThread != null && watchdogThread.isAlive()) return;
+        watchdogThread = new Thread(
             new GameBridgeAgent(TASK_WATCHDOG, null, null, null, 0, false, null, -1, null),
             "NRO-AutoFarm-Watchdog"
         );
-        wd.setDaemon(true);
-        wd.start();
+        watchdogThread.setDaemon(true);
+        watchdogThread.start();
     }
 
     private static void runWatchdogLoop() {
@@ -2081,6 +2228,7 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
         while (running) {
             try {
                 Thread.sleep(5000);
+                if (!running) break;
 
                 // Ensure HTTP bridge server is always alive and listening
                 if (serverThread == null || !serverThread.isAlive()) {
@@ -2097,7 +2245,8 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 if (!autoFarmActive) continue;
 
                 // If an explicit farmThread is currently executing travel/setup, let it finish
-                if (farmThread != null && farmThread.isAlive()) continue;
+                Thread currentFarm = farmThread;
+                if (currentFarm != null && currentFarm.isAlive()) continue;
 
                 Map<String, Object> st = getStatus();
                 boolean inGame = Boolean.TRUE.equals(st.get("in_game"));
@@ -2110,8 +2259,8 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 setModFlag("sz", true);
                 setModFlag("checklag", true);
 
-                // Ensure melee skill is in auto list
-                configurePunchSkill();
+                // Ensure at least one auto-attack skill is present without overwriting user-selected skills or spamming RMS disk writes
+                ensureAutoSkillConfigured();
 
                 // If currently flying to Map 5 (Đảo Kame) to auto-buy TDLT from Santa, bound wait to 20s max
                 Class<?> clsP = getGameClass("nro.p");
@@ -2503,26 +2652,35 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 serverSocket = new ServerSocket();
                 serverSocket.setReuseAddress(true);
                 serverSocket.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), serverPort), 50);
+                activeServerSocket = serverSocket;
                 System.out.println("[BRIDGE] HTTP Bridge server listening on 127.0.0.1:" + serverPort);
                 retryCount = 0;
 
                 while (running) {
+                    Socket socket = null;
                     try {
-                        final Socket socket = serverSocket.accept();
+                        socket = serverSocket.accept();
                         socket.setSoTimeout(10000);
                         socket.setTcpNoDelay(true);
                         getHttpExecutor().execute(
                             new GameBridgeAgent(TASK_HANDLE_CLIENT, socket, null, null, 0, false, null, -1, null)
                         );
+                        socket = null;
                     } catch (Throwable clientErr) {
+                        if (socket != null) {
+                            try { socket.close(); } catch (Throwable ignored) {}
+                        }
                         if (!running) break;
                         try { Thread.sleep(50); } catch (Throwable ignored) {}
                     }
                 }
             } catch (Throwable t) {
-                System.out.println("[BRIDGE] Server socket error on port " + serverPort + ": " + t);
+                if (running) {
+                    System.out.println("[BRIDGE] Server socket error on port " + serverPort + ": " + t);
+                }
                 retryCount++;
             } finally {
+                activeServerSocket = null;
                 if (serverSocket != null && !serverSocket.isClosed()) {
                     try { serverSocket.close(); } catch (Throwable ignored) {}
                 }
@@ -2537,42 +2695,110 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
         }
     }
 
+    private static String readHttpLine(InputStream in) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream(128);
+        int b;
+        int count = 0;
+        while ((b = in.read()) != -1) {
+            if (b == '\n') {
+                break;
+            }
+            if (b != '\r') {
+                if (count < MAX_HTTP_LINE_BYTES) {
+                    baos.write(b);
+                    count++;
+                }
+            }
+        }
+        if (b == -1 && baos.size() == 0) {
+            return null;
+        }
+        return new String(baos.toByteArray(), "UTF-8");
+    }
+
+    private static String httpReasonPhrase(int statusCode) {
+        switch (statusCode) {
+            case 200: return "OK";
+            case 400: return "Bad Request";
+            case 404: return "Not Found";
+            case 413: return "Payload Too Large";
+            case 500: return "Internal Server Error";
+            case 503: return "Service Unavailable";
+            default: return "OK";
+        }
+    }
+
+    private static void writeJsonResponse(OutputStream out, int statusCode, String jsonResp) throws IOException {
+        byte[] respBytes = jsonResp.getBytes("UTF-8");
+        String header = "HTTP/1.1 " + statusCode + " " + httpReasonPhrase(statusCode) + "\r\n" +
+                        "Content-Type: application/json; charset=UTF-8\r\n" +
+                        "Content-Length: " + respBytes.length + "\r\n" +
+                        "Cache-Control: no-store, no-cache\r\n" +
+                        "Connection: close\r\n\r\n";
+        out.write(header.getBytes("UTF-8"));
+        out.write(respBytes);
+        out.flush();
+    }
+
     private static void handleClient(Socket socket) {
+        boolean responseSent = false;
+        OutputStream out = null;
         try {
             socket.setSoTimeout(10000);
-            BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream(), "UTF-8"));
-            OutputStream out = socket.getOutputStream();
+            BufferedInputStream in = new BufferedInputStream(socket.getInputStream(), 4096);
+            out = socket.getOutputStream();
 
-            String reqLine = in.readLine();
-            if (reqLine == null) {
-                socket.close();
+            String reqLine = readHttpLine(in);
+            if (reqLine == null || reqLine.trim().isEmpty()) {
                 return;
             }
 
             String[] reqParts = reqLine.split(" ");
             String fullPath = reqParts.length > 1 ? reqParts[1] : "/";
 
-            // Read headers to get content length if POST
+            // Read headers (bounded count) to get exact byte Content-Length if POST
             int contentLength = 0;
+            boolean invalidContentLength = false;
             String line;
-            while ((line = in.readLine()) != null && !line.isEmpty()) {
-                if (line.toLowerCase().startsWith("content-length:")) {
+            int headerCount = 0;
+            while ((line = readHttpLine(in)) != null && !line.isEmpty()) {
+                headerCount++;
+                if (headerCount > MAX_HTTP_HEADER_LINES) {
+                    writeJsonResponse(out, 400, "{\"status\": \"error\", \"error\": \"Too many HTTP headers\"}");
+                    responseSent = true;
+                    return;
+                }
+                if (line.toLowerCase(Locale.ROOT).startsWith("content-length:")) {
                     try {
                         contentLength = Integer.parseInt(line.substring(15).trim());
-                    } catch (Throwable ignored) {}
+                        if (contentLength < 0) invalidContentLength = true;
+                    } catch (Throwable ignored) {
+                        invalidContentLength = true;
+                    }
                 }
+            }
+
+            if (invalidContentLength) {
+                writeJsonResponse(out, 400, "{\"status\": \"error\", \"error\": \"Invalid Content-Length\"}");
+                responseSent = true;
+                return;
+            }
+            if (contentLength > MAX_HTTP_BODY_BYTES) {
+                writeJsonResponse(out, 413, "{\"status\": \"error\", \"error\": \"Request body too large\"}");
+                responseSent = true;
+                return;
             }
 
             String body = "";
             if (contentLength > 0) {
-                char[] buf = new char[contentLength];
+                byte[] buf = new byte[contentLength];
                 int read = 0;
                 while (read < contentLength) {
                     int r = in.read(buf, read, contentLength - read);
                     if (r < 0) break;
                     read += r;
                 }
-                body = new String(buf, 0, read);
+                body = new String(buf, 0, read, "UTF-8");
             }
 
             String path = fullPath;
@@ -2630,7 +2856,12 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 }
             } else if (path.equals("/api/game/clear_text")) {
                 boolean ok = clearActiveText();
-                jsonResp = "{\"status\": \"ok\", \"cleared\": " + ok + "}";
+                if (ok) {
+                    jsonResp = "{\"status\": \"ok\", \"cleared\": true}";
+                } else {
+                    statusCode = 400;
+                    jsonResp = "{\"status\": \"error\", \"cleared\": false, \"error\": \"No active text field found\"}";
+                }
             } else if (path.equals("/api/game/open_account_dialog")) {
                 boolean ok = openAccountDialog();
                 if (ok) {
@@ -2641,18 +2872,27 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 }
             } else if (path.equals("/api/game/xmap")) {
                 String mapStr = params.get("map");
-                if (mapStr != null) {
-                    int mapId = Integer.parseInt(mapStr);
-                    if (autoFarmActive) {
-                        autoFarmMap = mapId;
-                        saveAutoFarmState();
+                if (mapStr != null && !mapStr.trim().isEmpty()) {
+                    try {
+                        int mapId = Integer.parseInt(mapStr.trim());
+                        if (autoFarmActive) {
+                            autoFarmMap = mapId;
+                            saveAutoFarmState();
+                        }
+                        lastWatchdogTravelMs = System.currentTimeMillis();
+                        boolean ok = travelToMap(mapId);
+                        if (ok) {
+                            jsonResp = "{\"status\": \"ok\", \"map\": " + mapId + "}";
+                        } else {
+                            jsonResp = "{\"status\": \"error\", \"error\": \"Could not trigger Xmap\", \"map\": " + mapId + "}";
+                        }
+                    } catch (NumberFormatException nfe) {
+                        statusCode = 400;
+                        jsonResp = "{\"status\": \"error\", \"error\": \"Invalid map parameter: " + escapeJson(mapStr) + "\"}";
                     }
-                    lastWatchdogTravelMs = System.currentTimeMillis();
-                    boolean ok = travelToMap(mapId);
-                    jsonResp = "{\"status\": \"" + (ok ? "ok" : "error") + "\", \"map\": " + mapId + "}";
                 } else {
                     statusCode = 400;
-                    jsonResp = "{\"error\": \"Missing map parameter\"}";
+                    jsonResp = "{\"status\": \"error\", \"error\": \"Missing map parameter\"}";
                 }
             } else if (path.equals("/api/game/stop_xmap")) {
                 boolean ok = stopXmap();
@@ -2691,39 +2931,59 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 String cmd = params.get("cmd");
                 if (cmd != null && !cmd.trim().isEmpty()) {
                     String[] subCmds = cmd.split("[,;]");
+                    boolean anyExecuted = false;
+                    boolean anyNonEmpty = false;
                     for (String sc : subCmds) {
                         sc = sc.trim();
                         if (!sc.isEmpty()) {
-                            executeChatCmd(sc);
+                            anyNonEmpty = true;
+                            if (executeChatCmd(sc)) {
+                                anyExecuted = true;
+                            }
                             try { Thread.sleep(80); } catch (Throwable ignored) {}
                         }
                     }
-                    jsonResp = "{\"status\": \"ok\", \"cmd\": \"" + cmd + "\"}";
+                    if (!anyNonEmpty) {
+                        statusCode = 400;
+                        jsonResp = "{\"status\": \"error\", \"error\": \"Missing cmd parameter\"}";
+                    } else if (anyExecuted) {
+                        jsonResp = "{\"status\": \"ok\", \"cmd\": \"" + escapeJson(cmd) + "\"}";
+                    } else {
+                        statusCode = 503;
+                        jsonResp = "{\"status\": \"error\", \"error\": \"Game not ready for command\", \"cmd\": \"" + escapeJson(cmd) + "\"}";
+                    }
                 } else {
                     statusCode = 400;
-                    jsonResp = "{\"error\": \"Missing cmd parameter\"}";
+                    jsonResp = "{\"status\": \"error\", \"error\": \"Missing cmd parameter\"}";
                 }
             } else if (path.equals("/api/game/mod_action")) {
                 String cmd = params.get("cmd");
                 if (cmd != null && !cmd.trim().isEmpty()) {
                     String[] actions = cmd.split("[,;]");
                     String failedAction = null;
+                    boolean anyNonEmpty = false;
                     for (String action : actions) {
                         action = action.trim();
-                        if (!action.isEmpty() && !executeModAction(action)) {
-                            failedAction = action;
-                            break;
+                        if (!action.isEmpty()) {
+                            anyNonEmpty = true;
+                            if (!executeModAction(action)) {
+                                failedAction = action;
+                                break;
+                            }
                         }
                     }
-                    if (failedAction == null) {
-                        jsonResp = "{\"status\": \"ok\", \"cmd\": \"" + cmd + "\"}";
+                    if (!anyNonEmpty) {
+                        statusCode = 400;
+                        jsonResp = "{\"status\": \"error\", \"error\": \"Missing cmd parameter\"}";
+                    } else if (failedAction == null) {
+                        jsonResp = "{\"status\": \"ok\", \"cmd\": \"" + escapeJson(cmd) + "\"}";
                     } else {
                         statusCode = 400;
-                        jsonResp = "{\"status\": \"error\", \"error\": \"Unsupported mod action: " + failedAction + "\"}";
+                        jsonResp = "{\"status\": \"error\", \"error\": \"Unsupported mod action: " + escapeJson(failedAction) + "\"}";
                     }
                 } else {
                     statusCode = 400;
-                    jsonResp = "{\"error\": \"Missing cmd parameter\"}";
+                    jsonResp = "{\"status\": \"error\", \"error\": \"Missing cmd parameter\"}";
                 }
             } else if (path.equals("/api/game/configure_punch")) {
                 int skillNumber = configurePunchSkill();
@@ -2732,8 +2992,9 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
             } else if (path.equals("/api/game/auto_farm")) {
                 // Batch auto farm sequence with smart map travel & persistent 24/7 state
                 final String mapStr = params.get("map");
-                final String zoneStr = params.get("zone");
-                final String mode = params.get("mode") != null ? params.get("mode") : "all";
+                final String zoneStr = params.get("zone") != null ? params.get("zone") : "";
+                final String rawMode = params.get("mode");
+                final String mode = (rawMode != null && !rawMode.trim().isEmpty()) ? rawMode.trim() : "all";
 
                 int parsedMap = -1;
                 if (mapStr != null) {
@@ -2743,73 +3004,83 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                     }
                 }
                 int parsedZone = -1;
-                if (zoneStr != null && !zoneStr.trim().isEmpty()) {
+                if (!zoneStr.trim().isEmpty()) {
                     try { parsedZone = Integer.parseInt(zoneStr.trim()); } catch (Throwable ignored) {}
                 }
 
-                autoFarmActive = true;
-                autoFarmMap = parsedMap;
-                autoFarmZone = parsedZone;
-                autoFarmMode = mode;
-                saveAutoFarmState();
-
-                if (farmThread != null && farmThread.isAlive()) {
-                    farmThread.interrupt();
-                }
-
-                // Configure punch skill immediately
-                configurePunchSkill();
-
-                // Check if we need to travel to another map first
-                Map<String, Object> curStat = getStatus();
-                final Integer initialCurMap = (Integer) curStat.get("map_id");
-                
-                // If user didn't pick a map and character is sitting in a safe town (no monsters),
-                // auto-select the first mob training map for this planet:
-                int targetMapCandidate = parsedMap;
-                if (targetMapCandidate < 0 && initialCurMap != null) {
-                    int curM = initialCurMap.intValue();
-                    if (curM == 0) targetMapCandidate = 1;        // Trái Đất: Làng Aru -> Đồi hoa cúc
-                    else if (curM == 7) targetMapCandidate = 8;   // Namếc: Làng Mori -> Đồi nấm tím
-                    else if (curM == 14) targetMapCandidate = 15; // Xayda: Làng Kakarot -> Đồi hoang
-                }
-                final int effectiveTargetMap = targetMapCandidate;
-                if (effectiveTargetMap >= 0) {
-                    autoFarmMap = effectiveTargetMap;
+                boolean needMapTravel;
+                synchronized (farmLock) {
+                    autoFarmActive = true;
+                    autoFarmMap = parsedMap;
+                    autoFarmZone = parsedZone;
+                    autoFarmMode = mode;
                     saveAutoFarmState();
+
+                    if (farmThread != null && farmThread.isAlive()) {
+                        farmThread.interrupt();
+                    }
+
+                    // Configure punch skill immediately
+                    configurePunchSkill();
+
+                    // Check if we need to travel to another map first
+                    Map<String, Object> curStat = getStatus();
+                    final Integer initialCurMap = (Integer) curStat.get("map_id");
+
+                    // If user didn't pick a map and character is sitting in a safe town (no monsters),
+                    // auto-select the first mob training map for this planet:
+                    int targetMapCandidate = parsedMap;
+                    if (targetMapCandidate < 0 && initialCurMap != null) {
+                        int curM = initialCurMap.intValue();
+                        if (curM == 0) targetMapCandidate = 1;        // Trái Đất: Làng Aru -> Đồi hoa cúc
+                        else if (curM == 7) targetMapCandidate = 8;   // Namếc: Làng Mori -> Đồi nấm tím
+                        else if (curM == 14) targetMapCandidate = 15; // Xayda: Làng Kakarot -> Đồi hoang
+                    }
+                    final int effectiveTargetMap = targetMapCandidate;
+                    if (effectiveTargetMap >= 0) {
+                        autoFarmMap = effectiveTargetMap;
+                        saveAutoFarmState();
+                    }
+
+                    needMapTravel = (effectiveTargetMap >= 0 && (initialCurMap == null || initialCurMap.intValue() != effectiveTargetMap));
+
+                    setModFlag("alogin", true);
+                    setModFlag("sz", true);
+                    setModFlag("checklag", true);
+
+                    if (needMapTravel) {
+                        // Pause conflicting auto loops and start Xmap immediately on this request
+                        lastWatchdogTravelMs = System.currentTimeMillis();
+                        travelToMap(effectiveTargetMap);
+                    } else {
+                        // Already at target map (or keeping current map): apply flags immediately
+                        applyFarmModeFlags(mode);
+                        setModFlag("locdo", true);
+                        setModFlag("anhat", true);
+                        executeModAction("s20");
+                    }
+
+                    Thread nextFarm = new Thread(
+                        new GameBridgeAgent(TASK_AUTO_FARM, null, null, null, 0, needMapTravel, initialCurMap, effectiveTargetMap, mode),
+                        "AutoFarm-Worker"
+                    );
+                    nextFarm.setDaemon(true);
+                    farmThread = nextFarm;
+                    nextFarm.start();
                 }
 
-                final boolean needMapTravel = (effectiveTargetMap >= 0 && (initialCurMap == null || initialCurMap.intValue() != effectiveTargetMap));
-
-                setModFlag("alogin", true);
-                setModFlag("sz", true);
-                setModFlag("checklag", true);
-
-                if (needMapTravel) {
-                    // Pause conflicting auto loops and start Xmap immediately on this request
-                    lastWatchdogTravelMs = System.currentTimeMillis();
-                    travelToMap(effectiveTargetMap);
-                } else {
-                    // Already at target map (or keeping current map): apply flags immediately
-                    applyFarmModeFlags(mode);
-                    setModFlag("locdo", true);
-                    setModFlag("anhat", true);
-                    executeModAction("s20");
-                }
-
-                farmThread = new Thread(
-                    new GameBridgeAgent(TASK_AUTO_FARM, null, null, null, 0, needMapTravel, initialCurMap, effectiveTargetMap, mode),
-                    "AutoFarm-Worker"
-                );
-                farmThread.setDaemon(true);
-                farmThread.start();
-
-                jsonResp = "{\"status\": \"ok\", \"message\": \"Auto farm started\", \"map\": \"" + autoFarmMap + "\", \"traveling\": " + needMapTravel + ", \"zone\": \"" + zoneStr + "\", \"mode\": \"" + mode + "\"}";
+                jsonResp = "{\"status\": \"ok\", \"message\": \"Auto farm started\", \"map\": \"" + autoFarmMap +
+                           "\", \"traveling\": " + needMapTravel +
+                           ", \"zone\": \"" + escapeJson(zoneStr) +
+                           "\", \"mode\": \"" + escapeJson(mode) + "\"}";
             } else if (path.equals("/api/game/stop_farm")) {
-                autoFarmActive = false;
-                saveAutoFarmState();
-                if (farmThread != null && farmThread.isAlive()) {
-                    farmThread.interrupt();
+                synchronized (farmLock) {
+                    autoFarmActive = false;
+                    saveAutoFarmState();
+                    if (farmThread != null && farmThread.isAlive()) {
+                        farmThread.interrupt();
+                    }
+                    farmThread = null;
                 }
                 stopXmap();
                 setModFlag("ts", false);
@@ -2846,27 +3117,25 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                     out.write(imgHeader.getBytes("UTF-8"));
                     out.write(imgBytes);
                     out.flush();
-                    socket.close();
+                    responseSent = true;
                     return;
                 } else {
                     statusCode = 503;
-                    jsonResp = "{\"error\": \"Canvas not ready\"}";
+                    jsonResp = "{\"status\": \"error\", \"error\": \"Canvas not ready\"}";
                 }
             } else {
                 statusCode = 404;
-                jsonResp = "{\"error\": \"Not found\"}";
+                jsonResp = "{\"status\": \"error\", \"error\": \"Not found\"}";
             }
 
-            byte[] respBytes = jsonResp.getBytes("UTF-8");
-            String header = "HTTP/1.1 " + statusCode + " OK\r\n" +
-                            "Content-Type: application/json; charset=UTF-8\r\n" +
-                            "Content-Length: " + respBytes.length + "\r\n" +
-                            "Access-Control-Allow-Origin: *\r\n" +
-                            "Connection: close\r\n\r\n";
-            out.write(header.getBytes("UTF-8"));
-            out.write(respBytes);
-            out.flush();
-        } catch (Throwable ignored) {
+            writeJsonResponse(out, statusCode, jsonResp);
+            responseSent = true;
+        } catch (Throwable t) {
+            if (!responseSent && out != null && !(t instanceof SocketException) && !(t instanceof SocketTimeoutException)) {
+                try {
+                    writeJsonResponse(out, 500, "{\"status\": \"error\", \"error\": \"Internal bridge error\"}");
+                } catch (Throwable ignored) {}
+            }
         } finally {
             try { socket.close(); } catch (Throwable ignored) {}
         }
@@ -2874,6 +3143,8 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
 
     private static void runAutoFarmWorker(boolean needMapTravel, Integer initialCurMap, int effectiveTargetMap, String mode) {
         try {
+            if (!autoFarmActive || Thread.currentThread().isInterrupted()) return;
+
             // 1. If target map specified and not there yet, monitor Xmap travel until arrival
             if (needMapTravel) {
                 System.out.println("[BRIDGE] AutoFarm: Traveling from map " + initialCurMap + " to map " + effectiveTargetMap + "...");
@@ -2882,8 +3153,9 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 int retryCount = 0;
                 Integer lastProgressMap = initialCurMap;
 
-                while (System.currentTimeMillis() - startWait < 60000L) {
+                while (autoFarmActive && !Thread.currentThread().isInterrupted() && (System.currentTimeMillis() - startWait < 60000L)) {
                     Thread.sleep(600);
+                    if (!autoFarmActive || Thread.currentThread().isInterrupted()) return;
                     checkAndUnstickXmap();
                     // Keep in-game TDLT (nro.ct.cT) off while traveling across maps
                     try {
@@ -2932,10 +3204,13 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                         }
                     }
                 }
+                if (!autoFarmActive || Thread.currentThread().isInterrupted()) return;
                 if (arrived) {
                     Thread.sleep(600);
                 }
             }
+
+            if (!autoFarmActive || Thread.currentThread().isInterrupted()) return;
 
             // 2. Switch zone only if explicitly specified AND character is not already in that zone
             if (autoFarmZone >= 0) {
@@ -2947,9 +3222,13 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
                 }
             }
 
+            if (!autoFarmActive || Thread.currentThread().isInterrupted()) return;
+
             // 3. Configure melee skill and apply exact farming mode
-            configurePunchSkill();
+            ensureAutoSkillConfigured();
             applyFarmModeFlags(mode);
+
+            if (!autoFarmActive || Thread.currentThread().isInterrupted()) return;
 
             // 4. Enable Lọc Đồ + Auto Nhặt + Speed
             setModFlag("locdo", true);
@@ -2982,40 +3261,85 @@ public class GameBridgeAgent implements Runnable, ThreadFactory {
 
     private static String escapeJson(String s) {
         if (s == null) return "";
-        return s.replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r");
+        StringBuilder sb = new StringBuilder(s.length() + 16);
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '\\': sb.append("\\\\"); break;
+                case '"':  sb.append("\\\""); break;
+                case '\b': sb.append("\\b"); break;
+                case '\f': sb.append("\\f"); break;
+                case '\n': sb.append("\\n"); break;
+                case '\r': sb.append("\\r"); break;
+                case '\t': sb.append("\\t"); break;
+                default:
+                    if (c < 0x20) {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                    break;
+            }
+        }
+        return sb.toString();
+    }
+
+    private static void appendJsonValue(StringBuilder sb, Object v) {
+        if (v == null) {
+            sb.append("null");
+        } else if (v instanceof Boolean) {
+            sb.append(v);
+        } else if (v instanceof Number) {
+            if (v instanceof Double) {
+                double d = ((Double) v).doubleValue();
+                if (Double.isNaN(d) || Double.isInfinite(d)) {
+                    sb.append("null");
+                    return;
+                }
+            } else if (v instanceof Float) {
+                float f = ((Float) v).floatValue();
+                if (Float.isNaN(f) || Float.isInfinite(f)) {
+                    sb.append("null");
+                    return;
+                }
+            }
+            sb.append(v);
+        } else if (v instanceof Map) {
+            sb.append("{");
+            boolean first = true;
+            for (Map.Entry<?, ?> e : ((Map<?, ?>) v).entrySet()) {
+                if (!first) sb.append(",");
+                first = false;
+                String k = (e.getKey() != null) ? e.getKey().toString() : "";
+                sb.append("\"").append(escapeJson(k)).append("\":");
+                appendJsonValue(sb, e.getValue());
+            }
+            sb.append("}");
+        } else if (v instanceof Collection) {
+            sb.append("[");
+            boolean first = true;
+            for (Object item : (Collection<?>) v) {
+                if (!first) sb.append(",");
+                first = false;
+                appendJsonValue(sb, item);
+            }
+            sb.append("]");
+        } else if (v instanceof Object[]) {
+            Object[] arr = (Object[]) v;
+            sb.append("[");
+            for (int i = 0; i < arr.length; i++) {
+                if (i > 0) sb.append(",");
+                appendJsonValue(sb, arr[i]);
+            }
+            sb.append("]");
+        } else {
+            sb.append("\"").append(escapeJson(v.toString())).append("\"");
+        }
     }
 
     private static String toJson(Map<String, Object> map) {
-        StringBuilder sb = new StringBuilder("{");
-        boolean first = true;
-        for (Map.Entry<String, Object> e : map.entrySet()) {
-            if (!first) sb.append(",");
-            first = false;
-            sb.append("\"").append(escapeJson(e.getKey())).append("\":");
-            Object v = e.getValue();
-            if (v == null) {
-                sb.append("null");
-            } else if (v instanceof Number || v instanceof Boolean) {
-                sb.append(v);
-            } else if (v instanceof List) {
-                sb.append("[");
-                List<?> list = (List<?>) v;
-                for (int i = 0; i < list.size(); i++) {
-                    if (i > 0) sb.append(",");
-                    Object item = list.get(i);
-                    if (item == null) sb.append("null");
-                    else if (item instanceof Number || item instanceof Boolean) sb.append(item);
-                    else sb.append("\"").append(escapeJson(item.toString())).append("\"");
-                }
-                sb.append("]");
-            } else {
-                sb.append("\"").append(escapeJson(v.toString())).append("\"");
-            }
-        }
-        sb.append("}");
+        StringBuilder sb = new StringBuilder(512);
+        appendJsonValue(sb, map);
         return sb.toString();
     }
 }

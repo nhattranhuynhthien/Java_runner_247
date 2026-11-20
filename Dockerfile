@@ -19,10 +19,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     x11-xkb-utils \
     python3 \
     python3-pip \
-    python3-pil \
     procps \
     curl \
     supervisor \
+    libxcb1 \
     libxext6 \
     libxrender1 \
     libxtst6 \
@@ -36,10 +36,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 RUN mkdir -p /data/roms /data/.microemulator
 
-# Download MicroEmulator 2.0.4
-RUN curl -L https://repo1.maven.org/maven2/org/microemu/microemulator/2.0.4/microemulator-2.0.4.jar -o /app/microemulator.jar
+# Download MicroEmulator 2.0.4 and verify SHA-1 integrity
+RUN curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 120 \
+    https://repo1.maven.org/maven2/org/microemu/microemulator/2.0.4/microemulator-2.0.4.jar \
+    -o /app/microemulator.jar && \
+    echo "b4f230a8e7ff0fd3a79827c5528838bf0f0037fd  /app/microemulator.jar" | sha1sum -c -
 
-# Install Python dependencies
+# Install Python dependencies (Pillow 11.0.0 manylinux wheel bundles WebP/JPEG/XCB support for Python 3.10)
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
@@ -53,17 +56,25 @@ COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 # Copy project files
 COPY . .
 
-# Normalize line endings and ensure bridge.jar is present in both /app/bridge.jar and /app/scripts/bridge.jar
-RUN sed -i 's/\r$//' /app/scripts/start_emu.sh /app/scripts/MANIFEST.MF /etc/supervisor/conf.d/supervisord.conf 2>/dev/null || true && \
-    cp -f /app/bridge.jar /app/scripts/bridge.jar 2>/dev/null || cp -f /app/scripts/bridge.jar /app/bridge.jar 2>/dev/null || true
+# Normalize line endings, verify bridge.jar in both standard locations, and set permissions
+RUN sed -i 's/\r$//' /app/scripts/start_emu.sh /app/scripts/MANIFEST.MF /app/config2.xml /root/.microemulator/config2.xml /etc/supervisor/conf.d/supervisord.conf && \
+    if [ -f /app/bridge.jar ]; then \
+        cp -f /app/bridge.jar /app/scripts/bridge.jar; \
+    elif [ -f /app/scripts/bridge.jar ]; then \
+        cp -f /app/scripts/bridge.jar /app/bridge.jar; \
+    else \
+        echo "ERROR: bridge.jar missing from build context" >&2 && exit 1; \
+    fi && \
+    chmod +x /app/scripts/start_emu.sh && \
+    chmod -R a+rX /app/roms
 
-# Set execution permission for scripts
-RUN chmod +x /app/scripts/start_emu.sh
-
-# Create a dedicated non-root user for the web process (emulator still runs as root for X11)
+# Create a dedicated non-root user for future privilege drop while ensuring /data is writable
 RUN groupadd -r nro && useradd -r -g nro -d /data -s /sbin/nologin nro && \
-    chown -R nro:nro /data
+    chown -R nro:nro /data && chmod 755 /data /data/roms /data/.microemulator
 
 EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -fsS "http://127.0.0.1:${PORT:-8080}/health" >/dev/null || exit 1
 
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
