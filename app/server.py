@@ -1,7 +1,12 @@
 import os
 import io
+import math
 import time
 import socket
+import shutil
+import base64
+import collections
+import http.client
 import subprocess
 import threading
 import json
@@ -11,11 +16,14 @@ import secrets
 import struct
 import tempfile
 import zipfile
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import timedelta
 from flask import Flask, render_template, request, Response, jsonify, session, redirect, url_for
 from PIL import Image, ImageGrab
 
-os.environ["DISPLAY"] = ":1"
+os.environ.setdefault("DISPLAY", ":1")
 SERVER_START_TIME = time.time()
 ROM_FILE = os.path.abspath(os.environ.get("ROM_FILE", "/data/roms/NRO.jar"))
 
@@ -24,24 +32,104 @@ MENU_BAR_OFFSET = 24
 SCREEN_WIDTH = 240
 SCREEN_HEIGHT = 360
 
+def _resolve_persistent_path(env_key, filename):
+    custom = (os.environ.get(env_key) or "").strip()
+    if custom:
+        return custom
+    if os.path.exists("/data") and os.access("/data", os.W_OK):
+        return os.path.join("/data", filename)
+    return os.path.abspath(filename)
+
 app = Flask(__name__)
-app.secret_key = os.environ.get("SESSION_SECRET", secrets.token_hex(32))
+app.secret_key = (os.environ.get("SESSION_SECRET") or "").strip() or secrets.token_hex(32)
 app.permanent_session_lifetime = timedelta(days=14)
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = os.environ.get("SESSION_COOKIE_SECURE", "0").lower() in ("1", "true", "yes")
 app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 * 1024
 
-x11_lock = threading.Lock()
+x11_lock = threading.RLock()
+restart_lock = threading.Lock()
 login_attempts_lock = threading.Lock()
+security_config_lock = threading.Lock()
+notify_config_lock = threading.Lock()
+profiles_lock = threading.RLock()
 
 # Screenshot cache — tránh chụp lại mỗi request khi nhiều tab mở cùng lúc
 _screenshot_cache: dict = {}  # keyed by fmt: {"jpeg": {"ts": 0.0, "data": bytes}}
 _screenshot_cache_lock = threading.Lock()
+_screenshot_capture_lock = threading.Lock()
+_screenshot_cache_gen = 0
 
 def invalidate_screenshot_cache():
+    global _screenshot_cache_gen
     with _screenshot_cache_lock:
         _screenshot_cache.clear()
+        _screenshot_cache_gen += 1
+
+def get_json_dict(req=None):
+    target = req if req is not None else request
+    data = target.get_json(silent=True)
+    return data if isinstance(data, dict) else {}
+
+def _atomic_write_json(filepath, payload, mode=0o600, prefix="cfg-", ensure_ascii=True):
+    temp_path = None
+    try:
+        target_dir = os.path.dirname(filepath) or "."
+        os.makedirs(target_dir, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=target_dir, prefix=prefix, suffix=".tmp", delete=False
+        ) as f:
+            temp_path = f.name
+            json.dump(payload, f, ensure_ascii=ensure_ascii, indent=2)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+        if os.name == "posix" and mode is not None:
+            try:
+                os.chmod(temp_path, mode)
+            except OSError:
+                pass
+        os.replace(temp_path, filepath)
+        temp_path = None
+        return True
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+def _atomic_write_bytes(filepath, raw_bytes, mode=None, prefix="bin-"):
+    temp_path = None
+    try:
+        target_dir = os.path.dirname(filepath) or "."
+        os.makedirs(target_dir, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="wb", dir=target_dir, prefix=prefix, suffix=".tmp", delete=False
+        ) as f:
+            temp_path = f.name
+            f.write(raw_bytes)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+        if os.name == "posix" and mode is not None:
+            try:
+                os.chmod(temp_path, mode)
+            except OSError:
+                pass
+        os.replace(temp_path, filepath)
+        temp_path = None
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
 
 def safe_run(cmd, timeout=3):
     try:
@@ -56,52 +144,72 @@ def safe_run(cmd, timeout=3):
 def _x11_grab_frame():
     """Chỉ chụp vùng màn hình Xvfb trên POSIX (hoặc khi bật FORCE_IMAGEGRAB=1 cho kiểm thử), tránh chụp nhầm màn hình Desktop Windows."""
     if os.name == "posix" or os.environ.get("FORCE_IMAGEGRAB") == "1":
-        return ImageGrab.grab(bbox=(0, MENU_BAR_OFFSET, SCREEN_WIDTH, MENU_BAR_OFFSET + SCREEN_HEIGHT))
+        with x11_lock:
+            return ImageGrab.grab(bbox=(0, MENU_BAR_OFFSET, SCREEN_WIDTH, MENU_BAR_OFFSET + SCREEN_HEIGHT))
     return None
+
+def _is_emulator_process_running():
+    if os.name != "posix":
+        return False
+    for pattern in ("microemulator", "start_emu.sh"):
+        try:
+            p = subprocess.run(["pgrep", "-f", pattern], capture_output=True, text=True, timeout=2)
+            if p.returncode == 0:
+                return True
+        except Exception:
+            pass
+    return False
 
 def is_emulator_running():
     st = get_bridge_status()
     if st and st.get("bridge_online"):
         return True
-    if os.name == "posix":
-        for pattern in ("microemulator", "start_emu.sh"):
-            try:
-                p = subprocess.run(["pgrep", "-f", pattern], capture_output=True, text=True, timeout=2)
-                if p.returncode == 0:
-                    return True
-            except Exception:
-                pass
-    return False
+    return _is_emulator_process_running()
 
 def restart_emulator(clean_cache=False):
-    if clean_cache:
-        cleanup_corrupted_rms_cache()
-    sup_cmds = [
-        ["supervisorctl", "-c", "/etc/supervisor/conf.d/supervisord.conf", "restart", "emulator"],
-        ["supervisorctl", "restart", "emulator"],
-        ["supervisorctl", "-c", "/etc/supervisor/conf.d/supervisord.conf", "start", "emulator"],
-        ["supervisorctl", "start", "emulator"],
-    ]
-    for cmd in sup_cmds:
-        res = safe_run(cmd, timeout=12)
-        if res is not None and res.returncode == 0:
-            return True
-    # Fallback if supervisorctl socket is unavailable: restart start_emu.sh directly
-    safe_run(["pkill", "-f", "microemulator.jar"], timeout=3)
-    time.sleep(0.4)
-    script_path = "/app/scripts/start_emu.sh"
-    if not os.path.exists(script_path):
-        script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts", "start_emu.sh"))
-    if os.path.exists(script_path):
-        subprocess.Popen(
-            ["/bin/bash", script_path],
-            env=dict(os.environ, DISPLAY=":1", HOME="/data", MICROEMULATOR_HOME="/data/.microemulator"),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True
-        )
-        return True
-    raise RuntimeError("Không thể khởi động lại tiến trình giả lập game.")
+    with restart_lock:
+        if clean_cache:
+            cleanup_corrupted_rms_cache()
+        if os.name == "posix":
+            sup_cmds = [
+                ["supervisorctl", "-c", "/etc/supervisor/conf.d/supervisord.conf", "restart", "emulator"],
+                ["supervisorctl", "restart", "emulator"],
+                ["supervisorctl", "-c", "/etc/supervisor/conf.d/supervisord.conf", "start", "emulator"],
+                ["supervisorctl", "start", "emulator"],
+            ]
+            for cmd in sup_cmds:
+                res = safe_run(cmd, timeout=12)
+                if res is not None and res.returncode == 0:
+                    invalidate_screenshot_cache()
+                    return True
+            # Fallback if supervisorctl socket is unavailable: restart start_emu.sh directly
+            safe_run(["pkill", "-f", "microemulator.jar"], timeout=3)
+            for _ in range(10):
+                if not _is_emulator_process_running():
+                    break
+                time.sleep(0.2)
+            script_path = "/app/scripts/start_emu.sh"
+            if not os.path.exists(script_path):
+                script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts", "start_emu.sh"))
+            if os.path.exists(script_path) and os.path.exists("/bin/bash"):
+                emu_home = os.environ.get("MICROEMULATOR_HOME", "/data/.microemulator")
+                user_home = os.path.dirname(emu_home) or "/data"
+                subprocess.Popen(
+                    ["/bin/bash", script_path],
+                    env=dict(
+                        os.environ,
+                        DISPLAY=os.environ.get("DISPLAY", ":1"),
+                        HOME=user_home,
+                        MICROEMULATOR_HOME=emu_home,
+                    ),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    close_fds=True,
+                    start_new_session=True,
+                )
+                invalidate_screenshot_cache()
+                return True
+        raise RuntimeError("Không thể khởi động lại tiến trình giả lập game.")
 
 def run_input_command(cmd, timeout=3):
     """Run a dashboard input command and fail visibly if X11 rejects it."""
@@ -111,36 +219,25 @@ def run_input_command(cmd, timeout=3):
     return result
 
 # Persistent administrator configuration
-SECURITY_CONFIG_FILE = os.environ.get("SECURITY_CONFIG_FILE", "/data/security_config.json")
+SECURITY_CONFIG_FILE = _resolve_persistent_path("SECURITY_CONFIG_FILE", "security_config.json")
 
 def load_security_config():
     if os.path.exists(SECURITY_CONFIG_FILE):
         try:
             with open(SECURITY_CONFIG_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
         except Exception:
             pass
     return {}
 
 def save_security_config(cfg):
-    temp_path = None
     try:
-        config_dir = os.path.dirname(SECURITY_CONFIG_FILE) or "."
-        os.makedirs(config_dir, exist_ok=True)
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=config_dir, prefix="security-", suffix=".tmp", delete=False) as f:
-            temp_path = f.name
-            json.dump(cfg, f, indent=2)
-        os.replace(temp_path, SECURITY_CONFIG_FILE)
-        temp_path = None
-        if os.name == "posix":
-            os.chmod(SECURITY_CONFIG_FILE, 0o600)
+        return _atomic_write_json(SECURITY_CONFIG_FILE, cfg, mode=0o600, prefix="security-")
     except Exception as e:
         print(f"[SECURITY] Lỗi lưu cấu hình: {e}")
         return False
-    finally:
-        if temp_path and os.path.exists(temp_path):
-            os.unlink(temp_path)
-    return True
 
 def hash_secret(secret_str, salt=None):
     if not salt:
@@ -150,8 +247,38 @@ def hash_secret(secret_str, salt=None):
 
 def get_admin_credentials():
     cfg = load_security_config()
-    user = cfg.get("admin_user", os.environ.get("ADMIN_USER", "admin")).strip()
+    user = str(cfg.get("admin_user", os.environ.get("ADMIN_USER", "admin"))).strip() or "admin"
     return user, cfg
+
+def _current_auth_version():
+    """Return a short opaque digest of the active credential state for session invalidation."""
+    admin_user, cfg = get_admin_credentials()
+    if "hashed_password" in cfg and "salt" in cfg:
+        material = f"file:{admin_user.lower()}:{cfg['hashed_password']}:{cfg['salt']}"
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
+    configured_password = os.environ.get("ADMIN_PASSWORD", "").strip()
+    if configured_password:
+        material = f"env:{admin_user.lower()}:{configured_password}"
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
+    return ""
+
+def is_session_authenticated():
+    if session.get("authenticated") is not True:
+        return False
+    cur_ver = _current_auth_version()
+    if not cur_ver:
+        return False
+    sess_ver = str(session.get("auth_ver", ""))
+    if not sess_ver:
+        return False
+    return hmac.compare_digest(sess_ver, cur_ver)
+
+def get_csrf_token():
+    tok = session.get("csrf_token")
+    if not isinstance(tok, str) or len(tok) < 32:
+        tok = secrets.token_hex(32)
+        session["csrf_token"] = tok
+    return tok
 
 def verify_credentials(candidate_user, candidate_pass):
     if not candidate_user or not candidate_pass:
@@ -176,26 +303,51 @@ def verify_credentials(candidate_user, candidate_pass):
     return False
 
 def update_credentials(new_user, new_pass):
-    hashed, salt = hash_secret(str(new_pass).strip())
-    cfg = load_security_config()
-    cfg["admin_user"] = str(new_user).strip()
-    cfg["hashed_password"] = hashed
-    cfg["salt"] = salt
-    cfg["updated_at"] = time.time()
-    if not save_security_config(cfg):
-        raise OSError("Could not persist administrator credentials")
+    with security_config_lock:
+        hashed, salt = hash_secret(str(new_pass).strip())
+        cfg = load_security_config()
+        cfg["admin_user"] = str(new_user).strip()
+        cfg["hashed_password"] = hashed
+        cfg["salt"] = salt
+        cfg["updated_at"] = time.time()
+        if not save_security_config(cfg):
+            raise OSError("Could not persist administrator credentials")
 
 # Temporary login rate limit
 MAX_FAILED_ATTEMPTS = 5
 LOGIN_WINDOW_SECONDS = 300
+MAX_TRACKED_LOGIN_IPS = 2048
 FAILED_LOGIN_ATTEMPTS = {}  # { ip: [timestamps] }
 
 def get_client_ip(req):
     return req.remote_addr or "127.0.0.1"
 
+def _prune_failed_attempts_locked(now):
+    expired_ips = []
+    for tracked_ip, stamps in FAILED_LOGIN_ATTEMPTS.items():
+        recent = [t for t in stamps if now - t < LOGIN_WINDOW_SECONDS]
+        if recent:
+            FAILED_LOGIN_ATTEMPTS[tracked_ip] = recent
+        else:
+            expired_ips.append(tracked_ip)
+    for tracked_ip in expired_ips:
+        FAILED_LOGIN_ATTEMPTS.pop(tracked_ip, None)
+    if len(FAILED_LOGIN_ATTEMPTS) > MAX_TRACKED_LOGIN_IPS:
+        overflow = len(FAILED_LOGIN_ATTEMPTS) - MAX_TRACKED_LOGIN_IPS
+        oldest_ips = sorted(FAILED_LOGIN_ATTEMPTS.keys(), key=lambda k: FAILED_LOGIN_ATTEMPTS[k][-1])[:overflow]
+        for old_ip in oldest_ips:
+            FAILED_LOGIN_ATTEMPTS.pop(old_ip, None)
+
+def is_ip_rate_limited(ip):
+    with login_attempts_lock:
+        now = time.time()
+        _prune_failed_attempts_locked(now)
+        return len(FAILED_LOGIN_ATTEMPTS.get(ip, [])) >= MAX_FAILED_ATTEMPTS
+
 def record_failed_attempt(ip):
     with login_attempts_lock:
         now = time.time()
+        _prune_failed_attempts_locked(now)
         attempts = [t for t in FAILED_LOGIN_ATTEMPTS.get(ip, []) if now - t < LOGIN_WINDOW_SECONDS]
         attempts.append(now)
         FAILED_LOGIN_ATTEMPTS[ip] = attempts
@@ -212,42 +364,83 @@ def reset_failed_attempts(ip):
 def upload_too_large(_error):
     return jsonify({"error": "File tải lên vượt quá giới hạn 64 MB."}), 413
 
+def _normalize_host(host_str, scheme=None):
+    h = (host_str or "").strip().lower()
+    if not h:
+        return ""
+    if scheme == "https" and h.endswith(":443"):
+        return h[:-4]
+    if scheme == "http" and h.endswith(":80"):
+        return h[:-3]
+    if scheme is None:
+        if h.endswith(":443"):
+            return h[:-4]
+        if h.endswith(":80"):
+            return h[:-3]
+    return h
+
 @app.before_request
 def csrf_protect():
     """Chống tấn công CSRF cross-origin đối với các request thay đổi trạng thái dùng cookie session."""
     if request.method not in ("POST", "PUT", "DELETE", "PATCH"):
         return None
-    if request.headers.get("X-PIN") or request.headers.get("X-Auth-Token"):
+    sess_auth = is_session_authenticated()
+    if (request.headers.get("X-PIN") or request.headers.get("X-Auth-Token")) and not sess_auth:
         return None
+
+    # Block modern cross-site browser requests via Fetch Metadata header
+    sec_fetch_site = (request.headers.get("Sec-Fetch-Site") or "").strip().lower()
+    if sec_fetch_site and sec_fetch_site not in ("same-origin", "none"):
+        return jsonify({"error": "Cross-origin request blocked (CSRF protection)."}), 403
+
     origin = request.headers.get("Origin")
     referer = request.headers.get("Referer")
-    if not origin and not referer:
-        return None
 
-    import urllib.parse
-    allowed_hosts = {request.host.lower()}
-    fwd_host = request.headers.get("X-Forwarded-Host", "")
-    if fwd_host:
-        for h in fwd_host.split(","):
-            if h.strip():
-                allowed_hosts.add(h.strip().lower())
+    if origin or referer:
+        allowed_hosts = set()
+        raw_host = (request.host or "").strip().lower()
+        if raw_host:
+            allowed_hosts.add(raw_host)
+            allowed_hosts.add(_normalize_host(raw_host))
+        fwd_host = request.headers.get("X-Forwarded-Host", "")
+        if fwd_host:
+            for h in fwd_host.split(","):
+                hs = h.strip().lower()
+                if hs:
+                    allowed_hosts.add(hs)
+                    allowed_hosts.add(_normalize_host(hs))
 
-    if origin:
-        if origin.strip().lower() == "null":
-            return jsonify({"error": "Cross-origin request blocked (CSRF protection)."}), 403
-        origin_host = urllib.parse.urlparse(origin).netloc.lower()
-        if not origin_host or origin_host not in allowed_hosts:
-            return jsonify({"error": "Cross-origin request blocked (CSRF protection)."}), 403
-    elif referer:
-        ref_host = urllib.parse.urlparse(referer).netloc.lower()
-        if ref_host and ref_host not in allowed_hosts:
-            return jsonify({"error": "Cross-origin request blocked (CSRF protection)."}), 403
+        if origin:
+            if origin.strip().lower() == "null":
+                return jsonify({"error": "Cross-origin request blocked (CSRF protection)."}), 403
+            parsed_origin = urllib.parse.urlparse(origin)
+            origin_host = _normalize_host(parsed_origin.netloc, parsed_origin.scheme.lower())
+            if not origin_host or origin_host not in allowed_hosts:
+                return jsonify({"error": "Cross-origin request blocked (CSRF protection)."}), 403
+        elif referer:
+            parsed_ref = urllib.parse.urlparse(referer)
+            ref_host = _normalize_host(parsed_ref.netloc, parsed_ref.scheme.lower())
+            if not ref_host or ref_host not in allowed_hosts:
+                return jsonify({"error": "Cross-origin request blocked (CSRF protection)."}), 403
+
+    # Verify per-session X-CSRF-Token when sent on authenticated mutating requests
+    if sess_auth:
+        provided_csrf = request.headers.get("X-CSRF-Token")
+        if provided_csrf is None and request.mimetype == "application/x-www-form-urlencoded":
+            provided_csrf = request.form.get("csrf_token")
+        if provided_csrf is not None:
+            expected_csrf = str(session.get("csrf_token") or "")
+            if not expected_csrf or not hmac.compare_digest(str(provided_csrf), expected_csrf):
+                return jsonify({"error": "Invalid CSRF token."}), 403
+
     return None
 
 @app.after_request
 def add_security_headers(response):
     if request.method in ("POST", "PUT", "DELETE", "PATCH") and request.path.startswith("/api/"):
         invalidate_screenshot_cache()
+    if request.path.startswith("/api/") and "Cache-Control" not in response.headers:
+        response.headers['Cache-Control'] = 'no-store'
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['X-XSS-Protection'] = '1; mode=block'
@@ -279,16 +472,30 @@ KEY_MAP = {
 }
 
 def check_pin(req):
-    if session.get("authenticated") is True:
+    if is_session_authenticated():
         return True
-    pin = req.headers.get("X-PIN") or req.headers.get("X-Auth-Token")
-    if not pin and req.is_json:
+    ip = get_client_ip(req)
+    header_pin = req.headers.get("X-PIN") or req.headers.get("X-Auth-Token")
+    if header_pin:
+        if is_ip_rate_limited(ip):
+            return False
+        user, _ = get_admin_credentials()
+        if verify_credentials(user, header_pin):
+            reset_failed_attempts(ip)
+            return True
+        record_failed_attempt(ip)
+        return False
+
+    pin = None
+    if req.is_json:
         data = req.get_json(silent=True)
         if isinstance(data, dict):
             pin = data.get("pin") or data.get("password")
     if not pin:
         pin = req.form.get("pin") or req.form.get("password")
     if not pin:
+        return False
+    if is_ip_rate_limited(ip):
         return False
     user, _ = get_admin_credentials()
     return verify_credentials(user, pin)
@@ -313,23 +520,80 @@ def get_game_window():
 def focus_game_window():
     return get_game_window()
 
+def _read_cgroup_ram_info(host_total_mb=0):
+    """Read container memory usage/limit from cgroup v2 or v1 so Docker/Render 512MB RAM is reported accurately."""
+    def _read_int_file(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+            if not raw or raw == "max":
+                return None
+            return int(raw)
+        except Exception:
+            return None
+
+    def _read_stat_key(path, key):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[0] == key:
+                        return int(parts[1])
+        except Exception:
+            pass
+        return 0
+
+    # cgroup v2
+    cg2_max = _read_int_file("/sys/fs/cgroup/memory.max")
+    cg2_cur = _read_int_file("/sys/fs/cgroup/memory.current")
+    if cg2_max is not None and cg2_cur is not None and 0 < cg2_max < (1 << 50):
+        total_mb = max(1, cg2_max // (1024 * 1024))
+        if not host_total_mb or total_mb <= host_total_mb:
+            inactive_file = _read_stat_key("/sys/fs/cgroup/memory.stat", "inactive_file")
+            used_bytes = max(0, cg2_cur - inactive_file)
+            used_mb = used_bytes // (1024 * 1024)
+            pct = round(min(100.0, (used_mb / total_mb * 100.0)), 1)
+            return {"used_mb": used_mb, "total_mb": total_mb, "percent": pct}
+
+    # cgroup v1
+    cg1_max = _read_int_file("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+    cg1_cur = _read_int_file("/sys/fs/cgroup/memory/memory.usage_in_bytes")
+    if cg1_max is not None and cg1_cur is not None and 0 < cg1_max < (1 << 50):
+        total_mb = max(1, cg1_max // (1024 * 1024))
+        if not host_total_mb or total_mb <= host_total_mb:
+            inactive_file = _read_stat_key("/sys/fs/cgroup/memory/memory.stat", "total_inactive_file")
+            used_bytes = max(0, cg1_cur - inactive_file)
+            used_mb = used_bytes // (1024 * 1024)
+            pct = round(min(100.0, (used_mb / total_mb * 100.0)), 1)
+            return {"used_mb": used_mb, "total_mb": total_mb, "percent": pct}
+
+    return None
+
 def get_ram_info():
     try:
         mem_total = 0
         mem_available = 0
         if os.path.exists('/proc/meminfo'):
-            with open('/proc/meminfo', 'r') as f:
+            with open('/proc/meminfo', 'r', encoding='utf-8') as f:
                 for line in f:
                     if line.startswith('MemTotal:'):
                         mem_total = int(line.split()[1]) // 1024
                     elif line.startswith('MemAvailable:'):
                         mem_available = int(line.split()[1]) // 1024
+        cg_info = _read_cgroup_ram_info(host_total_mb=mem_total)
+        if cg_info is not None:
+            return cg_info
+        if mem_total > 0:
             mem_used = max(0, mem_total - mem_available)
-            pct = round((mem_used / mem_total * 100), 1) if mem_total else 0
+            pct = round((mem_used / mem_total * 100), 1)
             return {"used_mb": mem_used, "total_mb": mem_total, "percent": pct}
     except Exception:
         pass
     return {"used_mb": 0, "total_mb": 512, "percent": 0}
+
+_nro_socket_cache = {"ts": 0.0, "online": None}
+_nro_socket_cache_lock = threading.Lock()
+NRO_SOCKET_CACHE_TTL = 15.0
 
 def check_nro_socket():
     host = (os.environ.get("NRO_SERVER_HOST") or "").strip() or "112.213.94.23"
@@ -339,13 +603,28 @@ def check_nro_socket():
     except ValueError:
         port = 14445
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(1.0)
     try:
+        s.settimeout(1.0)
         s.connect((host, port))
-        s.close()
         return True
     except Exception:
         return False
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+
+def _get_cached_nro_socket_status():
+    now = time.time()
+    with _nro_socket_cache_lock:
+        if _nro_socket_cache["online"] is not None and (now - _nro_socket_cache["ts"]) < NRO_SOCKET_CACHE_TTL:
+            return _nro_socket_cache["online"]
+    online = check_nro_socket()
+    with _nro_socket_cache_lock:
+        _nro_socket_cache["ts"] = time.time()
+        _nro_socket_cache["online"] = online
+    return online
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -356,17 +635,9 @@ def health_detailed():
     """Health check nâng cao: trả trạng thái chi tiết emulator, bridge, Xvfb."""
     bridge_st = get_bridge_status()
     bridge_online = bool(bridge_st and bridge_st.get("bridge_online"))
-    emu_running = bridge_online
-    if not emu_running:
-        for pattern in ("microemulator", "start_emu.sh"):
-            try:
-                p = subprocess.run(["pgrep", "-f", pattern], capture_output=True, text=True, timeout=2)
-                if p.returncode == 0:
-                    emu_running = True
-                    break
-            except Exception:
-                pass
-    xvfb_ok = os.path.exists("/tmp/.X11-unix/X1")
+    emu_running = bridge_online or _is_emulator_process_running()
+    display_num = (os.environ.get("DISPLAY", ":1").lstrip(":").split(".")[0] or "1")
+    xvfb_ok = os.path.exists(f"/tmp/.X11-unix/X{display_num}")
     uptime_sec = int(time.time() - SERVER_START_TIME)
     return jsonify({
         "web": "ok",
@@ -386,22 +657,21 @@ def api_ping():
 
 @app.route('/', methods=['GET'])
 def index():
-    if session.get("authenticated") is True:
-        return render_template('index.html')
-    return render_template('login.html')
+    token = get_csrf_token()
+    if is_session_authenticated():
+        return render_template('index.html', csrf_token=token)
+    return render_template('login.html', csrf_token=token)
 
 @app.route('/api/auth/login', methods=['POST'])
 def auth_login():
     ip = get_client_ip(request)
-    with login_attempts_lock:
-        recent_attempts = [t for t in FAILED_LOGIN_ATTEMPTS.get(ip, []) if time.time() - t < LOGIN_WINDOW_SECONDS]
-    if len(recent_attempts) >= MAX_FAILED_ATTEMPTS:
+    if is_ip_rate_limited(ip):
         return jsonify({
             "error": "Quá nhiều lần đăng nhập sai. Vui lòng đợi 5 phút rồi thử lại.",
             "locked": True
         }), 429
 
-    data = request.get_json(silent=True) or {}
+    data = get_json_dict()
     username = str(data.get("username", "")).strip()
     password = str(data.get("password", "")).strip()
 
@@ -425,6 +695,8 @@ def auth_login():
         reset_failed_attempts(ip)
         session["authenticated"] = True
         session["admin_user"] = username
+        session["auth_ver"] = _current_auth_version()
+        session["csrf_token"] = secrets.token_hex(32)
         session.permanent = True
         return jsonify({"status": "ok", "message": "Đăng nhập thành công"})
     else:
@@ -447,16 +719,14 @@ def auth_logout():
         return redirect(url_for('index'))
     return jsonify({"status": "ok", "message": "Đã đăng xuất an toàn"})
 
-@app.route('/api/auth/change_credentials', methods=['POST'])
-def auth_change_credentials():
-    if not session.get("authenticated") and not check_pin(request):
+def _change_credentials_impl(old_user, old_pass, new_user, new_pass):
+    if not is_session_authenticated() and not check_pin(request):
         return jsonify({"error": "Unauthorized"}), 401
 
-    data = request.get_json(silent=True) or {}
-    old_user = str(data.get("old_user", "")).strip()
-    old_pass = str(data.get("old_pass", "")).strip()
-    new_user = str(data.get("new_user", "")).strip()
-    new_pass = str(data.get("new_pass", "")).strip()
+    old_user = str(old_user or "").strip()
+    old_pass = str(old_pass or "").strip()
+    new_user = str(new_user or "").strip()
+    new_pass = str(new_pass or "").strip()
 
     if not old_user:
         curr_u, _ = get_admin_credentials()
@@ -477,27 +747,40 @@ def auth_change_credentials():
         return jsonify({"error": "Không thể lưu thông tin đăng nhập. Hãy kiểm tra quyền ghi và volume /data."}), 500
     session["authenticated"] = True
     session["admin_user"] = new_user
+    session["auth_ver"] = _current_auth_version()
+    csrf_tok = get_csrf_token()
     session.permanent = True
-    return jsonify({"status": "ok", "message": "Đã đổi tài khoản và mật khẩu thành công!"})
+    return jsonify({
+        "status": "ok",
+        "message": "Đã đổi tài khoản và mật khẩu thành công!",
+        "csrf_token": csrf_tok
+    })
+
+@app.route('/api/auth/change_credentials', methods=['POST'])
+def auth_change_credentials():
+    data = get_json_dict()
+    return _change_credentials_impl(
+        data.get("old_user", ""),
+        data.get("old_pass", ""),
+        data.get("new_user", ""),
+        data.get("new_pass", ""),
+    )
 
 # Backward compatibility alias
 @app.route('/api/auth/change_pin', methods=['POST'])
 def auth_change_pin():
-    data = request.get_json(silent=True) or {}
-    old_pin = data.get("old_pin", "")
-    new_pin = data.get("new_pin", "")
+    data = get_json_dict()
     curr_u, _ = get_admin_credentials()
-    data["old_user"] = curr_u
-    data["old_pass"] = old_pin
-    data["new_user"] = curr_u
-    data["new_pass"] = new_pin
-    request._cached_json = (data, data)
-    return auth_change_credentials()
+    return _change_credentials_impl(
+        curr_u,
+        data.get("old_pin", ""),
+        curr_u,
+        data.get("new_pin", ""),
+    )
 
 @app.route('/api/auth/status', methods=['GET'])
 def auth_status():
-    is_auth = session.get("authenticated") is True
-    if not is_auth:
+    if not is_session_authenticated():
         return jsonify({"authenticated": False})
 
     admin_user, cfg = get_admin_credentials()
@@ -505,38 +788,53 @@ def auth_status():
     return jsonify({
         "authenticated": True,
         "admin_user": admin_user,
-        "is_default": is_default
+        "is_default": is_default,
+        "csrf_token": get_csrf_token()
     })
 
 def capture_game_screenshot_bytes(quality=55, fmt='jpeg'):
     """Capture 240x360 game screenshot bytes (JVM Bridge framebuffer + X11 ImageGrab).
     fmt: 'jpeg' (default) hoặc 'webp' (nhỏ hơn ~30%, browsers hiện đại hỗ trợ).
     """
-    def _encode(im, fmt, quality):
+    def _encode(im, out_fmt, q):
         buf = io.BytesIO()
-        if fmt == 'webp':
-            im.save(buf, format='WEBP', quality=quality, method=4)
+        if out_fmt == 'webp':
+            im.save(buf, format='WEBP', quality=q, method=4)
         else:
-            im.save(buf, format='JPEG', quality=quality, optimize=True)
+            im.save(buf, format='JPEG', quality=q, optimize=True)
         return buf.getvalue()
 
-    x11_bytes = None
-    x11_is_black = True
+    x11_rgb = None
     try:
-        im = _x11_grab_frame()
-        if im is not None:
-            im = im.convert('RGB')
-            extrema = im.getextrema()
+        raw_im = _x11_grab_frame()
+        if raw_im is not None:
+            try:
+                rgb_im = raw_im.convert('RGB')
+            finally:
+                if raw_im is not None:
+                    try:
+                        raw_im.close()
+                    except Exception:
+                        pass
+            extrema = rgb_im.getextrema()
             x11_is_black = (extrema == ((0, 0), (0, 0), (0, 0)))
-            x11_bytes = _encode(im, fmt, quality)
             if not x11_is_black:
-                return x11_bytes
+                try:
+                    return _encode(rgb_im, fmt, quality)
+                finally:
+                    rgb_im.close()
+            # Keep black frame only as last-resort fallback; skip encoding until Bridge check fails
+            x11_rgb = rgb_im
     except Exception:
-        pass
+        if x11_rgb is not None:
+            try:
+                x11_rgb.close()
+            except Exception:
+                pass
+            x11_rgb = None
 
     # Direct JVM Canvas Framebuffer Screenshot from GameBridgeAgent (used when X11 is black or unavailable)
     try:
-        import urllib.request
         req = urllib.request.Request("http://127.0.0.1:28888/api/game/screenshot", headers={"User-Agent": "NRO-Server"})
         with urllib.request.urlopen(req, timeout=1.0) as resp:
             if resp.status == 200:
@@ -544,36 +842,66 @@ def capture_game_screenshot_bytes(quality=55, fmt='jpeg'):
                 if data and len(data) > 200:
                     if fmt == 'webp':
                         try:
-                            im_bridge = Image.open(io.BytesIO(data)).convert('RGB')
-                            return _encode(im_bridge, 'webp', quality)
+                            with Image.open(io.BytesIO(data)) as im_src:
+                                im_bridge = im_src.convert('RGB')
+                            try:
+                                result = _encode(im_bridge, 'webp', quality)
+                            finally:
+                                im_bridge.close()
+                            if x11_rgb is not None:
+                                x11_rgb.close()
+                            return result
                         except Exception:
                             pass
+                    if x11_rgb is not None:
+                        x11_rgb.close()
                     return data
     except Exception:
         pass
 
-    if x11_bytes:
-        return x11_bytes
+    if x11_rgb is not None:
+        try:
+            return _encode(x11_rgb, fmt, quality)
+        except Exception:
+            pass
+        finally:
+            try:
+                x11_rgb.close()
+            except Exception:
+                pass
 
     buf = io.BytesIO()
     blank = Image.new('RGB', (SCREEN_WIDTH, SCREEN_HEIGHT), color=(15, 20, 30))
-    if fmt == 'webp':
-        blank.save(buf, format='WEBP', quality=50)
-    else:
-        blank.save(buf, format='JPEG', quality=50)
+    try:
+        if fmt == 'webp':
+            blank.save(buf, format='WEBP', quality=50)
+        else:
+            blank.save(buf, format='JPEG', quality=50)
+    finally:
+        blank.close()
     return buf.getvalue()
 
 
 def get_cached_screenshot(quality=55, max_age=0.2, fmt='jpeg'):
-    """Trả screenshot từ cache nếu chưa quá max_age giây, tránh block x11_lock khi nhiều tab."""
+    """Trả screenshot từ cache nếu chưa quá max_age giây; chống thundering herd khi nhiều tab/thread gọi đồng thời."""
     with _screenshot_cache_lock:
         cached = _screenshot_cache.get(fmt)
         if cached and (time.time() - cached["ts"]) < max_age:
             return cached["data"]
-    data = capture_game_screenshot_bytes(quality, fmt=fmt)
-    with _screenshot_cache_lock:
-        _screenshot_cache[fmt] = {"ts": time.time(), "data": data}
-    return data
+
+    with _screenshot_capture_lock:
+        with _screenshot_cache_lock:
+            cached = _screenshot_cache.get(fmt)
+            if cached and (time.time() - cached["ts"]) < max_age:
+                return cached["data"]
+            capture_gen = _screenshot_cache_gen
+
+        data = capture_game_screenshot_bytes(quality, fmt=fmt)
+
+        with _screenshot_cache_lock:
+            if _screenshot_cache_gen == capture_gen:
+                _screenshot_cache[fmt] = {"ts": time.time(), "data": data}
+        return data
 
 @app.route('/api/screenshot', methods=['GET'])
 def screenshot():
@@ -613,13 +941,7 @@ def server_status():
         uptime_human = f"{minutes}m {uptime_sec % 60}s"
 
     game_st = get_bridge_status()
-    emu_running = bool(game_st and game_st.get("bridge_online"))
-    if not emu_running:
-        try:
-            p = subprocess.run(["pgrep", "-f", "microemulator"], capture_output=True, text=True, timeout=2)
-            emu_running = (p.returncode == 0)
-        except Exception:
-            pass
+    emu_running = bool(game_st and game_st.get("bridge_online")) or _is_emulator_process_running()
 
     rom_file = ROM_FILE
     if not os.path.exists(rom_file) and os.path.exists("/app/roms/NRO.jar"):
@@ -636,7 +958,7 @@ def server_status():
         "uptime": uptime_human,
         "uptime_sec": uptime_sec,
         "emulator_running": emu_running,
-        "server_socket_online": check_nro_socket(),
+        "server_socket_online": _get_cached_nro_socket_status(),
         "ram": get_ram_info(),
         "rom": rom_info,
         "saved_account": read_rms_saved_info(),
@@ -655,12 +977,26 @@ def type_text_reliably(value, wid=None):
     # Cách 1: Clipboard paste (Ctrl+V) - MicroEmulator hỗ trợ native trong TextBox
     pasted = False
     for tool in [["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]]:
+        p = None
         try:
-            p = subprocess.Popen(tool, stdin=subprocess.PIPE, env=dict(os.environ, DISPLAY=":1"))
+            p = subprocess.Popen(
+                tool,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=dict(os.environ, DISPLAY=os.environ.get("DISPLAY", ":1")),
+            )
             p.communicate(input=value.encode('utf-8'), timeout=2)
             if p.returncode == 0:
                 pasted = True
                 break
+        except subprocess.TimeoutExpired:
+            if p is not None:
+                try:
+                    p.kill()
+                    p.communicate(timeout=1)
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -700,18 +1036,16 @@ def handle_input():
     if not check_pin(request):
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
 
-    data = request.get_json(silent=True) or {}
+    data = get_json_dict()
     action = data.get("action")
 
     try:
-        import urllib.parse
-        import urllib.request
-
         if action == "key":
-            raw_val = str(data.get("value", "")).strip()
+            raw_input = str(data.get("value", ""))
+            raw_val = "space" if raw_input == " " else raw_input.strip()
             key_to_send = KEY_MAP.get(raw_val.lower(), raw_val)
 
-            if key_to_send not in ALLOWED_KEYS and key_to_send not in KEY_MAP.values():
+            if not key_to_send or (key_to_send not in ALLOWED_KEYS and key_to_send not in KEY_MAP.values()):
                 return jsonify({"error": f"Invalid key: {raw_val}"}), 400
 
             # 1. Primary: Dispatch key directly into JVM via GameBridgeAgent
@@ -733,9 +1067,11 @@ def handle_input():
             try:
                 raw_x = float(data.get("x", 0))
                 raw_y = float(data.get("y", 0))
+                if not (math.isfinite(raw_x) and math.isfinite(raw_y)):
+                    return jsonify({"error": "Invalid coordinates"}), 400
                 x = max(0, min(SCREEN_WIDTH - 1, int(round(raw_x))))
                 y = max(0, min(SCREEN_HEIGHT - 1, int(round(raw_y))))
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OverflowError):
                 return jsonify({"error": "Invalid coordinates"}), 400
 
             # 1. Primary: Dispatch pointer click directly into JVM via GameBridgeAgent (exact 240x360 canvas coordinates)
@@ -755,6 +1091,8 @@ def handle_input():
 
         elif action == "text":
             value = str(data.get("value", ""))
+            if len(value) > 1024:
+                return jsonify({"error": "Text input too long (max 1024 chars)"}), 400
             field_hint = str(data.get("field", ""))
             submit = str(data.get("submit", ""))
             if not submit:
@@ -815,8 +1153,7 @@ def handle_input():
 
             # 1. Xử lý chống kẹt bên trong JVM (auto-launch Launcher, dừng Xmap đang treo, đóng hộp thoại in-game nro.Q.bo)
             try:
-                req_as = urllib.request.Request("http://127.0.0.1:28888/api/game/anti_stuck", data=b"", headers={"User-Agent": "NRO-Server"})
-                urllib.request.urlopen(req_as, timeout=1.5).close()
+                bridge_call("http://127.0.0.1:28888/api/game/anti_stuck", timeout=1.5, retries=1)
             except Exception:
                 pass
 
@@ -841,34 +1178,89 @@ def handle_input():
 def is_chat_box_open():
     """Kiểm tra xem hộp thoại Chat có đang mở trên màn hình game hay không."""
     try:
-        im = _x11_grab_frame()
-        if im is not None:
-            im = im.convert('RGB')
-            # Nút OK tại (80, 274) có màu cam đặc trưng (r > 190, 100 < g < 185, b < 100)
-            r, g, b = im.getpixel((80, 274))[:3]
-            if r > 190 and 100 < g < 185 and b < 100:
-                return True
+        raw_im = _x11_grab_frame()
+        if raw_im is not None:
+            try:
+                im = raw_im.convert('RGB')
+            finally:
+                raw_im.close()
+            try:
+                # Nút OK tại (80, 274) có màu cam đặc trưng (r > 190, 100 < g < 185, b < 100)
+                r, g, b = im.getpixel((80, 274))[:3]
+                if r > 190 and 100 < g < 185 and b < 100:
+                    return True
+            finally:
+                im.close()
     except Exception:
         pass
     return False
 
+class BridgeError(RuntimeError):
+    """Structured error raised when GameBridge returns an HTTP error or invalid JSON."""
+    def __init__(self, message, status_code=503):
+        super().__init__(message)
+        self.status_code = status_code
+
+def _is_retryable_bridge_error(err):
+    if isinstance(err, (ConnectionRefusedError, ConnectionResetError, BrokenPipeError, TimeoutError, socket.timeout, http.client.RemoteDisconnected)):
+        return True
+    if isinstance(err, urllib.error.HTTPError):
+        return err.code == 503
+    if isinstance(err, urllib.error.URLError):
+        return True
+    err_str = str(err)
+    return ("Connection refused" in err_str or "timed out" in err_str or "RemoteDisconnected" in err_str)
+
 def bridge_call(url, data=b"", timeout=3.5, retries=6):
     """Gửi yêu cầu HTTP tới GameBridgeAgent nội bộ với cơ chế tự động thử lại khi game vừa khởi động."""
-    import urllib.request
-    import json
     req = urllib.request.Request(url, data=data, headers={"User-Agent": "NRO-Server"})
     last_err = None
-    for attempt in range(retries):
+    attempts = max(1, int(retries))
+    for attempt in range(attempts):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 res_bytes = resp.read()
                 if resp.status == 200:
-                    return json.loads(res_bytes.decode("utf-8"))
-                raise RuntimeError(f"HTTP {resp.status} từ GameBridge")
+                    try:
+                        parsed = json.loads(res_bytes.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError) as je:
+                        raise BridgeError(f"Phản hồi JSON không hợp lệ từ GameBridge: {je}", status_code=502) from je
+                    if not isinstance(parsed, dict):
+                        raise BridgeError("Phản hồi từ GameBridge không đúng định dạng JSON object.", status_code=502)
+                    return parsed
+                raise BridgeError(f"HTTP {resp.status} từ GameBridge", status_code=resp.status)
+        except urllib.error.HTTPError as he:
+            body_bytes = b""
+            try:
+                body_bytes = he.read() or b""
+            except Exception:
+                pass
+            finally:
+                try:
+                    he.close()
+                except Exception:
+                    pass
+            err_msg = f"HTTP {he.code} từ GameBridge"
+            if body_bytes:
+                try:
+                    err_json = json.loads(body_bytes.decode("utf-8", errors="replace"))
+                    if isinstance(err_json, dict) and err_json.get("error"):
+                        err_msg = str(err_json["error"])
+                except Exception:
+                    snippet = body_bytes.decode("utf-8", errors="replace").strip()
+                    if snippet:
+                        err_msg = f"HTTP {he.code}: {snippet[:200]}"
+            last_err = BridgeError(err_msg, status_code=he.code)
+            if attempt < attempts - 1 and he.code == 503:
+                time.sleep(min(0.3 * (2 ** attempt), 3.0))
+            else:
+                break
+        except BridgeError as be:
+            last_err = be
+            break
         except Exception as e:
             last_err = e
-            err_str = str(e)
-            if attempt < retries - 1 and ("Connection refused" in err_str or "timed out" in err_str):
+            if attempt < attempts - 1 and _is_retryable_bridge_error(e):
                 time.sleep(min(0.3 * (2 ** attempt), 3.0))  # exponential backoff: 0.3s, 0.6s, 1.2s, 2.4s, capped 3.0s
             else:
                 break
@@ -877,7 +1269,6 @@ def bridge_call(url, data=b"", timeout=3.5, retries=6):
 def send_via_bridge(cmd):
     """Gửi lệnh trực tiếp vào JVM qua GameBridgeAgent nội bộ nếu có."""
     try:
-        import urllib.parse
         url = f"http://127.0.0.1:28888/api/game/cmd?cmd={urllib.parse.quote(cmd)}"
         res = bridge_call(url, timeout=2.0, retries=2)
         return bool(res and res.get("status") == "ok")
@@ -887,29 +1278,34 @@ def send_via_bridge(cmd):
 
 def send_mod_actions_via_bridge(cmd):
     """Execute mod commands through the JVM handler only; never type into game chat."""
-    import urllib.parse
     url = f"http://127.0.0.1:28888/api/game/mod_action?cmd={urllib.parse.quote(cmd)}"
-    result = bridge_call(url, timeout=3.5, retries=6)
-    if result.get("status") != "ok":
-        raise RuntimeError(result.get("error", "GameBridge rejected the mod action."))
+    result = bridge_call(url, timeout=3.0, retries=3)
+    if not isinstance(result, dict) or result.get("status") != "ok":
+        raise BridgeError(
+            (result.get("error") if isinstance(result, dict) else None) or "GameBridge rejected the mod action.",
+            status_code=400,
+        )
     return result
 
 def configure_punch_via_bridge():
     """Ask the Hùng Hero bridge to add this character's actual punch skill to Auto."""
-    result = bridge_call("http://127.0.0.1:28888/api/game/configure_punch", timeout=6.0, retries=6)
-    if result.get("status") != "ok":
-        raise RuntimeError(result.get("error", "Hùng Hero không xác nhận được chiêu Đấm."))
+    result = bridge_call("http://127.0.0.1:28888/api/game/configure_punch", timeout=2.5, retries=2)
+    if not isinstance(result, dict) or result.get("status") != "ok":
+        raise BridgeError(
+            (result.get("error") if isinstance(result, dict) else None) or "Hùng Hero không xác nhận được chiêu Đấm.",
+            status_code=502,
+        )
     return result
 
 def get_bridge_status():
     """Lấy trạng thái game thời gian thực từ JVM Bridge."""
     try:
-        import urllib.request
-        import json
         req = urllib.request.Request("http://127.0.0.1:28888/api/game/status", headers={"User-Agent": "NRO-Server"})
         with urllib.request.urlopen(req, timeout=1.0) as resp:
             if resp.status == 200:
-                return json.loads(resp.read().decode('utf-8'))
+                parsed = json.loads(resp.read().decode('utf-8'))
+                if isinstance(parsed, dict):
+                    return parsed
     except Exception:
         pass
     return None
@@ -925,56 +1321,57 @@ def send_chat_command(c, wid=None):
         return True
 
     # Fallback xdotool
-    chat_open = is_chat_box_open()
-    if not chat_open:
-        # Dragonboy chat trigger: Phím '#' (numbersign) hoặc 'Return'
-        cmd_open = ["xdotool", "key", "numbersign"]
-        if wid:
-            cmd_open = ["xdotool", "key", "--window", wid, "numbersign"]
-        safe_run(cmd_open, timeout=2)
-        time.sleep(0.35)
-        if not is_chat_box_open():
-            cmd_open_ret = ["xdotool", "key", "Return"]
+    with x11_lock:
+        chat_open = is_chat_box_open()
+        if not chat_open:
+            # Dragonboy chat trigger: Phím '#' (numbersign) hoặc 'Return'
+            cmd_open = ["xdotool", "key", "numbersign"]
             if wid:
-                cmd_open_ret = ["xdotool", "key", "--window", wid, "Return"]
-            safe_run(cmd_open_ret, timeout=1)
-            time.sleep(0.3)
+                cmd_open = ["xdotool", "key", "--window", wid, "numbersign"]
+            safe_run(cmd_open, timeout=2)
+            time.sleep(0.35)
+            if not is_chat_box_open():
+                cmd_open_ret = ["xdotool", "key", "Return"]
+                if wid:
+                    cmd_open_ret = ["xdotool", "key", "--window", wid, "Return"]
+                safe_run(cmd_open_ret, timeout=1)
+                time.sleep(0.3)
 
-    # Xóa sạch ô chat bằng click (X) và BackSpace
-    cmd_click_clear = ["xdotool", "mousemove", "211", str(246 + MENU_BAR_OFFSET), "click", "1"]
-    safe_run(cmd_click_clear, timeout=1)
-    time.sleep(0.08)
+        # Xóa sạch ô chat bằng click (X) và BackSpace
+        cmd_click_clear = ["xdotool", "mousemove", "211", str(246 + MENU_BAR_OFFSET), "click", "1"]
+        safe_run(cmd_click_clear, timeout=1)
+        time.sleep(0.08)
 
-    cmd_clear = ["xdotool", "key", "--repeat", "35", "--delay", "6", "BackSpace"]
-    if wid:
-        cmd_clear = ["xdotool", "key", "--window", wid, "--repeat", "35", "--delay", "6", "BackSpace"]
-    safe_run(cmd_clear, timeout=1)
-    time.sleep(0.08)
+        cmd_clear = ["xdotool", "key", "--repeat", "35", "--delay", "6", "BackSpace"]
+        if wid:
+            cmd_clear = ["xdotool", "key", "--window", wid, "--repeat", "35", "--delay", "6", "BackSpace"]
+        safe_run(cmd_clear, timeout=1)
+        time.sleep(0.08)
 
-    # Gõ lệnh
-    cmd_type = ["xdotool", "type", "--delay", "25", "--", c]
-    if wid:
-        cmd_type = ["xdotool", "type", "--window", wid, "--delay", "25", "--", c]
-    safe_run(cmd_type, timeout=3)
-    time.sleep(0.18)
+        # Gõ lệnh
+        cmd_type = ["xdotool", "type", "--delay", "25", "--", c]
+        if wid:
+            cmd_type = ["xdotool", "type", "--window", wid, "--delay", "25", "--", c]
+        safe_run(cmd_type, timeout=3)
+        time.sleep(0.18)
 
-    # Xác nhận lệnh: Trong Dragonboy, nút OK là Left Softkey (F1) hoặc click (80, 274)
-    cmd_click_ok = ["xdotool", "mousemove", "80", str(274 + MENU_BAR_OFFSET), "click", "1"]
-    safe_run(cmd_click_ok, timeout=2)
-    time.sleep(0.1)
+        # Xác nhận lệnh: Trong Dragonboy, nút OK là Left Softkey (F1) hoặc click (80, 274)
+        cmd_click_ok = ["xdotool", "mousemove", "80", str(274 + MENU_BAR_OFFSET), "click", "1"]
+        safe_run(cmd_click_ok, timeout=2)
+        time.sleep(0.1)
 
-    # Gửi Return và F1 (F1 = Left Softkey trong MicroEmulator)
-    safe_run(["xdotool", "key", "Return"], timeout=1)
-    safe_run(["xdotool", "key", "F1"], timeout=1)
-
-    # Chờ tối thiểu 1.15s vì Dragonboy có chat cooldown 1000ms
-    time.sleep(0.5)
-    if is_chat_box_open():
-        safe_run(cmd_click_ok, timeout=1)
+        # Gửi Return và F1 (F1 = Left Softkey trong MicroEmulator)
+        safe_run(["xdotool", "key", "Return"], timeout=1)
         safe_run(["xdotool", "key", "F1"], timeout=1)
-        time.sleep(0.65)
-    else:
-        time.sleep(0.65)
+
+        # Chờ tối thiểu 1.15s vì Dragonboy có chat cooldown 1000ms
+        time.sleep(0.5)
+        if is_chat_box_open():
+            safe_run(cmd_click_ok, timeout=1)
+            safe_run(["xdotool", "key", "F1"], timeout=1)
+            time.sleep(0.65)
+        else:
+            time.sleep(0.65)
 
     return True
 
@@ -983,7 +1380,7 @@ def handle_quick_cmd():
     if not check_pin(request):
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
 
-    data = request.get_json(silent=True) or {}
+    data = get_json_dict()
     raw_cmd = str(data.get("cmd", "")).strip()
     if not raw_cmd:
         return jsonify({"error": "Command is empty"}), 400
@@ -1000,13 +1397,16 @@ def handle_mod_action():
     if not check_pin(request):
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
 
-    data = request.get_json(silent=True) or {}
+    data = get_json_dict()
     raw_cmd = str(data.get("cmd", "")).strip().lower()
     if not raw_cmd:
         return jsonify({"error": "Missing mod action."}), 400
 
     allowed = {"cd", "locdo", "anhat", "gb", "s20", "kvt", "nb", "cflag", "xdh", "annguoi", "anquai", "anitem", "alogin", "sz", "checklag", "ahs", "cs", "xmap", "ts", "tdlt", "ats"}
     cmds = [cmd.strip() for cmd in raw_cmd.replace(";", ",").split(",") if cmd.strip()]
+    if not cmds:
+        return jsonify({"error": "Missing mod action."}), 400
+
     def is_valid_skill_cmd(c):
         if not c.startswith("skill"):
             return False
@@ -1017,12 +1417,19 @@ def handle_mod_action():
             return parts[0].isdigit() and parts[1].isdigit() and 1 <= int(parts[0]) <= 10 and 1 <= int(parts[1]) <= 10
         return False
 
-    if any(cmd not in allowed and not (cmd.startswith("k") and cmd[1:].isdigit()) and not is_valid_skill_cmd(cmd) for cmd in cmds):
+    def is_valid_zone_cmd(c):
+        return c.startswith("k") and c[1:].isdigit() and 0 <= int(c[1:]) <= 99
+
+    if any(cmd not in allowed and not is_valid_zone_cmd(cmd) and not is_valid_skill_cmd(cmd) for cmd in cmds):
         return jsonify({"error": "Unsupported mod action."}), 400
 
     try:
         result = send_mod_actions_via_bridge(",".join(cmds))
         return jsonify({"status": "ok", "method": "game_bridge", "executed": cmds, "details": result})
+    except BridgeError as e:
+        if 400 <= e.status_code < 500:
+            return jsonify({"error": str(e)}), e.status_code
+        return jsonify({"error": f"GameBridge chưa sẵn sàng: {e}"}), e.status_code
     except Exception as e:
         err_msg = str(e)
         if "Connection refused" in err_msg:
@@ -1041,22 +1448,27 @@ def handle_auto_farm():
     if not check_pin(request):
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
 
-    data = request.get_json(silent=True) or {}
+    data = get_json_dict()
     map_val = str(data.get("map", "")).strip()
     zone_val = str(data.get("zone", "")).strip()
-    mode = str(data.get("mode", "all")).strip().lower()
+    mode = str(data.get("mode", "all") or "all").strip().lower()
+    if mode not in ("all", "tdlt", "ts"):
+        return jsonify({"error": "Chế độ auto không hợp lệ (chỉ hỗ trợ all, tdlt, ts)."}), 400
 
     punch_skill = {}
+    pre_connect_failed = False
     try:
         punch_skill = configure_punch_via_bridge() or {}
     except Exception as e:
+        pre_connect_failed = _is_retryable_bridge_error(e)
         print(f"[AUTO_FARM] Pre-configure punch note (will retry inside AutoFarm worker): {e}")
 
     try:
-        import urllib.parse
         query = f"map={urllib.parse.quote(map_val)}&zone={urllib.parse.quote(zone_val)}&mode={urllib.parse.quote(mode)}"
         url = f"http://127.0.0.1:28888/api/game/auto_farm?{query}"
-        res_data = bridge_call(url, timeout=4.0, retries=6)
+        res_data = bridge_call(url, timeout=4.0, retries=1 if pre_connect_failed else 3)
+        if not isinstance(res_data, dict) or res_data.get("status") != "ok":
+            return jsonify({"error": (res_data.get("error") if isinstance(res_data, dict) else None) or "GameBridge từ chối lệnh Auto Farm."}), 502
         skill_num = punch_skill.get('skill', 1)
         traveling = bool(res_data.get('traveling'))
         target_map = res_data.get('map', map_val)
@@ -1074,6 +1486,10 @@ def handle_auto_farm():
             "message": f"{prefix}{mode_desc}!",
             "details": res_data
         })
+    except BridgeError as e:
+        if 400 <= e.status_code < 500:
+            return jsonify({"error": str(e)}), e.status_code
+        return jsonify({"error": f"GameBridge chưa sẵn sàng: {e}"}), e.status_code
     except Exception as e:
         err_msg = str(e)
         if "Connection refused" in err_msg:
@@ -1084,21 +1500,25 @@ def handle_auto_farm():
 def handle_xmap():
     if not check_pin(request):
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
-    data = request.get_json(silent=True) or {}
+    data = get_json_dict()
     map_val = str(data.get("map", "")).strip()
-    if map_val == "" or map_val in ("-1", "keep", "xmap") or not map_val.lstrip("-").isdigit():
+    if not map_val.isdigit() or not (0 <= int(map_val) <= 999):
         return jsonify({"error": "Vui lòng chọn một Map cụ thể trong danh sách để bay!"}), 400
+    map_id = int(map_val)
     try:
-        import urllib.parse
-        url = f"http://127.0.0.1:28888/api/game/xmap?map={urllib.parse.quote(map_val)}"
+        url = f"http://127.0.0.1:28888/api/game/xmap?map={map_id}"
         res_data = bridge_call(url, timeout=3.0, retries=2)
         if res_data.get("status") == "ok":
             return jsonify({
                 "status": "ok",
-                "map": int(map_val),
-                "message": f"🚀 Đã kích hoạt Xmap bay tới Map {map_val}!"
+                "map": map_id,
+                "message": f"🚀 Đã kích hoạt Xmap bay tới Map {map_id}!"
             })
         return jsonify({"error": f"Không thể kích hoạt Xmap: {res_data.get('error', 'Lỗi')}"}), 500
+    except BridgeError as e:
+        if 400 <= e.status_code < 500:
+            return jsonify({"error": str(e)}), e.status_code
+        return jsonify({"error": f"GameBridge chưa sẵn sàng: {e}"}), e.status_code
     except Exception as e:
         err_msg = str(e)
         if "Connection refused" in err_msg:
@@ -1112,11 +1532,17 @@ def handle_stop_farm():
     try:
         url = "http://127.0.0.1:28888/api/game/stop_farm"
         res_data = bridge_call(url, timeout=3.0, retries=2)
+        if not isinstance(res_data, dict) or res_data.get("status") != "ok":
+            return jsonify({"error": (res_data.get("error") if isinstance(res_data, dict) else None) or "Không thể dừng Auto Farm."}), 502
         return jsonify({
             "status": "ok",
             "message": "Đã dừng toàn bộ Auto & khôi phục hiển thị đồ họa!",
             "details": res_data
         })
+    except BridgeError as e:
+        if 400 <= e.status_code < 500:
+            return jsonify({"error": str(e)}), e.status_code
+        return jsonify({"error": f"GameBridge chưa sẵn sàng: {e}"}), e.status_code
     except Exception as e:
         err_msg = str(e)
         if "Connection refused" in err_msg:
@@ -1139,15 +1565,21 @@ def get_menu_layout():
     - 4 nút (Mới khởi động game): [Chơi mới, Đổi tài khoản, Máy chủ, Cấu hình]
     """
     try:
-        im = _x11_grab_frame()
-        if im is not None:
-            im = im.convert('RGB')
-            # Kiểm tra pixel tại (120, 144)
-            # Với layout 5 nút: (120, 144) là tâm nút 'Chơi tiếp' màu cam (r > 180, g > 110)
-            # Với layout 4 nút: (120, 144) là hình nền phong cảnh tối phía trên các nút (r < 130)
-            r, g, b = im.getpixel((120, 144))[:3]
-            if r > 180 and g > 110:
-                return 5
+        raw_im = _x11_grab_frame()
+        if raw_im is not None:
+            try:
+                im = raw_im.convert('RGB')
+            finally:
+                raw_im.close()
+            try:
+                # Kiểm tra pixel tại (120, 144)
+                # Với layout 5 nút: (120, 144) là tâm nút 'Chơi tiếp' màu cam (r > 180, g > 110)
+                # Với layout 4 nút: (120, 144) là hình nền phong cảnh tối phía trên các nút (r < 130)
+                r, g, b = im.getpixel((120, 144))[:3]
+                if r > 180 and g > 110:
+                    return 5
+            finally:
+                im.close()
     except Exception as e:
         print(f"[LAYOUT] Lỗi kiểm tra bố cục menu: {e}")
     return 4
@@ -1155,78 +1587,91 @@ def get_menu_layout():
 def dismiss_error_popup_if_any():
     """Tự động phát hiện và xử lý mọi màn hình trung gian: Launcher, Tải dữ liệu, Thông báo, Menu chính."""
     try:
-        im = _x11_grab_frame()
-        if im is not None:
-            im = im.convert('RGB')
-            # 1. Phát hiện màn hình Launcher chờ Start (nền trắng tinh góc trên và giữa)
-            p_top = im.getpixel((10, 10))[:3]
-            p_mid = im.getpixel((120, 180))[:3]
-            if p_top == (255, 255, 255) and p_mid == (255, 255, 255):
-                safe_run(["xdotool", "mousemove", "160", str(208 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
-                safe_run(["xdotool", "key", "F2"], timeout=1)
-                safe_run(["xdotool", "key", "Return"], timeout=1)
-                time.sleep(0.4)
-                return True
-
-            # 2. Phát hiện màn hình 'Vui lòng tải dữ liệu để chơi' (nút cam tại (119, 234), không có nút Chơi tiếp)
-            r_dl, g_dl, b_dl = im.getpixel((119, 234))[:3]
-            r_ct, g_ct, b_ct = im.getpixel((120, 144))[:3]
-            if (r_dl > 180 and 100 < g_dl < 185 and b_dl < 90) and r_ct < 130:
-                safe_run(["xdotool", "mousemove", "119", str(234 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
-                safe_run(["xdotool", "key", "Return"], timeout=1)
-                time.sleep(1.0)
-                return True
-
-            # 3. Phát hiện popup parchment nền giấy vàng (kiểm tra các điểm lề không dính chữ)
-            parchment_pts = [(50, 260), (190, 260), (50, 280), (190, 280), (120, 270), (120, 220)]
-            is_parchment = any(
-                im.getpixel(pt)[0] > 190 and im.getpixel(pt)[1] > 180 and im.getpixel(pt)[2] > 140
-                for pt in parchment_pts
-            )
-            if is_parchment:
-                # 3a. Kiểm tra nút [ Có ] tại (80, 320) (trong hộp thoại 'Bạn sẽ mất tài khoản đang chơi...')
-                r_co, g_co, b_co = im.getpixel((80, 320))[:3]
-                if r_co > 180 and 100 < g_co < 185 and b_co < 90:
-                    safe_run(["xdotool", "mousemove", "80", str(320 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
-                    safe_run(["xdotool", "key", "Return"], timeout=1)
+        raw_im = _x11_grab_frame()
+        if raw_im is not None:
+            try:
+                im = raw_im.convert('RGB')
+            finally:
+                raw_im.close()
+            try:
+                # 1. Phát hiện màn hình Launcher chờ Start (nền trắng tinh góc trên và giữa)
+                p_top = im.getpixel((10, 10))[:3]
+                p_mid = im.getpixel((120, 180))[:3]
+                if p_top == (255, 255, 255) and p_mid == (255, 255, 255):
+                    with x11_lock:
+                        safe_run(["xdotool", "mousemove", "160", str(208 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                        safe_run(["xdotool", "key", "F2"], timeout=1)
+                        safe_run(["xdotool", "key", "Return"], timeout=1)
                     time.sleep(0.4)
                     return True
 
-                # 3b. Kiểm tra nút [ OK ] tại (119, 318) hoặc (119, 320) (trong hộp thoại 'Xin khởi động lại game...' hoặc thông báo lỗi)
-                r_ok, g_ok, b_ok = im.getpixel((119, 318))[:3]
-                if not (r_ok > 180 and 100 < g_ok < 185 and b_ok < 90):
-                    r_ok, g_ok, b_ok = im.getpixel((119, 320))[:3]
-                if r_ok > 180 and 100 < g_ok < 185 and b_ok < 90:
-                    safe_run(["xdotool", "mousemove", "119", str(318 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
-                    safe_run(["xdotool", "key", "Return"], timeout=1)
-                    safe_run(["xdotool", "key", "space"], timeout=1)
-                    time.sleep(0.4)
+                # 2. Phát hiện màn hình 'Vui lòng tải dữ liệu để chơi' (nút cam tại (119, 234), không có nút Chơi tiếp)
+                r_dl, g_dl, b_dl = im.getpixel((119, 234))[:3]
+                r_ct, g_ct, b_ct = im.getpixel((120, 144))[:3]
+                if (r_dl > 180 and 100 < g_dl < 185 and b_dl < 90) and r_ct < 130:
+                    with x11_lock:
+                        safe_run(["xdotool", "mousemove", "119", str(234 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                        safe_run(["xdotool", "key", "Return"], timeout=1)
+                    time.sleep(1.0)
                     return True
 
-                # 3c. Fallback nút OK ở giữa (120, 285)
-                safe_run(["xdotool", "mousemove", "120", str(285 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
-                safe_run(["xdotool", "key", "Return"], timeout=1)
-                time.sleep(0.3)
-                return True
+                # 3. Phát hiện popup parchment nền giấy vàng (kiểm tra các điểm lề không dính chữ)
+                parchment_pts = [(50, 260), (190, 260), (50, 280), (190, 280), (120, 270), (120, 220)]
+                is_parchment = any(
+                    im.getpixel(pt)[0] > 190 and im.getpixel(pt)[1] > 180 and im.getpixel(pt)[2] > 140
+                    for pt in parchment_pts
+                )
+                if is_parchment:
+                    # 3a. Kiểm tra nút [ Có ] tại (80, 320) (trong hộp thoại 'Bạn sẽ mất tài khoản đang chơi...')
+                    r_co, g_co, b_co = im.getpixel((80, 320))[:3]
+                    if r_co > 180 and 100 < g_co < 185 and b_co < 90:
+                        with x11_lock:
+                            safe_run(["xdotool", "mousemove", "80", str(320 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                            safe_run(["xdotool", "key", "Return"], timeout=1)
+                        time.sleep(0.4)
+                        return True
 
-            # 4. Kiểm tra nút Đóng/OK màu cam tại (120, 255)
-            r, g, b = im.getpixel((120, 255))[:3]
-            if r > 180 and 100 < g < 185 and b < 100:
-                cmd = ["xdotool", "mousemove", "120", str(255 + MENU_BAR_OFFSET), "click", "1"]
-                safe_run(cmd, timeout=1)
-                safe_run(["xdotool", "key", "Return"], timeout=1)
-                time.sleep(0.3)
-                return True
+                    # 3b. Kiểm tra nút [ OK ] tại (119, 318) hoặc (119, 320) (trong hộp thoại 'Xin khởi động lại game...' hoặc thông báo lỗi)
+                    r_ok, g_ok, b_ok = im.getpixel((119, 318))[:3]
+                    if not (r_ok > 180 and 100 < g_ok < 185 and b_ok < 90):
+                        r_ok, g_ok, b_ok = im.getpixel((119, 320))[:3]
+                    if r_ok > 180 and 100 < g_ok < 185 and b_ok < 90:
+                        with x11_lock:
+                            safe_run(["xdotool", "mousemove", "119", str(318 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                            safe_run(["xdotool", "key", "Return"], timeout=1)
+                            safe_run(["xdotool", "key", "space"], timeout=1)
+                        time.sleep(0.4)
+                        return True
 
-            # 5. Tự động bấm 'Chơi tiếp' / 'Chơi TK' nếu đang ở Menu chính và không bị popup che
-            r_ct, g_ct, b_ct = im.getpixel((120, 144))[:3]
-            if r_ct > 180 and 100 < g_ct < 185 and b_ct < 90 and not is_parchment:
-                st = get_bridge_status()
-                if not st or not st.get("in_game"):
-                    safe_run(["xdotool", "mousemove", "120", str(144 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
-                    safe_run(["xdotool", "key", "Return"], timeout=1)
-                    time.sleep(0.5)
+                    # 3c. Fallback nút OK ở giữa (120, 285)
+                    with x11_lock:
+                        safe_run(["xdotool", "mousemove", "120", str(285 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                        safe_run(["xdotool", "key", "Return"], timeout=1)
+                    time.sleep(0.3)
                     return True
+
+                # 4. Kiểm tra nút Đóng/OK màu cam tại (120, 255)
+                r, g, b = im.getpixel((120, 255))[:3]
+                if r > 180 and 100 < g < 185 and b < 100:
+                    with x11_lock:
+                        cmd = ["xdotool", "mousemove", "120", str(255 + MENU_BAR_OFFSET), "click", "1"]
+                        safe_run(cmd, timeout=1)
+                        safe_run(["xdotool", "key", "Return"], timeout=1)
+                    time.sleep(0.3)
+                    return True
+
+                # 5. Tự động bấm 'Chơi tiếp' / 'Chơi TK' nếu đang ở Menu chính và không bị popup che
+                r_ct, g_ct, b_ct = im.getpixel((120, 144))[:3]
+                if r_ct > 180 and 100 < g_ct < 185 and b_ct < 90 and not is_parchment:
+                    st = get_bridge_status()
+                    if not st or not st.get("in_game"):
+                        with x11_lock:
+                            safe_run(["xdotool", "mousemove", "120", str(144 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                            safe_run(["xdotool", "key", "Return"], timeout=1)
+                        time.sleep(0.5)
+                        return True
+            finally:
+                im.close()
     except Exception as e:
         print(f"[POPUP] Lỗi kiểm tra popup: {e}")
     return False
@@ -1267,29 +1712,43 @@ def emulator_ui_watchdog_worker():
                     pass
 
             if not st or not st.get("in_game"):
-                im = _x11_grab_frame()
-                if im is not None:
-                    im = im.convert('RGB')
-                    # Chỉ tự động qua màn hình Launcher trắng hoặc màn hình 'Vui lòng tải dữ liệu để chơi'
-                    p_top = im.getpixel((10, 10))[:3]
-                    p_mid = im.getpixel((120, 180))[:3]
-                    if p_top == (255, 255, 255) and p_mid == (255, 255, 255):
-                        safe_run(["xdotool", "mousemove", "160", str(208 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
-                        safe_run(["xdotool", "key", "F2"], timeout=1)
-                        safe_run(["xdotool", "key", "Return"], timeout=1)
-                    else:
-                        r_dl, g_dl, b_dl = im.getpixel((119, 234))[:3]
-                        r_ct, g_ct, b_ct = im.getpixel((120, 144))[:3]
-                        if (r_dl > 180 and 100 < g_dl < 185 and b_dl < 90) and r_ct < 130:
-                            safe_run(["xdotool", "mousemove", "119", str(234 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
-                            safe_run(["xdotool", "key", "Return"], timeout=1)
+                if x11_lock.acquire(blocking=False):
+                    try:
+                        raw_im = _x11_grab_frame()
+                        if raw_im is not None:
+                            try:
+                                im = raw_im.convert('RGB')
+                            finally:
+                                raw_im.close()
+                            try:
+                                # Chỉ tự động qua màn hình Launcher trắng hoặc màn hình 'Vui lòng tải dữ liệu để chơi'
+                                p_top = im.getpixel((10, 10))[:3]
+                                p_mid = im.getpixel((120, 180))[:3]
+                                if p_top == (255, 255, 255) and p_mid == (255, 255, 255):
+                                    safe_run(["xdotool", "mousemove", "160", str(208 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                                    safe_run(["xdotool", "key", "F2"], timeout=1)
+                                    safe_run(["xdotool", "key", "Return"], timeout=1)
+                                else:
+                                    r_dl, g_dl, b_dl = im.getpixel((119, 234))[:3]
+                                    r_ct, g_ct, b_ct = im.getpixel((120, 144))[:3]
+                                    if (r_dl > 180 and 100 < g_dl < 185 and b_dl < 90) and r_ct < 130:
+                                        safe_run(["xdotool", "mousemove", "119", str(234 + MENU_BAR_OFFSET), "click", "1"], timeout=1)
+                                        safe_run(["xdotool", "key", "Return"], timeout=1)
+                            finally:
+                                im.close()
+                    finally:
+                        x11_lock.release()
         except Exception:
             pass
         # Adaptive sleep: 2s nếu chưa in_game (theo dõi chặt hơn), 5s nếu đang chơi bình thường
         time.sleep(2.0 if not (st and st.get("in_game")) else 5.0)
 
-_ui_watchdog_thread = threading.Thread(target=emulator_ui_watchdog_worker, daemon=True)
-_ui_watchdog_thread.start()
+def _should_start_background_workers():
+    return not os.environ.get("PYTEST_CURRENT_TEST") and os.environ.get("DISABLE_BACKGROUND_WORKERS") != "1"
+
+if _should_start_background_workers():
+    _ui_watchdog_thread = threading.Thread(target=emulator_ui_watchdog_worker, daemon=True)
+    _ui_watchdog_thread.start()
 
 # =========================================================================
 # J2ME Record Management System (RMS) - Quản lý Tài khoản & Máy chủ Tự Động
@@ -1299,18 +1758,33 @@ def get_all_suite_dirs():
     """
     Trả về danh sách tất cả các thư mục suite RMS của MicroEmulator để đảm bảo ghi đúng 100%.
     Bao gồm suite-Dragonboy250 v3.0, suite-null, và tất cả thư mục suite-* hiện có.
+    Khi MICROEMULATOR_HOME được đặt tường minh, chỉ thao tác trong thư mục đó (tránh chạm vào $HOME của máy chủ/host).
     """
-    primary_home = os.environ.get(
-        "MICROEMULATOR_HOME",
-        os.path.join(os.environ.get("HOME", "/data"), ".microemulator")
-    )
-    base_dirs = [primary_home, "/root/.microemulator", os.path.expanduser("~/.microemulator")]
-    home = os.environ.get("HOME")
-    if home:
-        base_dirs.append(os.path.join(home, ".microemulator"))
+    explicit_home = (os.environ.get("MICROEMULATOR_HOME") or "").strip()
+    if explicit_home:
+        primary_home = explicit_home
+        base_dirs = [primary_home]
+    else:
+        env_home = (os.environ.get("HOME") or "").strip()
+        if os.name == "posix":
+            primary_home = os.path.join(env_home or "/data", ".microemulator")
+            base_dirs = [primary_home, "/root/.microemulator", os.path.expanduser("~/.microemulator")]
+        else:
+            primary_home = os.path.join(env_home or os.path.expanduser("~"), ".microemulator")
+            base_dirs = [primary_home]
+
+    seen_bases = set()
+    unique_bases = []
+    for base in base_dirs:
+        if not base:
+            continue
+        norm = os.path.normpath(base)
+        if norm not in seen_bases:
+            seen_bases.add(norm)
+            unique_bases.append(norm)
 
     suite_dirs = []
-    for base in dict.fromkeys(base_dirs):
+    for base in unique_bases:
         try:
             if os.path.exists(base):
                 for name in sorted(os.listdir(base)):
@@ -1336,15 +1810,12 @@ def get_all_suite_dirs():
 
 def get_rms_suite_dir():
     dirs = get_all_suite_dirs()
-    primary_home = os.environ.get(
-        "MICROEMULATOR_HOME",
-        os.path.join(os.environ.get("HOME", "/data"), ".microemulator")
-    )
+    explicit_home = (os.environ.get("MICROEMULATOR_HOME") or "").strip()
+    primary_home = explicit_home or os.path.join(os.environ.get("HOME", "/data"), ".microemulator")
     return dirs[0] if dirs else os.path.join(primary_home, "suite-Dragonboy250 v3.0")
 
 def cleanup_corrupted_rms_cache():
     """Xóa toàn bộ cache dữ liệu bị hỏng (CRC corruption) của Dragonboy, giữ nguyên tài khoản & máy chủ đã lưu."""
-    import shutil
     suite_dirs = get_all_suite_dirs()
     preserved = {"vjacc.rs", "vjpass.rs", "vjsvselect.rs", "vjcheck.rs"}
     cleared = 0
@@ -1411,6 +1882,8 @@ def read_rs_records(filepath):
         offset = 0
         name_len = struct.unpack_from('>H', data, offset)[0]
         offset += 2
+        if offset + name_len + 16 > len(data):
+            return None, {}
         store_name = data[offset:offset+name_len].decode('utf-8', errors='ignore')
         offset += name_len
         version, last_mod, next_id = struct.unpack_from('>iqi', data, offset)
@@ -1419,7 +1892,7 @@ def read_rs_records(filepath):
         while offset + 8 <= len(data):
             rec_id, rec_len = struct.unpack_from('>ii', data, offset)
             offset += 8
-            if offset + rec_len <= len(data):
+            if rec_len >= 0 and offset + rec_len <= len(data):
                 records[rec_id] = data[offset:offset+rec_len]
                 offset += rec_len
             else:
@@ -1435,8 +1908,8 @@ def write_rms_account(username, password="", server_num=0):
     - vjacc.rs: tài khoản (username lowercase trim)
     - vjpass.rs: mật khẩu (password)
     - vjcheck.rs: ghi nhớ tài khoản (1)
-    - vjsvselect.rs: máy chủ đã chọn (server_num - 1)
-    Ghi đồng bộ vào tất cả các thư mục suite RMS để đảm bảo emulator luôn nhận diện 100%.
+    - vjsvselect.rs: máy chủ đã chọn (server_num - 1, trong đoạn 0..12)
+    Ghi đồng bộ nguyên tử vào tất cả các thư mục suite RMS để đảm bảo emulator luôn nhận diện 100%.
     """
     clean_user = username.strip().lower()
     clean_pass = password.strip()
@@ -1446,27 +1919,19 @@ def write_rms_account(username, password="", server_num=0):
     bytes_check = make_rs_bytes("vjcheck", {1: 1})
     bytes_sv = None
     if server_num and int(server_num) > 0:
-        sv_idx = max(0, min(13, int(server_num) - 1))
+        sv_idx = max(0, min(12, int(server_num) - 1))
         bytes_sv = make_rs_bytes("vjsvselect", {1: sv_idx})
 
     suite_dirs = get_all_suite_dirs()
     for sdir in suite_dirs:
         try:
             os.makedirs(sdir, exist_ok=True)
-            # 1. Ghi vjacc.rs
-            with open(os.path.join(sdir, "vjacc.rs"), "wb") as f:
-                f.write(bytes_acc)
-            # 2. Ghi vjpass.rs (nếu có pass)
+            _atomic_write_bytes(os.path.join(sdir, "vjacc.rs"), bytes_acc, prefix="vjacc-")
             if bytes_pass:
-                with open(os.path.join(sdir, "vjpass.rs"), "wb") as f:
-                    f.write(bytes_pass)
-            # 3. Ghi vjcheck.rs (luôn là 1)
-            with open(os.path.join(sdir, "vjcheck.rs"), "wb") as f:
-                f.write(bytes_check)
-            # 4. Ghi vjsvselect.rs (nếu có chọn server)
+                _atomic_write_bytes(os.path.join(sdir, "vjpass.rs"), bytes_pass, prefix="vjpass-")
+            _atomic_write_bytes(os.path.join(sdir, "vjcheck.rs"), bytes_check, prefix="vjcheck-")
             if bytes_sv:
-                with open(os.path.join(sdir, "vjsvselect.rs"), "wb") as f:
-                    f.write(bytes_sv)
+                _atomic_write_bytes(os.path.join(sdir, "vjsvselect.rs"), bytes_sv, prefix="vjsv-")
             print(f"[RMS] Đã ghi cấu hình thành công tại: {sdir}")
         except Exception as e:
             print(f"[RMS] Lỗi ghi cấu hình tại {sdir}: {e}")
@@ -1501,7 +1966,21 @@ def read_rms_saved_info():
         print(f"[RMS] Lỗi đọc thông tin đã lưu: {e}")
         return {"username": "", "server": 7, "has_saved": False}
 
-def auto_enter_game_worker():
+_auto_enter_lock = threading.Lock()
+_auto_enter_cancel_event = None
+
+def _spawn_auto_enter_worker():
+    global _auto_enter_cancel_event
+    with _auto_enter_lock:
+        if _auto_enter_cancel_event is not None:
+            _auto_enter_cancel_event.set()
+        cancel_ev = threading.Event()
+        _auto_enter_cancel_event = cancel_ev
+    t = threading.Thread(target=auto_enter_game_worker, args=(cancel_ev,), daemon=True)
+    t.start()
+    return t
+
+def auto_enter_game_worker(cancel_event=None):
     """
     Background worker:
     Sau khi nạp RMS và khởi động lại game:
@@ -1509,11 +1988,17 @@ def auto_enter_game_worker():
     tự động click nút 1 'Chơi TK' để vào game ngay lập tức!
     """
     print("[AUTO_LOGIN] Bắt đầu theo dõi màn hình để tự động vào game...")
-    time.sleep(1.2)
+    if cancel_event is not None:
+        if cancel_event.wait(1.2):
+            return
+    else:
+        time.sleep(1.2)
     start_t = time.time()
     entered = False
 
     while time.time() - start_t < 16:
+        if cancel_event is not None and cancel_event.is_set():
+            return
         try:
             dismiss_error_popup_if_any()
             layout = get_menu_layout()
@@ -1534,7 +2019,11 @@ def auto_enter_game_worker():
                 break
         except Exception as e:
             print(f"[AUTO_LOGIN] Lỗi theo dõi: {e}")
-        time.sleep(0.3)
+        if cancel_event is not None:
+            if cancel_event.wait(0.3):
+                return
+        else:
+            time.sleep(0.3)
 
     if not entered:
         print("[AUTO_LOGIN] Đã hết thời gian chờ menu (16s).")
@@ -1569,8 +2058,6 @@ def handle_open_account_dialog():
 def login_via_bridge(username="", password="", server_num=0):
     """Đăng nhập / đổi tài khoản hoặc đổi máy chủ trực tiếp trong JVM không cần khởi động lại Emulator."""
     try:
-        import urllib.parse
-        import urllib.request
         query = (
             f"user={urllib.parse.quote(str(username or ''))}"
             f"&pass={urllib.parse.quote(str(password or ''))}"
@@ -1581,7 +2068,7 @@ def login_via_bridge(username="", password="", server_num=0):
         with urllib.request.urlopen(req, timeout=2.5) as resp:
             if resp.status == 200:
                 res = json.loads(resp.read().decode("utf-8"))
-                return res.get("status") == "ok"
+                return isinstance(res, dict) and res.get("status") == "ok"
     except Exception as e:
         print(f"[DIRECT_LOGIN] Bridge login fallback note: {e}")
     return False
@@ -1591,7 +2078,7 @@ def handle_select_server():
     if not check_pin(request):
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
 
-    data = request.get_json(silent=True) or {}
+    data = get_json_dict()
     try:
         server_num = int(data.get("server", 0))
     except (ValueError, TypeError):
@@ -1603,11 +2090,11 @@ def handle_select_server():
     try:
         # 1. Ghi trực tiếp máy chủ vào tất cả thư mục RMS (vjsvselect.rs)
         sv_idx = server_num - 1
+        sv_bytes = make_rs_bytes("vjsvselect", {1: sv_idx})
         for sdir in get_all_suite_dirs():
             try:
                 sv_path = os.path.join(sdir, "vjsvselect.rs")
-                with open(sv_path, "wb") as f:
-                    f.write(make_rs_bytes("vjsvselect", {1: sv_idx}))
+                _atomic_write_bytes(sv_path, sv_bytes, prefix="vjsv-")
             except Exception:
                 pass
 
@@ -1621,8 +2108,7 @@ def handle_select_server():
 
         # 3. Fallback: Khởi động lại game nếu JVM Bridge chưa sẵn sàng
         restart_emulator()
-        t = threading.Thread(target=auto_enter_game_worker, daemon=True)
-        t.start()
+        _spawn_auto_enter_worker()
 
         return jsonify({"status": "ok", "method": "restart", "message": f"Đã chuyển sang Máy chủ: Vũ trụ {server_num} thành công!"})
     except Exception as e:
@@ -1633,13 +2119,15 @@ def handle_quick_login():
     if not check_pin(request):
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
 
-    data = request.get_json(silent=True) or {}
+    data = get_json_dict()
     username = str(data.get("username", "")).strip()
     password = str(data.get("password", "")).strip()
     try:
         server_num = int(data.get("server", 0))
     except (ValueError, TypeError):
-        server_num = 0
+        return jsonify({"error": "Máy chủ không hợp lệ (chỉ chấp nhận 0 - 13)!"}), 400
+    if server_num < 0 or server_num > 13:
+        return jsonify({"error": "Máy chủ không hợp lệ (chỉ chấp nhận 0 - 13)!"}), 400
     auto_enter = bool(data.get("auto_enter", True))
     force_restart = bool(data.get("force_restart", False))
 
@@ -1662,8 +2150,7 @@ def handle_quick_login():
         restart_emulator()
 
         if auto_enter:
-            t = threading.Thread(target=auto_enter_game_worker, daemon=True)
-            t.start()
+            _spawn_auto_enter_worker()
 
         return jsonify({
             "status": "ok",
@@ -1676,14 +2163,6 @@ def handle_quick_login():
 # =========================================================================
 # HẠNG MỤC 4: Hệ Thống Thông Báo Telegram / Discord (Báo Đồ SKH, Đầy Rương)
 # =========================================================================
-
-def _resolve_persistent_path(env_key, filename):
-    custom = os.environ.get(env_key)
-    if custom:
-        return custom
-    if os.path.exists("/data") and os.access("/data", os.W_OK):
-        return os.path.join("/data", filename)
-    return os.path.abspath(filename)
 
 NOTIFY_CONFIG_FILE = _resolve_persistent_path("NOTIFY_CONFIG_FILE", "notify_config.json")
 PROFILES_CONFIG_FILE = _resolve_persistent_path("PROFILES_CONFIG_FILE", "account_profiles.json")
@@ -1700,6 +2179,31 @@ DEFAULT_NOTIFY_CONFIG = {
     "notify_disconnect": False
 }
 
+ALLOWED_DISCORD_WEBHOOK_HOSTS = {
+    "discord.com",
+    "discordapp.com",
+    "ptb.discord.com",
+    "canary.discord.com",
+}
+
+def _validate_discord_webhook_url(webhook_url):
+    url = str(webhook_url or "").strip()
+    if not url:
+        return True, ""
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or host not in ALLOWED_DISCORD_WEBHOOK_HOSTS or not parsed.path.startswith("/api/webhooks/"):
+        return False, "Discord Webhook URL không hợp lệ (chỉ chấp nhận https://discord.com/api/webhooks/...)."
+    return True, ""
+
+def _validate_telegram_token(bot_token):
+    token = str(bot_token or "").strip()
+    if not token:
+        return True, ""
+    if any(ch in token for ch in ("/", "?", "#", "\\", "\r", "\n")) or any(ch.isspace() for ch in token):
+        return False, "Telegram Bot Token chứa ký tự không hợp lệ."
+    return True, ""
+
 def load_notify_config():
     cfg = dict(DEFAULT_NOTIFY_CONFIG)
     if os.path.exists(NOTIFY_CONFIG_FILE):
@@ -1713,22 +2217,21 @@ def load_notify_config():
     return cfg
 
 def save_notify_config(cfg):
-    try:
-        os.makedirs(os.path.dirname(NOTIFY_CONFIG_FILE) or ".", exist_ok=True)
-        with open(NOTIFY_CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
-        return True
-    except Exception as e:
-        print(f"[NOTIFY] Lỗi lưu cấu hình: {e}")
-        return False
+    with notify_config_lock:
+        try:
+            return _atomic_write_json(NOTIFY_CONFIG_FILE, cfg, mode=0o600, prefix="notify-", ensure_ascii=False)
+        except Exception as e:
+            print(f"[NOTIFY] Lỗi lưu cấu hình: {e}")
+            return False
 
 def _send_telegram(bot_token, chat_id, text, image_bytes=None):
-    import urllib.request
-    import urllib.parse
     token = str(bot_token or "").strip()
     cid = str(chat_id or "").strip()
     if not token or not cid:
         return False, "Chưa cấu hình Telegram Bot Token hoặc Chat ID"
+    ok_tok, err_tok = _validate_telegram_token(token)
+    if not ok_tok:
+        return False, err_tok
 
     try:
         if image_bytes:
@@ -1765,10 +2268,12 @@ def _send_telegram(bot_token, chat_id, text, image_bytes=None):
         return False, f"Lỗi Telegram: {e}"
 
 def _send_discord(webhook_url, text, image_bytes=None):
-    import urllib.request
     url = str(webhook_url or "").strip()
     if not url:
         return False, "Chưa cấu hình Discord Webhook URL"
+    ok_url, err_url = _validate_discord_webhook_url(url)
+    if not ok_url:
+        return False, err_url
 
     try:
         if image_bytes:
@@ -1877,8 +2382,8 @@ def notification_monitor_worker():
                 continue
 
             offline_since = None
-            raw_skh = st.get("skh_items") or []
-            current_skh = set(str(x) for x in raw_skh)
+            raw_skh = [str(x) for x in (st.get("skh_items") or [])]
+            current_skh = set(raw_skh)
 
             # Nếu mới vào game hoặc vừa đổi nhân vật, đồng bộ danh sách SKH sẵn có để không báo nhầm đồ cũ
             if char_name != last_char:
@@ -1927,8 +2432,9 @@ def notification_monitor_worker():
         except Exception as e:
             print(f"[NOTIFY_MONITOR] Error: {e}")
 
-_notify_thread = threading.Thread(target=notification_monitor_worker, daemon=True)
-_notify_thread.start()
+if _should_start_background_workers():
+    _notify_thread = threading.Thread(target=notification_monitor_worker, daemon=True)
+    _notify_thread.start()
 
 @app.route('/api/notify_config', methods=['GET', 'POST'])
 def handle_notify_config():
@@ -1937,18 +2443,31 @@ def handle_notify_config():
 
     if request.method == 'GET':
         cfg = load_notify_config()
+        with notify_lock:
+            history_snapshot = list(NOTIFY_HISTORY[:10])
         return jsonify({
             "status": "ok",
             "config": cfg,
-            "history": NOTIFY_HISTORY[:10]
+            "history": history_snapshot
         })
 
-    data = request.get_json(silent=True) or {}
+    data = get_json_dict()
+    tg_token = str(data.get("telegram_bot_token", "")).strip()
+    tg_chat = str(data.get("telegram_chat_id", "")).strip()
+    discord_url = str(data.get("discord_webhook_url", "")).strip()
+
+    ok_tok, err_tok = _validate_telegram_token(tg_token)
+    if not ok_tok:
+        return jsonify({"error": err_tok}), 400
+    ok_url, err_url = _validate_discord_webhook_url(discord_url)
+    if not ok_url:
+        return jsonify({"error": err_url}), 400
+
     cfg = load_notify_config()
     cfg["enabled"] = bool(data.get("enabled", True))
-    cfg["telegram_bot_token"] = str(data.get("telegram_bot_token", "")).strip()
-    cfg["telegram_chat_id"] = str(data.get("telegram_chat_id", "")).strip()
-    cfg["discord_webhook_url"] = str(data.get("discord_webhook_url", "")).strip()
+    cfg["telegram_bot_token"] = tg_token
+    cfg["telegram_chat_id"] = tg_chat
+    cfg["discord_webhook_url"] = discord_url
     cfg["notify_skh"] = bool(data.get("notify_skh", True))
     cfg["notify_full_bag"] = bool(data.get("notify_full_bag", True))
     cfg["notify_disconnect"] = bool(data.get("notify_disconnect", False))
@@ -1962,22 +2481,33 @@ def handle_notify_test():
     if not check_pin(request):
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
 
-    data = request.get_json(silent=True) or {}
+    data = get_json_dict()
     cfg = load_notify_config()
     for k in ("telegram_bot_token", "telegram_chat_id", "discord_webhook_url"):
         if k in data:
             cfg[k] = str(data.get(k) or "").strip()
+
+    ok_tok, err_tok = _validate_telegram_token(cfg.get("telegram_bot_token"))
+    if not ok_tok:
+        return jsonify({"error": err_tok}), 400
+    ok_url, err_url = _validate_discord_webhook_url(cfg.get("discord_webhook_url"))
+    if not ok_url:
+        return jsonify({"error": err_url}), 400
 
     if not ((cfg.get("telegram_bot_token") and cfg.get("telegram_chat_id")) or cfg.get("discord_webhook_url")):
         return jsonify({"error": "Vui lòng nhập Telegram (Bot Token + Chat ID) hoặc Discord Webhook URL trước khi gửi thử!"}), 400
 
     st = get_bridge_status() or {}
     if st.get("in_game"):
+        try:
+            power_val = int(st.get("power") or 0)
+        except (ValueError, TypeError):
+            power_val = 0
         msg = (
             f"✅ [NRO CLOUD 24/7 - TEST THÔNG BÁO]\n"
             f"👤 Nhân vật: {st.get('char_name')}\n"
             f"📍 Vị trí: {st.get('map_name', 'Unknown')} [{st.get('map_id')}] - Khu {st.get('zone')}\n"
-            f"💪 Sức mạnh: {st.get('power', 0):,}\n"
+            f"💪 Sức mạnh: {power_val:,}\n"
             f"✨ Số món SKH hiện có: {st.get('skh_count', 0)} món"
         )
     else:
@@ -1995,26 +2525,44 @@ def handle_notify_test():
 # =========================================================================
 
 def _get_profile_cipher_key():
-    key_dir = os.path.dirname(PROFILES_CONFIG_FILE) or "."
-    key_path = os.path.join(key_dir, ".profile_key")
-    if os.path.exists(key_path):
+    with profiles_lock:
+        key_dir = os.path.dirname(PROFILES_CONFIG_FILE) or "."
+        key_path = os.path.join(key_dir, ".profile_key")
+        if os.path.exists(key_path):
+            try:
+                with open(key_path, "rb") as f:
+                    raw = f.read()
+                    if len(raw) >= 32:
+                        return raw[:32]
+            except Exception:
+                pass
+        new_key = secrets.token_bytes(32)
         try:
-            with open(key_path, "rb") as f:
-                raw = f.read()
-                if len(raw) >= 32:
-                    return raw[:32]
+            os.makedirs(key_dir, exist_ok=True)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            if hasattr(os, "O_BINARY"):
+                flags |= os.O_BINARY
+            try:
+                fd = os.open(key_path, flags, 0o600)
+                try:
+                    os.write(fd, new_key)
+                finally:
+                    os.close(fd)
+                if os.name == "posix":
+                    try:
+                        os.chmod(key_path, 0o600)
+                    except OSError:
+                        pass
+                return new_key
+            except FileExistsError:
+                with open(key_path, "rb") as f:
+                    raw = f.read()
+                    if len(raw) >= 32:
+                        return raw[:32]
+                _atomic_write_bytes(key_path, new_key, mode=0o600, prefix="pkey-")
+                return new_key
         except Exception:
-            pass
-    new_key = secrets.token_bytes(32)
-    try:
-        os.makedirs(key_dir, exist_ok=True)
-        with open(key_path, "wb") as f:
-            f.write(new_key)
-        if os.name == "posix":
-            os.chmod(key_path, 0o600)
-    except Exception:
-        return hashlib.sha256(str(app.secret_key).encode("utf-8")).digest()
-    return new_key
+            return hashlib.sha256(str(app.secret_key).encode("utf-8")).digest()
 
 def _encrypt_profile_secret(plaintext):
     if not plaintext:
@@ -2022,7 +2570,6 @@ def _encrypt_profile_secret(plaintext):
     s = str(plaintext)
     if s.startswith("enc:v1:"):
         return s
-    import base64
     key = _get_profile_cipher_key()
     pt_bytes = s.encode("utf-8")
     nonce = secrets.token_bytes(16)
@@ -2038,7 +2585,6 @@ def _decrypt_profile_secret(stored):
     s = str(stored)
     if not s.startswith("enc:v1:"):
         return s
-    import base64
     try:
         raw = base64.urlsafe_b64decode(s[7:].encode("ascii"))
         if len(raw) < 32:
@@ -2072,10 +2618,7 @@ def load_account_profiles():
     return []
 
 def save_account_profiles(profiles):
-    temp_path = None
     try:
-        prof_dir = os.path.dirname(PROFILES_CONFIG_FILE) or "."
-        os.makedirs(prof_dir, exist_ok=True)
         disk_profiles = []
         for item in profiles:
             if isinstance(item, dict):
@@ -2083,42 +2626,30 @@ def save_account_profiles(profiles):
                 if p.get("password"):
                     p["password"] = _encrypt_profile_secret(p["password"])
                 disk_profiles.append(p)
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=prof_dir, prefix="profiles-", suffix=".tmp", delete=False) as f:
-            temp_path = f.name
-            json.dump(disk_profiles, f, ensure_ascii=False, indent=2)
-        os.replace(temp_path, PROFILES_CONFIG_FILE)
-        temp_path = None
-        if os.name == "posix":
-            try:
-                os.chmod(PROFILES_CONFIG_FILE, 0o600)
-            except Exception:
-                pass
-        return True
+        return _atomic_write_json(PROFILES_CONFIG_FILE, disk_profiles, mode=0o600, prefix="profiles-", ensure_ascii=False)
     except Exception as e:
         print(f"[PROFILES] Lỗi lưu danh sách tài khoản: {e}")
         return False
-    finally:
-        if temp_path and os.path.exists(temp_path):
-            os.unlink(temp_path)
 
 @app.route('/api/profiles', methods=['GET', 'POST', 'DELETE'])
 def handle_profiles():
     if not check_pin(request):
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
 
-    profiles = load_account_profiles()
-
     if request.method == 'GET':
-        return jsonify({"status": "ok", "profiles": profiles})
+        return jsonify({"status": "ok", "profiles": load_account_profiles()})
 
-    data = request.get_json(silent=True) or {}
+    data = get_json_dict()
 
     if request.method == 'DELETE':
         prof_id = str(data.get("id") or request.args.get("id") or "").strip()
         if not prof_id:
             return jsonify({"error": "Thiếu ID tài khoản cần xóa"}), 400
-        new_profiles = [p for p in profiles if str(p.get("id")) != prof_id]
-        save_account_profiles(new_profiles)
+        with profiles_lock:
+            profiles = load_account_profiles()
+            new_profiles = [p for p in profiles if str(p.get("id")) != prof_id]
+            if not save_account_profiles(new_profiles):
+                return jsonify({"error": "Không thể lưu danh sách tài khoản sau khi xóa"}), 500
         return jsonify({"status": "ok", "message": "Đã xóa tài khoản khỏi danh sách lưu!", "profiles": new_profiles})
 
     # POST: Thêm mới hoặc cập nhật tài khoản
@@ -2127,6 +2658,8 @@ def handle_profiles():
     try:
         server = int(data.get("server", 7))
     except (ValueError, TypeError):
+        server = 7
+    if server < 0 or server > 13:
         server = 7
     label = str(data.get("label", "")).strip()
     fav_map = str(data.get("map", "0")).strip()
@@ -2139,33 +2672,43 @@ def handle_profiles():
     if not label:
         label = f"{username} (VT{server if server > 0 else 7})"
 
-    updated = False
-    for p in profiles:
-        if (prof_id and str(p.get("id")) == prof_id) or (
-            p.get("username", "").lower() == username.lower() and int(p.get("server", 0)) == server
-        ):
-            p["label"] = label
-            p["username"] = username
-            if password:
-                p["password"] = password
-            p["server"] = server
-            p["map"] = fav_map
-            p["zone"] = fav_zone
-            updated = True
-            break
+    def _safe_server_int(val):
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return 0
 
-    if not updated:
-        profiles.append({
-            "id": secrets.token_hex(6),
-            "label": label,
-            "username": username,
-            "password": password,
-            "server": server,
-            "map": fav_map,
-            "zone": fav_zone
-        })
+    with profiles_lock:
+        profiles = load_account_profiles()
+        updated = False
+        for p in profiles:
+            if (prof_id and str(p.get("id")) == prof_id) or (
+                str(p.get("username", "")).lower() == username.lower() and _safe_server_int(p.get("server", 0)) == server
+            ):
+                p["label"] = label
+                p["username"] = username
+                if password:
+                    p["password"] = password
+                p["server"] = server
+                p["map"] = fav_map
+                p["zone"] = fav_zone
+                updated = True
+                break
 
-    if save_account_profiles(profiles):
+        if not updated:
+            profiles.append({
+                "id": secrets.token_hex(6),
+                "label": label,
+                "username": username,
+                "password": password,
+                "server": server,
+                "map": fav_map,
+                "zone": fav_zone
+            })
+
+        saved_ok = save_account_profiles(profiles)
+
+    if saved_ok:
         return jsonify({
             "status": "ok",
             "message": f"Đã lưu cấu hình tài khoản [{label}]!",
@@ -2179,10 +2722,11 @@ def restart_game():
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
 
     try:
-        data = request.get_json(silent=True) or {}
+        data = get_json_dict()
         clean_cache = bool(data.get("clean_cache", False))
         restart_emulator(clean_cache=clean_cache)
-        return jsonify({"status": "ok", "message": "Đã dọn cache và khởi động lại game thành công!"})
+        msg = "Đã dọn cache và khởi động lại game thành công!" if clean_cache else "Đã khởi động lại game thành công!"
+        return jsonify({"status": "ok", "message": msg})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -2192,12 +2736,18 @@ def get_logs():
         return jsonify({"error": "Unauthorized. Invalid PIN."}), 403
 
     log_lines = []
-    try:
-        p = subprocess.run(["supervisorctl", "status"], capture_output=True, text=True, timeout=2)
-        if p.stdout:
-            log_lines.append("=== SUPERVISOR STATUS ===\n" + p.stdout.strip() + "\n\n")
-    except Exception:
-        pass
+    if os.name == "posix":
+        for sup_cmd in (
+            ["supervisorctl", "-c", "/etc/supervisor/conf.d/supervisord.conf", "status"],
+            ["supervisorctl", "status"],
+        ):
+            try:
+                p = subprocess.run(sup_cmd, capture_output=True, text=True, timeout=2)
+                if p.stdout and p.stdout.strip():
+                    log_lines.append("=== SUPERVISOR STATUS ===\n" + p.stdout.strip() + "\n\n")
+                    break
+            except Exception:
+                pass
 
     log_candidates = ['/var/log/emulator.log', '/var/log/emulator_err.log', '/var/log/supervisord.log']
     extra_log = os.environ.get("EMULATOR_LOG_FILE", "").strip()
@@ -2208,10 +2758,10 @@ def get_logs():
         if os.path.exists(log_path):
             try:
                 with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    lines = f.readlines()
-                    if lines:
+                    tail = list(collections.deque(f, maxlen=35))
+                    if tail:
                         log_lines.append(f"=== {log_path} ===\n")
-                        log_lines.extend(lines[-35:])
+                        log_lines.extend(tail)
                         log_lines.append("\n")
             except Exception:
                 pass
@@ -2237,24 +2787,35 @@ def upload_rom():
     if not f.filename or not f.filename.lower().endswith('.jar'):
         return jsonify({"error": "Chỉ chấp nhận file định dạng .jar!"}), 400
 
-    rom_dir = os.path.dirname(ROM_FILE)
-    os.makedirs(rom_dir, exist_ok=True)
+    rom_dir = os.path.dirname(ROM_FILE) or "."
     temp_path = None
     try:
+        os.makedirs(rom_dir, exist_ok=True)
         with tempfile.NamedTemporaryFile(prefix="NRO-", suffix=".jar", dir=rom_dir, delete=False) as temp_file:
             temp_path = temp_file.name
             f.save(temp_file)
         if not zipfile.is_zipfile(temp_path):
-            os.unlink(temp_path)
             return jsonify({"error": "File tải lên không phải JAR/ZIP hợp lệ."}), 400
+        if os.name == "posix":
+            try:
+                os.chmod(temp_path, 0o644)
+            except OSError:
+                pass
         os.replace(temp_path, ROM_FILE)
         temp_path = None
-        restart_emulator()
-    except subprocess.SubprocessError:
-        return jsonify({"error": "Đã lưu JAR nhưng không thể khởi động lại emulator."}), 500
+    except OSError as e:
+        return jsonify({"error": f"Không thể lưu file JAR: {e}"}), 500
     finally:
         if temp_path and os.path.exists(temp_path):
-            os.unlink(temp_path)
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+    try:
+        restart_emulator()
+    except (subprocess.SubprocessError, RuntimeError, OSError):
+        return jsonify({"error": "Đã lưu JAR nhưng không thể khởi động lại emulator."}), 500
 
     return jsonify({"status": "ok", "message": "Đã nạp file .jar thành công và đang khởi động lại game!"})
 

@@ -45,7 +45,10 @@ def app_env(tmp_path, monkeypatch):
     srv.FAILED_LOGIN_ATTEMPTS.clear()
     srv.NOTIFY_HISTORY.clear()
     srv.invalidate_screenshot_cache()
+    srv._nro_socket_cache["ts"] = 0.0
+    srv._nro_socket_cache["online"] = None
     srv.app.config["TESTING"] = True
+    monkeypatch.setitem(srv.app.config, "SESSION_COOKIE_SECURE", False)
 
     return srv, tmp_path
 
@@ -466,9 +469,14 @@ def test_bridge_call_exponential_backoff(app_env):
 
 
 def test_rms_binary_format_and_corrupt_cache_cleanup(app_env):
-    srv, _ = app_env
+    srv, tmp_path = app_env
     raw = srv.make_rs_bytes("vjacc", {1: "ngọcrồng@vn", 2: 7})
-    store_name, recs = srv.read_rs_records_bytes if hasattr(srv, "read_rs_records_bytes") else (None, None)
+    sample_rs = tmp_path / "sample.rs"
+    sample_rs.write_bytes(raw)
+    store_name, recs = srv.read_rs_records(str(sample_rs))
+    assert store_name == "vjacc"
+    assert recs[1].decode("utf-8") == "ngọcrồng@vn"
+    assert recs[2] == bytes([7])
 
     srv.write_rms_account("Piccolo@Namek.vn", "Makankosappo", server_num=9)
     info = srv.read_rms_saved_info()
@@ -613,3 +621,346 @@ def test_live_http_server_end_to_end(app_env, monkeypatch):
             assert payload["pong"] is True
     finally:
         http_server.shutdown()
+
+
+# =====================================================================
+# 6. HARDENING, CONCURRENCY, BRIDGE ERROR & REGRESSION TESTS
+# =====================================================================
+
+def test_empty_session_secret_fallback_and_session_invalidation_on_password_change(app_env, monkeypatch):
+    import importlib
+
+    srv, _ = app_env
+    monkeypatch.setenv("ADMIN_PASSWORD", "InitialStrongPass123!")
+    monkeypatch.setenv("SESSION_SECRET", "")
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "1")
+    # Verify empty SESSION_SECRET falls back to a random non-empty secret key on module load
+    monkeypatch.setenv("DISABLE_BACKGROUND_WORKERS", "1")
+    reloaded = importlib.reload(srv)
+    assert isinstance(reloaded.app.secret_key, str) and len(reloaded.app.secret_key) >= 32
+    assert reloaded.app.config["SESSION_COOKIE_SECURE"] is True
+
+    # Restore isolated test paths on reloaded module
+    monkeypatch.setattr(reloaded, "SECURITY_CONFIG_FILE", srv.SECURITY_CONFIG_FILE)
+    monkeypatch.setattr(reloaded, "NOTIFY_CONFIG_FILE", srv.NOTIFY_CONFIG_FILE)
+    monkeypatch.setattr(reloaded, "PROFILES_CONFIG_FILE", srv.PROFILES_CONFIG_FILE)
+    monkeypatch.setattr(reloaded, "ROM_FILE", srv.ROM_FILE)
+    reloaded.app.config["TESTING"] = True
+
+    # Verify Set-Cookie emits Secure, HttpOnly, SameSite=Lax behind HTTPS proxy
+    proxy_client = reloaded.app.test_client()
+    r_login_sec = proxy_client.post(
+        "/api/auth/login",
+        json={"username": "admin", "password": "InitialStrongPass123!"},
+        headers={"X-Forwarded-Proto": "https", "X-Forwarded-Host": "my-nro.onrender.com"},
+    )
+    assert r_login_sec.status_code == 200
+    set_cookie = r_login_sec.headers.get("Set-Cookie", "")
+    assert "Secure" in set_cookie
+    assert "HttpOnly" in set_cookie
+    assert "SameSite=Lax" in set_cookie
+
+    # Disable SESSION_COOKIE_SECURE for plain HTTP test_client cookie jar round-trips below
+    reloaded.app.config["SESSION_COOKIE_SECURE"] = False
+    client_a = reloaded.app.test_client()
+    client_b = reloaded.app.test_client()
+
+    assert client_a.post("/api/auth/login", json={"username": "admin", "password": "InitialStrongPass123!"}).status_code == 200
+    assert client_b.post("/api/auth/login", json={"username": "admin", "password": "InitialStrongPass123!"}).status_code == 200
+
+    csrf_a = client_a.get("/api/auth/status").get_json()["csrf_token"]
+    assert len(csrf_a) >= 32
+
+    # client_a changes password -> client_a stays valid with same CSRF token, client_b is kicked out immediately
+    r_chg = client_a.post(
+        "/api/auth/change_credentials",
+        headers={"X-CSRF-Token": csrf_a},
+        json={
+            "old_user": "admin",
+            "old_pass": "InitialStrongPass123!",
+            "new_user": "admin",
+            "new_pass": "RotatedStrongPass456!"
+        },
+    )
+    assert r_chg.status_code == 200
+    assert client_a.get("/api/ping").status_code == 200
+    # Current tab's existing CSRF token still works right after password change
+    with patch.object(reloaded, "restart_emulator", return_value=True):
+        assert client_a.post("/api/restart", headers={"X-CSRF-Token": csrf_a}, json={}).status_code == 200
+
+    # Stale client_b session cookie is invalidated
+    assert client_b.get("/api/auth/status").get_json()["authenticated"] is False
+    assert client_b.get("/api/ping").status_code == 403
+
+
+def test_csrf_hardening_tokens_sec_fetch_site_referer_and_x_pin_bypass(app_env, monkeypatch):
+    srv, _ = app_env
+    monkeypatch.setenv("ADMIN_PASSWORD", "MySuperSecretPass123!")
+    client = srv.app.test_client()
+    assert client.post("/api/auth/login", json={"username": "admin", "password": "MySuperSecretPass123!"}).status_code == 200
+
+    csrf_tok = client.get("/api/auth/status").get_json()["csrf_token"]
+    assert isinstance(csrf_tok, str) and len(csrf_tok) >= 32
+
+    # 1. Malformed Referer with empty netloc -> 403
+    assert client.post("/api/restart", headers={"Referer": "about:blank"}, json={}).status_code == 403
+    assert client.post("/api/restart", headers={"Referer": "not-a-valid-url"}, json={}).status_code == 403
+
+    # 2. Cross-site Sec-Fetch-Site even without Origin/Referer -> 403
+    assert client.post("/api/restart", headers={"Sec-Fetch-Site": "cross-site"}, json={}).status_code == 403
+
+    # 3. X-PIN header cannot bypass CSRF when authenticated via session cookie
+    assert client.post(
+        "/api/restart",
+        headers={"Origin": "https://evil.example", "X-PIN": "bogus"},
+        json={},
+    ).status_code == 403
+
+    # 4. Invalid / empty X-CSRF-Token on authenticated session -> 403
+    r_bad_tok = client.post("/api/restart", headers={"X-CSRF-Token": "wrong-token"}, json={})
+    assert r_bad_tok.status_code == 403
+    assert "CSRF" in r_bad_tok.get_json()["error"]
+    assert client.post("/api/restart", headers={"X-CSRF-Token": ""}, json={}).status_code == 403
+
+    # 5. Valid X-CSRF-Token + Sec-Fetch-Site: same-origin + Render :443 default port normalization -> 200
+    with patch.object(srv, "restart_emulator", return_value=True):
+        r_ok = client.post(
+            "/api/restart",
+            headers={
+                "Origin": "https://my-nro.onrender.com",
+                "X-Forwarded-Host": "my-nro.onrender.com:443",
+                "Sec-Fetch-Site": "same-origin",
+                "X-CSRF-Token": csrf_tok,
+            },
+            json={},
+        )
+    assert r_ok.status_code == 200
+
+
+def test_x_pin_rate_limiting_and_non_dict_json_payloads(app_env, monkeypatch):
+    srv, _ = app_env
+    monkeypatch.setenv("ADMIN_PASSWORD", "MySuperSecretPass123!")
+    client = srv.app.test_client()
+
+    # Repeated bad X-PIN header attempts trigger IP rate limit
+    for i in range(srv.MAX_FAILED_ATTEMPTS):
+        assert client.get("/api/ping", headers={"X-PIN": f"wrong-{i}"}).status_code == 403
+    assert srv.is_ip_rate_limited("127.0.0.1") is True
+    # Even the valid X-PIN is blocked until rate limit resets
+    assert client.get("/api/ping", headers={"X-PIN": "MySuperSecretPass123!"}).status_code == 403
+    srv.reset_failed_attempts("127.0.0.1")
+    assert client.get("/api/ping", headers={"X-PIN": "MySuperSecretPass123!"}).status_code == 200
+
+    # Non-dict JSON payloads never cause HTTP 500
+    client.post("/api/auth/login", json={"username": "admin", "password": "MySuperSecretPass123!"})
+    for bad_body in ["[]", "123", '"hello"']:
+        for ep in ["/api/input", "/api/mod_action", "/api/xmap", "/api/quick_login", "/api/profiles", "/api/notify_test"]:
+            resp = client.post(ep, data=bad_body, content_type="application/json")
+            assert resp.status_code == 400, f"POST {ep} with {bad_body} returned {resp.status_code}"
+
+
+def test_spacebar_and_input_validation_fixes(app_env, monkeypatch):
+    srv, _ = app_env
+    monkeypatch.setenv("ADMIN_PASSWORD", "MySuperSecretPass123!")
+    client = srv.app.test_client()
+    client.post("/api/auth/login", json={"username": "admin", "password": "MySuperSecretPass123!"})
+
+    with patch.object(srv, "bridge_call", return_value={"status": "ok"}) as mock_bc:
+        r_space = client.post("/api/input", json={"action": "key", "value": " "})
+        assert r_space.status_code == 200
+        assert "key=space" in mock_bc.call_args[0][0]
+
+    assert client.post("/api/input", json={"action": "key", "value": "   "}).status_code == 400
+    assert client.post("/api/input", json={"action": "click", "x": "NaN", "y": 10}).status_code == 400
+    assert client.post("/api/input", json={"action": "click", "x": "inf", "y": 10}).status_code == 400
+    assert client.post("/api/xmap", json={"map": "-5"}).status_code == 400
+    assert client.post("/api/xmap", json={"map": "--5"}).status_code == 400
+    assert client.post("/api/xmap", json={"map": "1000"}).status_code == 400
+    assert client.post("/api/auto_farm", json={"mode": "invalid_mode"}).status_code == 400
+    assert client.post("/api/quick_login", json={"username": "goku", "server": 14}).status_code == 400
+    assert client.post("/api/quick_login", json={"username": "goku", "server": -1}).status_code == 400
+    assert client.post("/api/mod_action", json={"cmd": "k999"}).status_code == 400
+
+    # write_rms_account clamps server index safely to 0..12 (Server 1..13)
+    srv.write_rms_account("broly@nro.vn", "pw", server_num=14)
+    assert srv.read_rms_saved_info()["server"] == 13
+
+
+def test_bridge_call_http_error_json_extraction_and_malformed_json(app_env, monkeypatch):
+    srv, _ = app_env
+    monkeypatch.setenv("ADMIN_PASSWORD", "MySuperSecretPass123!")
+    client = srv.app.test_client()
+    client.post("/api/auth/login", json={"username": "admin", "password": "MySuperSecretPass123!"})
+
+    err_payload = io.BytesIO(b'{"status":"error","error":"Unsupported mod action: bogus"}')
+    http_err = urllib.error.HTTPError(
+        url="http://127.0.0.1:28888/api/game/mod_action?cmd=cd",
+        code=400,
+        msg="OK",
+        hdrs=None,
+        fp=err_payload,
+    )
+    sleeps = []
+    with patch("urllib.request.urlopen", side_effect=http_err) as mock_open, \
+         patch("time.sleep", side_effect=lambda s: sleeps.append(s)):
+        resp = client.post("/api/mod_action", json={"cmd": "cd"})
+    assert resp.status_code == 400
+    assert "Unsupported mod action: bogus" in resp.get_json()["error"]
+    assert mock_open.call_count == 1
+    assert sleeps == []
+
+    # Malformed non-JSON 200 response raises BridgeError cleanly; get_bridge_status returns None
+    bad_resp = MagicMock()
+    bad_resp.status = 200
+    bad_resp.read.return_value = b"{not valid json"
+    bad_resp.__enter__.return_value = bad_resp
+    with patch("urllib.request.urlopen", return_value=bad_resp):
+        with pytest.raises(srv.BridgeError):
+            srv.bridge_call("http://127.0.0.1:28888/api/game/status", retries=1)
+        assert srv.get_bridge_status() is None
+
+
+def test_upload_rom_restart_runtime_error_returns_json_500(app_env, monkeypatch):
+    srv, tmp_path = app_env
+    monkeypatch.setenv("ADMIN_PASSWORD", "MySuperSecretPass123!")
+    client = srv.app.test_client()
+    client.post("/api/auth/login", json={"username": "admin", "password": "MySuperSecretPass123!"})
+
+    jar_buf = io.BytesIO()
+    with zipfile.ZipFile(jar_buf, "w") as zf:
+        zf.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n")
+    jar_buf.seek(0)
+
+    with patch.object(srv, "restart_emulator", side_effect=RuntimeError("no supervisor")):
+        resp = client.post("/api/upload_rom", data={"file": (jar_buf, "NRO.jar")}, content_type="multipart/form-data")
+    assert resp.status_code == 500
+    assert resp.is_json
+    assert "khởi động lại emulator" in resp.get_json()["error"]
+    assert zipfile.is_zipfile(tmp_path / "roms" / "NRO.jar")
+
+
+def test_rms_suite_dirs_host_isolation(app_env, monkeypatch):
+    srv, tmp_path = app_env
+    isolated = tmp_path / "isolated_microemu"
+    monkeypatch.setenv("MICROEMULATOR_HOME", str(isolated))
+
+    dirs = srv.get_all_suite_dirs()
+    assert len(dirs) >= 2
+    isolated_norm = os.path.normcase(os.path.abspath(str(isolated)))
+    for d in dirs:
+        d_norm = os.path.normcase(os.path.abspath(d))
+        assert d_norm.startswith(isolated_norm), f"Suite dir escaped MICROEMULATOR_HOME: {d}"
+
+
+def test_check_nro_socket_closes_on_exception_and_cgroup_ram(app_env):
+    srv, _ = app_env
+
+    # Socket is always closed even when connect() raises
+    with patch("socket.socket") as mock_sock_cls:
+        mock_sock = MagicMock()
+        mock_sock.connect.side_effect = TimeoutError("timed out")
+        mock_sock_cls.return_value = mock_sock
+        assert srv.check_nro_socket() is False
+        mock_sock.close.assert_called_once()
+
+    # cgroup v2 container memory parsing (512MB limit, 256MB current, 56MB inactive_file -> 200MB used)
+    fake_files = {
+        "/sys/fs/cgroup/memory.max": str(512 * 1024 * 1024),
+        "/sys/fs/cgroup/memory.current": str(256 * 1024 * 1024),
+        "/sys/fs/cgroup/memory.stat": f"anon 100\ninactive_file {56 * 1024 * 1024}\n",
+    }
+    real_open = open
+    def fake_open(path, *args, **kwargs):
+        if path in fake_files:
+            return io.StringIO(fake_files[path])
+        return real_open(path, *args, **kwargs)
+
+    with patch("builtins.open", side_effect=fake_open):
+        cg = srv._read_cgroup_ram_info(host_total_mb=16384)
+    assert cg == {"used_mb": 200, "total_mb": 512, "percent": 39.1}
+
+
+def test_screenshot_concurrency_no_stampede_and_invalidation_generation_guard(app_env):
+    srv, _ = app_env
+    srv.invalidate_screenshot_cache()
+
+    calls = 0
+    call_lock = threading.Lock()
+    def slow_capture(quality=55, fmt="jpeg"):
+        nonlocal calls
+        with call_lock:
+            calls += 1
+        time.sleep(0.08)
+        return b"\xff\xd8\xff\xe0frame-shared"
+
+    results = []
+    with patch.object(srv, "capture_game_screenshot_bytes", side_effect=slow_capture):
+        threads = [
+            threading.Thread(target=lambda: results.append(srv.get_cached_screenshot(max_age=2.0, fmt="jpeg")))
+            for _ in range(6)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    assert calls == 1
+    assert len(results) == 6
+    assert all(r == b"\xff\xd8\xff\xe0frame-shared" for r in results)
+
+    # Invalidation mid-capture must prevent stale frame from being cached
+    srv.invalidate_screenshot_cache()
+    entered = threading.Event()
+    release = threading.Event()
+    def racing_capture(quality=55, fmt="jpeg"):
+        entered.set()
+        release.wait(timeout=2.0)
+        return b"\xff\xd8\xff\xe0stale-frame"
+
+    with patch.object(srv, "capture_game_screenshot_bytes", side_effect=racing_capture):
+        t = threading.Thread(target=lambda: srv.get_cached_screenshot(max_age=5.0, fmt="jpeg"))
+        t.start()
+        assert entered.wait(timeout=2.0)
+        srv.invalidate_screenshot_cache()
+        release.set()
+        t.join()
+
+    assert "jpeg" not in srv._screenshot_cache
+
+
+def test_notify_ssrf_validation_and_profiles_delete_and_concurrent_key(app_env, monkeypatch):
+    srv, _ = app_env
+    monkeypatch.setenv("ADMIN_PASSWORD", "MySuperSecretPass123!")
+    client = srv.app.test_client()
+    client.post("/api/auth/login", json={"username": "admin", "password": "MySuperSecretPass123!"})
+
+    # Block SSRF / non-Discord webhook URLs and malformed Telegram tokens
+    for bad_url in ["file:///etc/passwd", "http://127.0.0.1:28888/api/game/status", "https://evil.example/api/webhooks/1/2"]:
+        assert client.post("/api/notify_config", json={"discord_webhook_url": bad_url}).status_code == 400
+        assert client.post("/api/notify_test", json={"discord_webhook_url": bad_url}).status_code == 400
+    assert client.post("/api/notify_config", json={"telegram_bot_token": "123:abc/../../etc"}).status_code == 400
+
+    # Handle power=None in /api/notify_test without TypeError
+    mock_http_resp = MagicMock()
+    mock_http_resp.status = 204
+    mock_http_resp.__enter__.return_value = mock_http_resp
+    with patch.object(srv, "capture_game_screenshot_bytes", return_value=b"\xff\xd8\xff\xe0jpg"), \
+         patch.object(srv, "get_bridge_status", return_value={"in_game": True, "char_name": "goku", "power": None}), \
+         patch("urllib.request.urlopen", return_value=mock_http_resp):
+        r_nt = client.post("/api/notify_test", json={"discord_webhook_url": "https://discord.com/api/webhooks/123/xyz"})
+    assert r_nt.status_code == 200
+
+    # DELETE /api/profiles returns 500 when save fails
+    with patch.object(srv, "save_account_profiles", return_value=False):
+        r_del = client.delete("/api/profiles", json={"id": "abc123"})
+    assert r_del.status_code == 500
+
+    # Concurrent _get_profile_cipher_key across threads yields one identical 32-byte key
+    keys = []
+    threads = [threading.Thread(target=lambda: keys.append(srv._get_profile_cipher_key())) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(keys) == 8
+    assert len(set(keys)) == 1 and len(keys[0]) == 32
